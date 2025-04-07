@@ -1189,7 +1189,7 @@ Always reason step by step when approaching complex problems. Leverage your web 
                         if "choices" in chunk_data and chunk_data["choices"] and len(chunk_data["choices"]) > 0:
                             delta = chunk_data["choices"][0].get("delta", {})
                             
-                            if self.debug:
+                            if agent_kernel.debug:
                                 print(f"[DEBUG] Delta: {json.dumps(delta)}")
                             
                             # Process delta (content or function call)
