@@ -518,7 +518,7 @@ class CLIAgent:
             }
         ]
         
-        logger.info(f"CLI agent initialized with model {model}")
+        logger.info(f"CLI agent initialized with model {self.model}")
     
     def _handle_tool_call(self, name: str, arguments: Dict) -> Dict:
         """Handle tool calls from the agent"""
