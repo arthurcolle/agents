@@ -3321,7 +3321,7 @@ if __name__ == "__main__":
                         
                         # Skip content that appears to be JSON
                         if looks_like_json(content):
-                            if self.debug:
+                            if agent.debug:
                                 print(f"\n[DEBUG] Skipping JSON-like content: {content[:30]}...")
                             continue
                                 
