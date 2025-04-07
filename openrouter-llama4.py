@@ -1205,7 +1205,7 @@ Always reason step by step when approaching complex problems. Leverage your web 
                             yield {"type": "error", "content": f"API error: {error_msg}"}
                         
                         if "tool_calls" in delta and delta["tool_calls"]:
-                            if self.debug:
+                            if agent.debug:
                                 print(f"\n[DEBUG] Received tool_calls in delta: {json.dumps(delta['tool_calls'])}")
                             tool_call = delta["tool_calls"][0]
                             
