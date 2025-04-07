@@ -13,13 +13,15 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 from rich import print as rprint
 import openai
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# Import agent hooks
+# Import agent hooks and advanced visualizer
 from agent_hooks import CLIAgentHooks
+from data_visualizer import AdvancedDataVisualizer
 
 # Load environment variables
 load_dotenv()
@@ -40,6 +42,7 @@ class DataAnalysisTools:
     """
     def __init__(self):
         logger.info("Initializing data analysis tools")
+        self.visualizer = AdvancedDataVisualizer()
     
     def load_csv(self, filepath: str) -> Dict:
         """Load a CSV file and return basic statistics"""
@@ -274,7 +277,65 @@ class CLIAgent:
         self.hooks = CLIAgentHooks(self.console, display_name="Data Analysis Agent")
         
         # Define available tools
+        # Add advanced visualization tool
         self.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_advanced_visualization",
+                    "description": "Create advanced data visualizations including correlation matrices, pairplots, and more",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "data": {
+                                "type": "object",
+                                "description": "Data to visualize"
+                            },
+                            "viz_type": {
+                                "type": "string",
+                                "description": "Type of visualization to create",
+                                "enum": ["correlation_matrix", "pairplot", "distribution", "boxplot", "timeseries", "3d_scatter"]
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Title for the visualization"
+                            },
+                            "columns": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "Specific columns to include in the visualization"
+                            },
+                            "date_column": {
+                                "type": "string",
+                                "description": "Column to use as date for time series plots"
+                            },
+                            "value_column": {
+                                "type": "string",
+                                "description": "Column to use as value for time series plots"
+                            },
+                            "x_column": {
+                                "type": "string",
+                                "description": "Column to use for x-axis in 3D scatter plots"
+                            },
+                            "y_column": {
+                                "type": "string",
+                                "description": "Column to use for y-axis in 3D scatter plots"
+                            },
+                            "z_column": {
+                                "type": "string",
+                                "description": "Column to use for z-axis in 3D scatter plots"
+                            },
+                            "color_column": {
+                                "type": "string",
+                                "description": "Column to use for color in 3D scatter plots"
+                            }
+                        },
+                        "required": ["data", "viz_type"]
+                    }
+                }
+            },
             {
                 "type": "function",
                 "function": {
@@ -398,6 +459,8 @@ class CLIAgent:
                 result = self.modal.list_functions()
             elif name == "call_modal_function":
                 result = self.modal.call_function(**arguments)
+            elif name == "create_advanced_visualization":
+                result = self.data_tools.visualizer.create_visualization(**arguments)
             else:
                 result = {
                     "success": False,
@@ -429,6 +492,10 @@ class CLIAgent:
         # Run the agent
         with self.console.status("[bold green]Thinking..."):
             try:
+                # Check if the message contains any code execution requests
+                if "```python" in message or "```py" in message or "execute this code" in message.lower():
+                    self.console.print("[bold yellow]Warning: Code execution detected in request. Proceeding with caution.[/bold yellow]")
+                
                 response = client.chat.completions.create(
                     model=self.model,
                     messages=self.conversation_history,
@@ -463,7 +530,7 @@ class CLIAgent:
                         function_args = json.loads(tool_call.function.arguments)
                         
                         # Execute the function
-                        with console.status(f"[bold blue]Running tool: {function_name}..."):
+                        with self.console.status(f"[bold blue]Running tool: {function_name}..."):
                             function_response = self._handle_tool_call(function_name, function_args)
                         
                         # Add the function response to the conversation
@@ -474,7 +541,7 @@ class CLIAgent:
                         })
                     
                     # Get the final response after tool calls
-                    with console.status("[bold green]Processing results..."):
+                    with self.console.status("[bold green]Processing results..."):
                         second_response = client.chat.completions.create(
                             model=self.model,
                             messages=self.conversation_history
@@ -514,6 +581,8 @@ def main():
     parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent")
     parser.add_argument("--trace", action="store_true", help="Enable tracing for debugging")
     parser.add_argument("--debug", action="store_true", help="Show debug information including agent hooks")
+    parser.add_argument("--temperature", type=float, default=0.7, help="Temperature for model generation (0.0-2.0)")
+    parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum tokens for model response")
     args = parser.parse_args()
     
     # Enable tracing if requested
@@ -521,10 +590,14 @@ def main():
         openai.debug.trace.enable()
     
     # Create console
-    console = Console(debug=args.debug)
+    console = Console()
     
     # Create the agent
     agent = CLIAgent(model=args.model, console=console)
+    
+    # Configure OpenAI client with additional parameters
+    client.temperature = args.temperature
+    client.max_tokens = args.max_tokens
     
     # Welcome message
     console.print(Panel.fit(
