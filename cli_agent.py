@@ -13,6 +13,10 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich import print as rprint
 import openai
+from openai import OpenAI
+from openai.types.beta.threads import Run
+from openai.types.beta.assistant import Assistant
+from openai.types.beta.threads.thread_message import ThreadMessage
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -26,7 +30,7 @@ logger = logging.getLogger("cli-agent")
 console = Console()
 
 # Initialize OpenAI client
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 class DataAnalysisTools:
     """
@@ -259,11 +263,13 @@ class CLIAgent:
     """
     CLI agent for conversational data analysis
     """
-    def __init__(self, model="gpt-4"):
+    def __init__(self, model="gpt-4o"):
         self.model = model
         self.data_tools = DataAnalysisTools()
         self.modal = ModalIntegration()
         self.conversation_history = []
+        self.assistant = None
+        self.thread = None
         
         # Define available tools
         self.tools = [
@@ -369,10 +375,54 @@ class CLIAgent:
             }
         ]
         
+        # Initialize the assistant and thread
+        self._initialize_assistant()
+        
         logger.info(f"CLI agent initialized with model {model}")
     
-    def _handle_tool_call(self, name: str, arguments: Dict) -> Dict:
-        """Handle tool calls from the agent"""
+    def _initialize_assistant(self):
+        """Initialize the OpenAI Assistant and Thread"""
+        try:
+            # Create or retrieve the assistant
+            assistants = client.beta.assistants.list(
+                order="desc",
+                limit=10
+            )
+            
+            # Check if we already have an assistant with the same name
+            for assistant in assistants.data:
+                if assistant.name == "Data Analysis Assistant":
+                    self.assistant = assistant
+                    logger.info(f"Using existing assistant: {assistant.id}")
+                    break
+            
+            # Create a new assistant if none exists
+            if not self.assistant:
+                self.assistant = client.beta.assistants.create(
+                    name="Data Analysis Assistant",
+                    description="A data analysis assistant that can help with analyzing data, creating visualizations, and more.",
+                    model=self.model,
+                    tools=self.tools,
+                    instructions="""You are a helpful data analysis assistant.
+You can help users analyze data, create visualizations, and perform various data-related tasks.
+When users ask for data analysis, always think step by step and explain your reasoning.
+You have access to tools for loading data, creating visualizations, and analyzing text."""
+                )
+                logger.info(f"Created new assistant: {self.assistant.id}")
+            
+            # Create a new thread for this conversation
+            self.thread = client.beta.threads.create()
+            logger.info(f"Created new thread: {self.thread.id}")
+            
+        except Exception as e:
+            logger.error(f"Error initializing assistant: {e}")
+            raise
+    
+    def _handle_tool_call(self, tool_call) -> Dict:
+        """Handle tool calls from the assistant"""
+        name = tool_call.function.name
+        arguments = json.loads(tool_call.function.arguments)
+        
         logger.info(f"Handling tool call: {name} with arguments {arguments}")
         
         if name == "load_csv":
@@ -392,95 +442,115 @@ class CLIAgent:
                 "data": None
             }
     
-    async def chat(self, message: str) -> str:
-        """Chat with the agent"""
-        # Add user message to conversation history
-        self.conversation_history.append({"role": "user", "content": message})
+    def _wait_for_run(self, run: Run) -> Run:
+        """Wait for a run to complete"""
+        while run.status in ["queued", "in_progress"]:
+            with console.status(f"[bold green]Thinking... (status: {run.status})"):
+                # Wait a bit before checking again
+                time.sleep(1)
+                # Get the updated run
+                run = client.beta.threads.runs.retrieve(
+                    thread_id=self.thread.id,
+                    run_id=run.id
+                )
+        return run
+    
+    def _process_tool_calls(self, run: Run) -> Run:
+        """Process tool calls from the assistant"""
+        tool_outputs = []
         
-        # Run the agent
-        with console.status("[bold green]Thinking..."):
-            try:
-                response = client.chat.completions.create(
-                    model=self.model,
-                    messages=self.conversation_history,
-                    tools=self.tools,
-                    tool_choice="auto"
+        # Get the required action
+        required_action = run.required_action
+        
+        if required_action and required_action.type == "submit_tool_outputs":
+            # Process each tool call
+            for tool_call in required_action.submit_tool_outputs.tool_calls:
+                with console.status(f"[bold blue]Running tool: {tool_call.function.name}..."):
+                    # Execute the function
+                    function_response = self._handle_tool_call(tool_call)
+                    
+                    # Add the function response to the tool outputs
+                    tool_outputs.append({
+                        "tool_call_id": tool_call.id,
+                        "output": json.dumps(function_response)
+                    })
+            
+            # Submit the tool outputs
+            run = client.beta.threads.runs.submit_tool_outputs(
+                thread_id=self.thread.id,
+                run_id=run.id,
+                tool_outputs=tool_outputs
+            )
+            
+            # Wait for the run to complete
+            run = self._wait_for_run(run)
+            
+            # Check if there are more tool calls
+            if run.status == "requires_action":
+                run = self._process_tool_calls(run)
+        
+        return run
+    
+    async def chat(self, message: str) -> str:
+        """Chat with the agent using the Assistants API"""
+        try:
+            # Add the user message to the thread
+            client.beta.threads.messages.create(
+                thread_id=self.thread.id,
+                role="user",
+                content=message
+            )
+            
+            # Run the assistant
+            with console.status("[bold green]Starting assistant..."):
+                run = client.beta.threads.runs.create(
+                    thread_id=self.thread.id,
+                    assistant_id=self.assistant.id
+                )
+            
+            # Wait for the run to complete or require action
+            run = self._wait_for_run(run)
+            
+            # Process any tool calls
+            if run.status == "requires_action":
+                run = self._process_tool_calls(run)
+            
+            # Check if the run completed successfully
+            if run.status == "completed":
+                # Get the latest messages (the assistant's response)
+                messages = client.beta.threads.messages.list(
+                    thread_id=self.thread.id,
+                    order="desc",
+                    limit=1
                 )
                 
-                # Get the response
-                assistant_message = response.choices[0].message
-                
-                # Process tool calls if any
-                if assistant_message.tool_calls:
-                    # Add the assistant's message to the conversation
-                    self.conversation_history.append({
-                        "role": "assistant",
-                        "content": assistant_message.content,
-                        "tool_calls": [
-                            {
-                                "id": tool_call.id,
-                                "type": tool_call.type,
-                                "function": {
-                                    "name": tool_call.function.name,
-                                    "arguments": tool_call.function.arguments
-                                }
-                            } for tool_call in assistant_message.tool_calls
-                        ]
-                    })
+                if messages.data:
+                    # Extract the content from the message
+                    message_content = ""
+                    for content_item in messages.data[0].content:
+                        if content_item.type == "text":
+                            message_content += content_item.text.value
                     
-                    # Process each tool call
-                    for tool_call in assistant_message.tool_calls:
-                        function_name = tool_call.function.name
-                        function_args = json.loads(tool_call.function.arguments)
-                        
-                        # Execute the function
-                        with console.status(f"[bold blue]Running tool: {function_name}..."):
-                            function_response = self._handle_tool_call(function_name, function_args)
-                        
-                        # Add the function response to the conversation
-                        self.conversation_history.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(function_response)
-                        })
-                    
-                    # Get the final response after tool calls
-                    with console.status("[bold green]Processing results..."):
-                        second_response = client.chat.completions.create(
-                            model=self.model,
-                            messages=self.conversation_history
-                        )
-                        
-                        final_response = second_response.choices[0].message.content
-                        
-                        # Add the final response to the conversation
-                        self.conversation_history.append({
-                            "role": "assistant",
-                            "content": final_response
-                        })
-                        
-                        return final_response
+                    return message_content
                 else:
-                    # No tool calls, just return the response
-                    content = assistant_message.content
-                    
-                    # Add the response to the conversation history
-                    self.conversation_history.append({
-                        "role": "assistant",
-                        "content": content
-                    })
-                    
-                    return content
-                    
-            except Exception as e:
-                logger.error(f"Error in chat: {e}")
-                return f"Error: {str(e)}"
+                    return "No response from the assistant."
+            else:
+                return f"Run failed with status: {run.status}"
+                
+        except Exception as e:
+            logger.error(f"Error in chat: {e}")
+            return f"Error: {str(e)}"
 
 def main():
     """Main function for the CLI agent"""
     parser = argparse.ArgumentParser(description="CLI Agent for Data Analysis")
-    parser.add_argument("--model", default="gpt-4", help="Model to use for the agent")
+    parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent")
+    parser.add_argument("--trace", action="store_true", help="Enable tracing for debugging")
     args = parser.parse_args()
+    
+    # Enable tracing if requested
+    if args.trace:
+        openai.debug.trace.enable()
     
     # Create the agent
     agent = CLIAgent(model=args.model)
@@ -519,6 +589,8 @@ def main():
         except Exception as e:
             logger.error(f"Error in chat loop: {e}")
             console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+import time
 
 if __name__ == "__main__":
     main()
