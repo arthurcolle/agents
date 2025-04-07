@@ -2,17 +2,21 @@
 import os
 import sys
 import logging
-import asyncio
 import argparse
 import json
 import requests
+import asyncio
 from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich import print as rprint
-from agents import Agent, Runner, ItemHelpers, MessageOutputItem, trace
+import openai
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +24,9 @@ logger = logging.getLogger("cli-agent")
 
 # Rich console for better formatting
 console = Console()
+
+# Initialize OpenAI client
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 class DataAnalysisTools:
     """
@@ -258,128 +265,111 @@ class CLIAgent:
         self.modal = ModalIntegration()
         self.conversation_history = []
         
-        # Create the agent with tools
-        self.agent = self._create_agent()
-        
-        logger.info(f"CLI agent initialized with model {model}")
-    
-    def _create_agent(self) -> Agent:
-        """Create the agent with tools"""
-        instructions = """You are a helpful data analysis assistant.
-You can help users analyze data, create visualizations, and perform various data-related tasks.
-When users ask for data analysis, always think step by step and explain your reasoning.
-You have access to tools for loading data, creating visualizations, and analyzing text.
-"""
-        
-        agent = Agent(
-            name="data_analysis_assistant",
-            instructions=instructions,
-            model=self.model,
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "load_csv",
-                        "description": "Load a CSV file and return basic statistics",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "filepath": {
-                                    "type": "string",
-                                    "description": "Path to the CSV file"
-                                }
-                            },
-                            "required": ["filepath"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "plot_data",
-                        "description": "Generate a plot from data and save it to a file",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "data": {
-                                    "type": "object",
-                                    "description": "Data to plot"
-                                },
-                                "plot_type": {
-                                    "type": "string",
-                                    "description": "Type of plot (histogram, scatter, bar, line, heatmap)",
-                                    "enum": ["histogram", "scatter", "bar", "line", "heatmap"]
-                                },
-                                "x_column": {
-                                    "type": "string",
-                                    "description": "Column to use for x-axis"
-                                },
-                                "y_column": {
-                                    "type": "string",
-                                    "description": "Column to use for y-axis (for scatter, bar, line plots)"
-                                },
-                                "title": {
-                                    "type": "string",
-                                    "description": "Title for the plot"
-                                }
-                            },
-                            "required": ["data", "plot_type"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "analyze_text",
-                        "description": "Perform basic text analysis",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "text": {
-                                    "type": "string",
-                                    "description": "Text to analyze"
-                                }
-                            },
-                            "required": ["text"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "list_modal_functions",
-                        "description": "List available functions in Modal",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {}
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "call_modal_function",
-                        "description": "Call a function in Modal",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "function_name": {
-                                    "type": "string",
-                                    "description": "Name of the function to call"
-                                },
-                                "params": {
-                                    "type": "object",
-                                    "description": "Parameters for the function"
-                                }
-                            },
-                            "required": ["function_name", "params"]
-                        }
+        # Define available tools
+        self.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "load_csv",
+                    "description": "Load a CSV file and return basic statistics",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to the CSV file"
+                            }
+                        },
+                        "required": ["filepath"]
                     }
                 }
-            ]
-        )
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "plot_data",
+                    "description": "Generate a plot from data and save it to a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "data": {
+                                "type": "object",
+                                "description": "Data to plot"
+                            },
+                            "plot_type": {
+                                "type": "string",
+                                "description": "Type of plot (histogram, scatter, bar, line, heatmap)",
+                                "enum": ["histogram", "scatter", "bar", "line", "heatmap"]
+                            },
+                            "x_column": {
+                                "type": "string",
+                                "description": "Column to use for x-axis"
+                            },
+                            "y_column": {
+                                "type": "string",
+                                "description": "Column to use for y-axis (for scatter, bar, line plots)"
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Title for the plot"
+                            }
+                        },
+                        "required": ["data", "plot_type"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_text",
+                    "description": "Perform basic text analysis",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "Text to analyze"
+                            }
+                        },
+                        "required": ["text"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_modal_functions",
+                    "description": "List available functions in Modal",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_modal_function",
+                    "description": "Call a function in Modal",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "function_name": {
+                                "type": "string",
+                                "description": "Name of the function to call"
+                            },
+                            "params": {
+                                "type": "object",
+                                "description": "Parameters for the function"
+                            }
+                        },
+                        "required": ["function_name", "params"]
+                    }
+                }
+            }
+        ]
         
-        return agent
+        logger.info(f"CLI agent initialized with model {model}")
     
     def _handle_tool_call(self, name: str, arguments: Dict) -> Dict:
         """Handle tool calls from the agent"""
@@ -409,42 +399,84 @@ You have access to tools for loading data, creating visualizations, and analyzin
         
         # Run the agent
         with console.status("[bold green]Thinking..."):
-            result = await Runner.run(self.agent, self.conversation_history)
-        
-        response_content = ""
-        
-        # Process the result
-        for item in result.new_items:
-            if isinstance(item, MessageOutputItem):
-                content = ItemHelpers.text_message_output(item)
-                if content:
-                    response_content += content
-            elif hasattr(item, "tool_calls") and item.tool_calls:
-                for tool_call in item.tool_calls:
-                    tool_name = tool_call.function.name
-                    tool_args = json.loads(tool_call.function.arguments)
+            try:
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=self.conversation_history,
+                    tools=self.tools,
+                    tool_choice="auto"
+                )
+                
+                # Get the response
+                assistant_message = response.choices[0].message
+                
+                # Process tool calls if any
+                if assistant_message.tool_calls:
+                    # Add the assistant's message to the conversation
+                    self.conversation_history.append({
+                        "role": "assistant",
+                        "content": assistant_message.content,
+                        "tool_calls": [
+                            {
+                                "id": tool_call.id,
+                                "type": tool_call.type,
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": tool_call.function.arguments
+                                }
+                            } for tool_call in assistant_message.tool_calls
+                        ]
+                    })
                     
-                    # Handle the tool call
-                    with console.status(f"[bold blue]Running tool: {tool_name}..."):
-                        tool_result = self._handle_tool_call(tool_name, tool_args)
+                    # Process each tool call
+                    for tool_call in assistant_message.tool_calls:
+                        function_name = tool_call.function.name
+                        function_args = json.loads(tool_call.function.arguments)
+                        
+                        # Execute the function
+                        with console.status(f"[bold blue]Running tool: {function_name}..."):
+                            function_response = self._handle_tool_call(function_name, function_args)
+                        
+                        # Add the function response to the conversation
+                        self.conversation_history.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(function_response)
+                        })
                     
-                    # Format the tool result
-                    result_str = f"\n\n[Tool Result: {tool_name}]\n"
-                    if tool_result["success"]:
-                        result_str += f"✅ {tool_result['message']}\n"
-                        if tool_result["data"]:
-                            result_str += f"Data: {json.dumps(tool_result['data'], indent=2)}\n"
-                    else:
-                        result_str += f"❌ {tool_result['message']}\n"
+                    # Get the final response after tool calls
+                    with console.status("[bold green]Processing results..."):
+                        second_response = client.chat.completions.create(
+                            model=self.model,
+                            messages=self.conversation_history
+                        )
+                        
+                        final_response = second_response.choices[0].message.content
+                        
+                        # Add the final response to the conversation
+                        self.conversation_history.append({
+                            "role": "assistant",
+                            "content": final_response
+                        })
+                        
+                        return final_response
+                else:
+                    # No tool calls, just return the response
+                    content = assistant_message.content
                     
-                    response_content += result_str
-        
-        # Add assistant response to conversation history
-        self.conversation_history.append({"role": "assistant", "content": response_content})
-        
-        return response_content
+                    # Add the response to the conversation history
+                    self.conversation_history.append({
+                        "role": "assistant",
+                        "content": content
+                    })
+                    
+                    return content
+                    
+            except Exception as e:
+                logger.error(f"Error in chat: {e}")
+                return f"Error: {str(e)}"
 
-async def main():
+def main():
     """Main function for the CLI agent"""
     parser = argparse.ArgumentParser(description="CLI Agent for Data Analysis")
     parser.add_argument("--model", default="gpt-4", help="Model to use for the agent")
@@ -475,7 +507,7 @@ async def main():
                 break
             
             # Process the input
-            response = await agent.chat(user_input)
+            response = asyncio.run(agent.chat(user_input))
             
             # Display the response
             console.print("\n[bold blue]Assistant[/bold blue]")
@@ -489,4 +521,4 @@ async def main():
             console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
