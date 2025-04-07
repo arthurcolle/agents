@@ -499,10 +499,13 @@ class CLIAgent:
                         "content": content
                     })
                     
+                    # Notify hooks that the agent has completed
+                    self.hooks.on_end("CLI Agent", content)
                     return content
                     
             except Exception as e:
                 logger.error(f"Error in chat: {e}")
+                self.hooks.on_error("CLI Agent", e)
                 return f"Error: {str(e)}"
 
 def main():
