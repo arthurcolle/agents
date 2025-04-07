@@ -7,6 +7,7 @@ import json
 import requests
 import asyncio
 import time
+import random
 from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.markdown import Markdown
@@ -16,6 +17,9 @@ from rich import print as rprint
 import openai
 from openai import OpenAI
 from dotenv import load_dotenv
+
+# Import agent hooks
+from agent_hooks import CLIAgentHooks
 
 # Load environment variables
 load_dotenv()
@@ -261,11 +265,13 @@ class CLIAgent:
     """
     CLI agent for conversational data analysis
     """
-    def __init__(self, model="gpt-4o"):
+    def __init__(self, model="gpt-4o", console=None):
         self.model = model
         self.data_tools = DataAnalysisTools()
         self.modal = ModalIntegration()
         self.conversation_history = []
+        self.console = console or Console()
+        self.hooks = CLIAgentHooks(self.console, display_name="Data Analysis Agent")
         
         # Define available tools
         self.tools = [
@@ -377,30 +383,51 @@ class CLIAgent:
         """Handle tool calls from the agent"""
         logger.info(f"Handling tool call: {name} with arguments {arguments}")
         
-        if name == "load_csv":
-            return self.data_tools.load_csv(**arguments)
-        elif name == "plot_data":
-            return self.data_tools.plot_data(**arguments)
-        elif name == "analyze_text":
-            return self.data_tools.analyze_text(**arguments)
-        elif name == "list_modal_functions":
-            return self.modal.list_functions()
-        elif name == "call_modal_function":
-            return self.modal.call_function(**arguments)
-        else:
-            return {
+        # Notify hooks that a tool is starting
+        self.hooks.on_tool_start("CLI Agent", name, arguments)
+        
+        result = None
+        try:
+            if name == "load_csv":
+                result = self.data_tools.load_csv(**arguments)
+            elif name == "plot_data":
+                result = self.data_tools.plot_data(**arguments)
+            elif name == "analyze_text":
+                result = self.data_tools.analyze_text(**arguments)
+            elif name == "list_modal_functions":
+                result = self.modal.list_functions()
+            elif name == "call_modal_function":
+                result = self.modal.call_function(**arguments)
+            else:
+                result = {
+                    "success": False,
+                    "message": f"Unknown tool: {name}",
+                    "data": None
+                }
+        except Exception as e:
+            logger.error(f"Error executing tool {name}: {e}")
+            self.hooks.on_error("CLI Agent", e)
+            result = {
                 "success": False,
-                "message": f"Unknown tool: {name}",
+                "message": f"Error executing tool {name}: {str(e)}",
                 "data": None
             }
+        
+        # Notify hooks that the tool has completed
+        self.hooks.on_tool_end("CLI Agent", name, result)
+        
+        return result
     
     async def chat(self, message: str) -> str:
         """Chat with the agent"""
         # Add user message to conversation history
         self.conversation_history.append({"role": "user", "content": message})
         
+        # Notify hooks that the agent is starting
+        self.hooks.on_start("CLI Agent")
+        
         # Run the agent
-        with console.status("[bold green]Thinking..."):
+        with self.console.status("[bold green]Thinking..."):
             try:
                 response = client.chat.completions.create(
                     model=self.model,
@@ -483,14 +510,18 @@ def main():
     parser = argparse.ArgumentParser(description="CLI Agent for Data Analysis")
     parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent")
     parser.add_argument("--trace", action="store_true", help="Enable tracing for debugging")
+    parser.add_argument("--debug", action="store_true", help="Show debug information including agent hooks")
     args = parser.parse_args()
     
     # Enable tracing if requested
     if args.trace:
         openai.debug.trace.enable()
     
+    # Create console
+    console = Console(debug=args.debug)
+    
     # Create the agent
-    agent = CLIAgent(model=args.model)
+    agent = CLIAgent(model=args.model, console=console)
     
     # Welcome message
     console.print(Panel.fit(
@@ -519,6 +550,10 @@ def main():
             # Display the response
             console.print("\n[bold blue]Assistant[/bold blue]")
             console.print(Markdown(response))
+            
+            # Show debug summary if requested
+            if args.debug:
+                agent.hooks.display_summary()
             
         except KeyboardInterrupt:
             console.print("\n[bold blue]Goodbye![/bold blue]")
