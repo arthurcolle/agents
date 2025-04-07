@@ -8,12 +8,14 @@ import requests
 import asyncio
 import time
 import random
+import uuid
 from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.table import Table
 from rich import print as rprint
 import openai
 from openai import OpenAI
@@ -22,6 +24,7 @@ from dotenv import load_dotenv
 # Import agent hooks and advanced visualizer
 from agent_hooks import CLIAgentHooks
 from data_visualizer import AdvancedDataVisualizer
+from dynamic_agents import registry, AgentContext, execute_agent_command
 
 # Load environment variables
 load_dotenv()
@@ -276,9 +279,86 @@ class CLIAgent:
         self.console = console or Console()
         self.hooks = CLIAgentHooks(self.console, display_name="Data Analysis Agent")
         
+        # Dynamic agent contexts
+        self.agent_contexts = {}
+        
+        # Initialize dynamic agent tools
+        self._init_dynamic_agent_tools()
+        
+    def _init_dynamic_agent_tools(self):
+        """Initialize tools for dynamic agent management"""
+        # Create default agents
+        try:
+            # Create a file agent
+            registry.create_agent("file_agent", "file")
+            # Create a data analysis agent
+            registry.create_agent("data_analysis_agent", "data_analysis")
+            
+            # Create contexts for each agent
+            self.agent_contexts["file_agent"] = AgentContext(agent_id="file_agent")
+            self.agent_contexts["data_analysis_agent"] = AgentContext(agent_id="data_analysis_agent")
+            
+            self.console.print("[dim]Initialized dynamic agents: file_agent, data_analysis_agent[/dim]")
+        except Exception as e:
+            self.console.print(f"[bold red]Error initializing dynamic agents: {e}[/bold red]")
+    
         # Define available tools
         # Add advanced visualization tool
         self.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_agent",
+                    "description": "Create a new specialized agent for a specific task",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {
+                                "type": "string",
+                                "description": "Unique identifier for the agent"
+                            },
+                            "agent_type": {
+                                "type": "string",
+                                "description": "Type of agent to create",
+                                "enum": ["file", "data_analysis"]
+                            }
+                        },
+                        "required": ["agent_id", "agent_type"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_agents",
+                    "description": "List all available agents",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_agent_command",
+                    "description": "Execute a command on a specific agent",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {
+                                "type": "string",
+                                "description": "ID of the agent to execute the command on"
+                            },
+                            "command": {
+                                "type": "string",
+                                "description": "Command to execute on the agent"
+                            }
+                        },
+                        "required": ["agent_id", "command"]
+                    }
+                }
+            },
             {
                 "type": "function",
                 "function": {
@@ -461,6 +541,13 @@ class CLIAgent:
                 result = self.modal.call_function(**arguments)
             elif name == "create_advanced_visualization":
                 result = self.data_tools.visualizer.create_visualization(**arguments)
+            # Dynamic agent tools
+            elif name == "create_agent":
+                result = self._create_agent(**arguments)
+            elif name == "list_agents":
+                result = self._list_agents()
+            elif name == "execute_agent_command":
+                result = asyncio.run(self._execute_agent_command(**arguments))
             else:
                 result = {
                     "success": False,
@@ -480,6 +567,83 @@ class CLIAgent:
         self.hooks.on_tool_end("CLI Agent", name, result)
         
         return result
+    
+    def _create_agent(self, agent_id: str, agent_type: str) -> Dict:
+        """Create a new agent of the specified type"""
+        try:
+            # Generate a unique ID if not provided
+            if not agent_id:
+                agent_id = f"{agent_type}_{uuid.uuid4().hex[:8]}"
+            
+            # Create the agent
+            agent = registry.create_agent(agent_id, agent_type)
+            
+            # Create a context for the agent
+            self.agent_contexts[agent_id] = AgentContext(agent_id=agent_id)
+            
+            return {
+                "success": True,
+                "message": f"Created {agent_type} agent with ID: {agent_id}",
+                "data": {
+                    "agent_id": agent_id,
+                    "agent_type": agent_type
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error creating agent: {e}")
+            return {
+                "success": False,
+                "message": f"Error creating agent: {str(e)}",
+                "data": None
+            }
+    
+    def _list_agents(self) -> Dict:
+        """List all available agents"""
+        try:
+            agents = registry.list_agents()
+            agent_types = registry.list_agent_types()
+            
+            return {
+                "success": True,
+                "message": f"Found {len(agents)} agents",
+                "data": {
+                    "agents": agents,
+                    "available_types": agent_types
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error listing agents: {e}")
+            return {
+                "success": False,
+                "message": f"Error listing agents: {str(e)}",
+                "data": None
+            }
+    
+    async def _execute_agent_command(self, agent_id: str, command: str) -> Dict:
+        """Execute a command on a specific agent"""
+        try:
+            # Get the agent context
+            context = self.agent_contexts.get(agent_id)
+            if not context:
+                # Create a new context if it doesn't exist
+                context = AgentContext(agent_id=agent_id)
+                self.agent_contexts[agent_id] = context
+            
+            # Execute the command
+            result = await execute_agent_command(agent_id, command, context)
+            
+            return {
+                "success": result.get("success", False),
+                "message": f"Executed command on agent {agent_id}",
+                "data": result
+            }
+        except Exception as e:
+            logger.error(f"Error executing agent command: {e}")
+            return {
+                "success": False,
+                "message": f"Error executing agent command: {str(e)}",
+                "data": None
+            }
     
     async def chat(self, message: str) -> str:
         """Chat with the agent"""
@@ -583,6 +747,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Show debug information including agent hooks")
     parser.add_argument("--temperature", type=float, default=0.7, help="Temperature for model generation (0.0-2.0)")
     parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum tokens for model response")
+    parser.add_argument("--list-agents", action="store_true", help="List available dynamic agents and exit")
     args = parser.parse_args()
     
     # Enable tracing if requested
@@ -595,6 +760,32 @@ def main():
     # Create the agent
     agent = CLIAgent(model=args.model, console=console)
     
+    # If --list-agents flag is provided, list agents and exit
+    if args.list_agents:
+        agents = registry.list_agents()
+        agent_types = registry.list_agent_types()
+        
+        console.print(Panel.fit(
+            f"[bold]Available Agent Types:[/bold] {', '.join(agent_types)}\n\n"
+            f"[bold]Registered Agents:[/bold]",
+            title="Dynamic Agents",
+            border_style="green"
+        ))
+        
+        if agents:
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Agent ID")
+            table.add_column("Type")
+            
+            for agent_info in agents:
+                table.add_row(agent_info["id"], agent_info["type"])
+            
+            console.print(table)
+        else:
+            console.print("[yellow]No agents registered yet.[/yellow]")
+        
+        return
+    
     # Configure OpenAI client with additional parameters
     client.temperature = args.temperature
     client.max_tokens = args.max_tokens
@@ -604,6 +795,7 @@ def main():
         "[bold blue]Welcome to the Data Analysis CLI Agent![/bold blue]\n"
         "You can chat with me about data analysis tasks, and I'll help you analyze data, "
         "create visualizations, and more.\n"
+        "[bold cyan]Dynamic Agents:[/bold cyan] You can create and use specialized agents for specific tasks.\n"
         "Type [bold green]'exit'[/bold green] to quit.",
         title="Data Analysis Assistant",
         border_style="blue"
