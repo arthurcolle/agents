@@ -1200,7 +1200,7 @@ Always reason step by step when approaching complex problems. Leverage your web 
                         elif "error" in chunk_data:
                             # Handle API error
                             error_msg = chunk_data.get("error", {}).get("message", "Unknown API error")
-                            if self.debug:
+                            if agent.debug:
                                 print(f"[DEBUG] API error in chunk: {error_msg}")
                             yield {"type": "error", "content": f"API error: {error_msg}"}
                         
