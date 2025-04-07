@@ -19,4 +19,14 @@ notebook>=6.4.0
 ipykernel>=6.0.0
 
 # Code execution
-resource>=0.0.0  # Unix only, for resource limits
+resource>=0.0.0  # Unix only, for resource limits# Core dependencies
+openai>=1.0.0
+agents>=0.1.0
+rich>=13.0.0
+requests>=2.31.0
+
+# Data analysis dependencies
+pandas>=2.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+numpy>=1.24.0
