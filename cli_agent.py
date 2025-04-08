@@ -1500,9 +1500,6 @@ class DynamicToolRegistry:
             # Get the function
             func = self.tools[name]
             
-            # Get the function signature
-            sig = inspect.signature(func)
-            
             # Create the tool definition
             tool = {
                 "type": "function",
@@ -1516,19 +1513,30 @@ class DynamicToolRegistry:
                 }
             }
             
-            # Add required parameters
-            required = []
-            for param_name, param in sig.parameters.items():
-                # Skip self parameter for methods
-                if param_name == "self":
+            # Try to get the function signature
+            try:
+                # Skip if func is not callable
+                if not callable(func):
                     continue
                     
-                # Add to required if no default value
-                if param.default == inspect.Parameter.empty:
-                    required.append(param_name)
-            
-            if required:
-                tool["function"]["parameters"]["required"] = required
+                sig = inspect.signature(func)
+                
+                # Add required parameters
+                required = []
+                for param_name, param in sig.parameters.items():
+                    # Skip self parameter for methods
+                    if param_name == "self":
+                        continue
+                        
+                    # Add to required if no default value
+                    if param.default == inspect.Parameter.empty:
+                        required.append(param_name)
+                
+                if required:
+                    tool["function"]["parameters"]["required"] = required
+            except (ValueError, TypeError) as e:
+                # If we can't get the signature, just continue without required parameters
+                logging.warning(f"Could not get signature for tool {name}: {e}")
                 
             tools.append(tool)
             
