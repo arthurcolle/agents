@@ -2828,9 +2828,20 @@ print("Hello, world!")
                                         exec_globals['datetime'] = datetime
                                         exec_globals['timedelta'] = timedelta
                                         try:
-                                            console.print(f"[dim]{code_block}[/dim]")
+                                            # Clean up the code block by removing any decorative lines and joining multiline statements
+                                            clean_code = []
+                                            for line in code_block.split('\n'):
+                                                # Skip purely decorative lines with box drawing characters
+                                                if all(c in '┏━┓┃┗┛ ' for c in line):
+                                                    continue
+                                                clean_code.append(line)
+                                            
+                                            # Join the cleaned code
+                                            cleaned_code_block = '\n'.join(clean_code)
+                                            console.print(f"[dim]{cleaned_code_block}[/dim]")
+                                            
                                             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                                                exec(code_block, exec_globals, local_vars)
+                                                exec(cleaned_code_block, exec_globals, local_vars)
                                             stdout = stdout_capture.getvalue()
                                             stderr = stderr_capture.getvalue()
                                             if stdout:
