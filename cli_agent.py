@@ -17,10 +17,10 @@ import re
 import inspect
 import importlib
 import pickle
-import numpy as np
-from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple, Callable, Deque
 from collections import deque
+from datetime import datetime
+import numpy as np
+from typing import Dict, List, Any, Optional, Tuple, Callable, Deque
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -1906,7 +1906,7 @@ class CLIAgent:
     - Experience replay for learning from past interactions
     - Semantic search across interaction history
     """
-    def __init__(self, model="gpt-4o", meta_model=None, console=None, enable_meta=True,
+    def __init__(self, model="gpt-4o", meta_model=None, console=None, enable_meta=True, 
                 max_memory_frames=1000, enable_experience_replay=True):
         # Primary reasoning layer
         self.model = model
@@ -1923,15 +1923,15 @@ class CLIAgent:
         self.enable_meta = enable_meta
         self.meta_layer = MetaReflectionLayer(model=self.meta_model, console=self.console)
         
+        # Dynamic tool registry
+        self.tool_registry = DynamicToolRegistry(console=self.console)
+        
         # Perceptual memory system
         self.perceptual_memory = PerceptualMemory(max_frames=max_memory_frames)
         self.enable_experience_replay = enable_experience_replay
-        self.replay_batch_size = 3  # Number of frames to replay
-        self.replay_frequency = 5   # How often to perform replay (every N interactions)
-        self.interaction_count = 0  # Track number of interactions
-        
-        # Dynamic tool registry
-        self.tool_registry = DynamicToolRegistry(console=self.console)
+        self.replay_batch_size = 3
+        self.replay_frequency = 5
+        self.interaction_count = 0
         
         # Dynamic agent contexts
         self.agent_contexts = {}
@@ -3382,7 +3382,7 @@ class CLIAgent:
                         
                         # Execute the function - don't use nested console.status
                         self.console.print(f"[bold blue]Running tool: {function_name}...[/bold blue]")
-                            function_response = self._handle_tool_call(function_name, function_args)
+                        function_response = self._handle_tool_call(function_name, function_args)
                         
                         # Add the function response to the conversation
                         self.conversation_history.append({
@@ -3393,7 +3393,7 @@ class CLIAgent:
                     
                     # Get the final response after tool calls
                     self.console.print("[bold green]Processing results...[/bold green]")
-                        second_response = client.chat.completions.create(
+                    second_response = client.chat.completions.create(
                             model=self.model,
                             messages=self.conversation_history
                         )
@@ -3406,8 +3406,8 @@ class CLIAgent:
                         
                         if self.enable_meta:
                             self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
-                                # Get meta-evaluation
-                                reflection = await self.meta_layer.reflect(message, primary_response, client)
+                            # Get meta-evaluation
+                            reflection = await self.meta_layer.reflect(message, primary_response, client)
                                 meta_reflection = reflection
                                 
                                 # Improve response based on meta-reflection
@@ -3453,7 +3453,7 @@ class CLIAgent:
                             self.interaction_count % self.replay_frequency == 0 and
                             self.interaction_count > 1):
                             self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
-                                replay_result = await self._perform_experience_replay(client)
+                            replay_result = await self._perform_experience_replay(client)
                                 if replay_result["success"] and self.console:
                                     self.console.print(
                                         f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
@@ -3471,8 +3471,8 @@ class CLIAgent:
                     
                     if self.enable_meta:
                         self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
-                            # Get meta-evaluation
-                            reflection = await self.meta_layer.reflect(message, primary_response, client)
+                        # Get meta-evaluation
+                        reflection = await self.meta_layer.reflect(message, primary_response, client)
                             meta_reflection = reflection
                             
                             # Improve response based on meta-reflection
@@ -3510,7 +3510,7 @@ class CLIAgent:
                         self.interaction_count % self.replay_frequency == 0 and
                         self.interaction_count > 1):
                         self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
-                            replay_result = await self._perform_experience_replay(client)
+                        replay_result = await self._perform_experience_replay(client)
                             if replay_result["success"] and self.console:
                                 self.console.print(
                                     f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
