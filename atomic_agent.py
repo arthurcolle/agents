@@ -797,6 +797,47 @@ class ToolRegistry:
             function=self._run_assistant
         )
         # Jina tools
+        # Register the new search, read, and fact_check functions
+        self.register_function(
+            name="search",
+            description="Search the web for information",
+            parameters={
+                "type": "object", 
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"}
+                }, 
+                "required": ["query"]
+            },
+            function=self.search
+        )
+        
+        self.register_function(
+            name="read",
+            description="Read and extract content from a web page",
+            parameters={
+                "type": "object", 
+                "properties": {
+                    "url": {"type": "string", "description": "URL of the web page to read"}
+                }, 
+                "required": ["url"]
+            },
+            function=self.read
+        )
+        
+        self.register_function(
+            name="fact_check",
+            description="Verify a statement or claim for factual accuracy",
+            parameters={
+                "type": "object", 
+                "properties": {
+                    "query": {"type": "string", "description": "Statement to fact check"}
+                }, 
+                "required": ["query"]
+            },
+            function=self.fact_check
+        )
+        
+        # Keep the legacy functions for backward compatibility
         if self.jina_client:
             self.register_function(
                 name="web_search",
