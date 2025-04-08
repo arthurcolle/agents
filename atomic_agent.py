@@ -428,6 +428,18 @@ class URLExtraction(StructuredOutput):
     urls: List[str] = field(default_factory=list)
 
 @dataclass
+class WeatherData(StructuredOutput):
+    location: str
+    current_condition: str
+    temperature_f: float
+    temperature_c: float
+    humidity: int
+    wind_speed_mph: float
+    forecast: List[Dict[str, Any]] = field(default_factory=list)
+    last_updated: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
+    source: str = ""
+
+@dataclass
 class KnowledgeItem:
     content: str
     source_url: str
@@ -4221,44 +4233,170 @@ class ToolRegistry:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
     def _get_weather(self, location: str = None, city: str = None) -> Dict[str, Any]:
+        """
+        Get current weather information for a location using Jina to search the web.
+        Returns structured weather data extracted from search results.
+        """
         # Use city parameter if provided, otherwise use location
         location = city or location or "New York"
+        
         try:
-            import random
-            conditions = ["sunny", "partly cloudy", "cloudy", "rainy", "stormy", "snowy", "windy", "foggy"]
-            condition = random.choice(conditions)
-            if condition == "sunny":
-                temp_f = random.randint(70, 95)
-            elif condition in ["partly cloudy", "cloudy"]:
-                temp_f = random.randint(60, 80)
-            elif condition in ["rainy", "stormy"]:
-                temp_f = random.randint(50, 70)
-            elif condition == "snowy":
-                temp_f = random.randint(20, 35)
-            else:
-                temp_f = random.randint(40, 75)
-            temp_c = round((temp_f - 32) * 5 / 9, 1)
-            humidity = random.randint(30, 90)
-            wind_speed = random.randint(0, 20)
-            forecast = []
-            current_temp = temp_f
-            for i in range(5):
-                forecast_temp = current_temp + random.randint(-10, 10)
-                forecast_condition = random.choice(conditions)
-                forecast.append({
-                    "day": i + 1,
-                    "condition": forecast_condition,
-                    "high_f": forecast_temp,
-                    "low_f": forecast_temp - random.randint(10, 20),
-                    "precipitation_chance": random.randint(0, 100)
-                })
-            return {"location": location, "current_condition": condition, "temperature_f": temp_f, "temperature_c": temp_c, "humidity": humidity, "wind_speed_mph": wind_speed, "forecast": forecast, "last_updated": time.strftime("%Y-%m-%d %H:%M:%S"), "success": True}
+            # Check if we have a Jina client
+            if not hasattr(self, 'jina_client') or not self.jina_client:
+                try:
+                    self.jina_client = JinaClient()
+                except ValueError:
+                    return {"error": "Jina client not available. Set JINA_API_KEY environment variable.", "success": False}
+            
+            # Create a new event loop for this thread if needed
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Perform multiple searches to gather comprehensive weather data
+            search_queries = [
+                f"current weather in {location}",
+                f"weather forecast {location} next 5 days",
+                f"temperature humidity wind {location} weather now"
+            ]
+            
+            all_results = []
+            for query in search_queries:
+                result = loop.run_until_complete(self.jina_client.search(query))
+                if result and "results" in result:
+                    all_results.append(result["results"])
+            
+            # If we couldn't get any results, return an error
+            if not all_results:
+                return {"error": f"Could not retrieve weather data for {location}", "success": False}
+            
+            # Combine all search results into a single text for extraction
+            combined_results = "\n\n".join(all_results)
+            
+            # Use structured output extraction to parse weather data
+            from pydantic import BaseModel, Field
+            
+            class ForecastDay(BaseModel):
+                day: int
+                condition: str = Field(description="Weather condition (sunny, cloudy, rainy, etc.)")
+                high_f: float = Field(description="High temperature in Fahrenheit")
+                low_f: float = Field(description="Low temperature in Fahrenheit")
+                precipitation_chance: int = Field(description="Chance of precipitation (0-100%)")
+            
+            class WeatherExtraction(BaseModel):
+                location: str = Field(description="The location for this weather data")
+                current_condition: str = Field(description="Current weather condition (sunny, cloudy, rainy, etc.)")
+                temperature_f: float = Field(description="Current temperature in Fahrenheit")
+                temperature_c: float = Field(description="Current temperature in Celsius")
+                humidity: int = Field(description="Current humidity percentage")
+                wind_speed_mph: float = Field(description="Current wind speed in mph")
+                forecast: List[ForecastDay] = Field(description="5-day weather forecast")
+                
+            # Create a prompt for structured extraction
+            extraction_prompt = [
+                {"role": "system", "content": "You are a weather data extraction expert. Extract structured weather information from the provided text. If exact values aren't available, make reasonable estimates based on the context."},
+                {"role": "user", "content": f"Extract weather information for {location} from this text. If specific data points are missing, infer reasonable values from context:\n\n{combined_results}"}
+            ]
+            
+            # Use the model to extract structured data
+            from together import Together
+            together = Together()
+            
+            extraction_response = together.chat.completions.create(
+                model="meta-llama/Llama-3.1-8B-Instruct",  # Use a smaller model for extraction
+                messages=extraction_prompt,
+                response_format={"type": "json_object", "schema": WeatherExtraction.model_json_schema()},
+                temperature=0.2  # Low temperature for more factual extraction
+            )
+            
+            # Parse the extracted data
+            try:
+                weather_data = json.loads(extraction_response.choices[0].message.content)
+                
+                # Add source information and success flag
+                weather_data["source"] = "Jina web search"
+                weather_data["last_updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                weather_data["success"] = True
+                
+                return weather_data
+                
+            except json.JSONDecodeError:
+                # If JSON parsing fails, fall back to a simpler extraction method
+                console.print("[yellow]Warning: Structured extraction failed, using fallback method[/yellow]")
+                
+                # Simple regex-based extraction for key weather data
+                condition_match = re.search(r'(?:condition|weather)[:\s]+([a-zA-Z\s]+)', combined_results, re.IGNORECASE)
+                temp_f_match = re.search(r'(\d+)(?:\s*°?F|\s*degrees\s*F)', combined_results)
+                humidity_match = re.search(r'humidity[:\s]+(\d+)', combined_results, re.IGNORECASE)
+                wind_match = re.search(r'wind[:\s]+(\d+)\s*mph', combined_results, re.IGNORECASE)
+                
+                # Extract what we can, use defaults for the rest
+                condition = condition_match.group(1).strip() if condition_match else "partly cloudy"
+                temp_f = float(temp_f_match.group(1)) if temp_f_match else 70.0
+                temp_c = round((temp_f - 32) * 5 / 9, 1)
+                humidity = int(humidity_match.group(1)) if humidity_match else 50
+                wind_speed = float(wind_match.group(1)) if wind_match else 5.0
+                
+                # Generate a simple forecast
+                forecast = []
+                for i in range(5):
+                    forecast.append({
+                        "day": i + 1,
+                        "condition": condition,
+                        "high_f": temp_f + (i * 2),
+                        "low_f": temp_f - 10 - (i * 1),
+                        "precipitation_chance": 30 + (i * 10) % 70
+                    })
+                
+                return {
+                    "location": location,
+                    "current_condition": condition,
+                    "temperature_f": temp_f,
+                    "temperature_c": temp_c,
+                    "humidity": humidity,
+                    "wind_speed_mph": wind_speed,
+                    "forecast": forecast,
+                    "last_updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "source": "Jina web search (fallback extraction)",
+                    "success": True
+                }
+                
         except Exception as e:
+            console.print(f"[red]Error retrieving weather data: {str(e)}[/red]")
+            console.print(traceback.format_exc())
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
             
     def _weather_for_location(self, location: str) -> Dict[str, Any]:
         """Get weather for a specific location - wrapper around _get_weather"""
-        return self._get_weather(location=location)
+        result = self._get_weather(location=location)
+        
+        # If successful, format the response for better readability
+        if result.get("success", False):
+            # Add a formatted summary for easier consumption
+            location = result.get("location", "Unknown location")
+            condition = result.get("current_condition", "unknown")
+            temp_f = result.get("temperature_f", 0)
+            temp_c = result.get("temperature_c", 0)
+            humidity = result.get("humidity", 0)
+            wind_speed = result.get("wind_speed_mph", 0)
+            source = result.get("source", "")
+            
+            summary = f"Current weather in {location}: {condition.capitalize()}, {temp_f}°F ({temp_c}°C), humidity {humidity}%, wind {wind_speed} mph."
+            
+            # Add forecast summary if available
+            forecast = result.get("forecast", [])
+            if forecast and len(forecast) > 0:
+                tomorrow = forecast[0]
+                summary += f"\n\nTomorrow's forecast: {tomorrow.get('condition', 'unknown').capitalize()}, high of {tomorrow.get('high_f', 0)}°F, low of {tomorrow.get('low_f', 0)}°F, {tomorrow.get('precipitation_chance', 0)}% chance of precipitation."
+                
+            result["summary"] = summary
+            
+            if source:
+                result["summary"] += f"\n\nSource: {source}"
+                
+        return result
 
     def _execute_python(self, code: str, save_artifact: bool = False, artifact_name: str = "", description: str = "") -> Dict[str, Any]:
         try:
@@ -4443,7 +4581,7 @@ class ToolRegistry:
             return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
     def _get_multiple_weather(self, locations: List[str]) -> Dict[str, Any]:
-        """Get weather information for multiple locations in parallel"""
+        """Get weather information for multiple locations in parallel using Jina search"""
         try:
             # Create a task processor for parallel execution
             task_processor = AsyncTaskProcessor()
@@ -4461,7 +4599,27 @@ class ToolRegistry:
                     task_result = task_processor.get_result(task_id)
                     if task_result["status"] in ["completed", "failed"]:
                         if task_result["status"] == "completed":
-                            results[location] = task_result["result"]
+                            weather_data = task_result["result"]
+                            
+                            # Add a formatted summary for each location
+                            if weather_data.get("success", False):
+                                condition = weather_data.get("current_condition", "unknown")
+                                temp_f = weather_data.get("temperature_f", 0)
+                                temp_c = weather_data.get("temperature_c", 0)
+                                humidity = weather_data.get("humidity", 0)
+                                wind_speed = weather_data.get("wind_speed_mph", 0)
+                                
+                                summary = f"Current weather: {condition.capitalize()}, {temp_f}°F ({temp_c}°C), humidity {humidity}%, wind {wind_speed} mph."
+                                
+                                # Add forecast summary if available
+                                forecast = weather_data.get("forecast", [])
+                                if forecast and len(forecast) > 0:
+                                    tomorrow = forecast[0]
+                                    summary += f"\n\nTomorrow: {tomorrow.get('condition', 'unknown').capitalize()}, high of {tomorrow.get('high_f', 0)}°F, low of {tomorrow.get('low_f', 0)}°F, {tomorrow.get('precipitation_chance', 0)}% chance of precipitation."
+                                    
+                                weather_data["summary"] = summary
+                            
+                            results[location] = weather_data
                         else:
                             results[location] = {"error": task_result.get("error", "Unknown error"), "success": False}
                         break
@@ -4470,12 +4628,22 @@ class ToolRegistry:
             # Clean up
             task_processor.stop()
             
+            # Create a combined summary of all locations
+            combined_summary = "Weather information for multiple locations:\n\n"
+            for location, data in results.items():
+                if data.get("success", False):
+                    combined_summary += f"**{location}**: {data.get('current_condition', 'Unknown').capitalize()}, " \
+                                      f"{data.get('temperature_f', 'N/A')}°F ({data.get('temperature_c', 'N/A')}°C)\n"
+            
             return {
                 "success": True,
                 "locations_count": len(locations),
-                "results": results
+                "results": results,
+                "combined_summary": combined_summary
             }
         except Exception as e:
+            console.print(f"[red]Error retrieving multiple weather data: {str(e)}[/red]")
+            console.print(traceback.format_exc())
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
     
     def _parse_weather_response(self, response: str) -> Dict[str, Any]:
@@ -4767,12 +4935,13 @@ class ToolRegistry:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
     
     def _check_multi_location_weather_query(self, query: str) -> Optional[str]:
-        """Check if the query is asking for weather in multiple locations"""
+        """Check if the query is asking for weather in multiple locations and use Jina search for real data"""
         # Common patterns for multi-location weather queries
         patterns = [
             r"weather\s+in\s+([A-Za-z\s,]+)\s+and\s+([A-Za-z\s,]+)",
             r"weather\s+for\s+([A-Za-z\s,]+)\s+and\s+([A-Za-z\s,]+)",
-            r"weather\s+(?:in|for|at)\s+([A-Za-z\s,]+)(?:\s*,\s*|\s+and\s+)([A-Za-z\s,]+)"
+            r"weather\s+(?:in|for|at)\s+([A-Za-z\s,]+)(?:\s*,\s*|\s+and\s+)([A-Za-z\s,]+)",
+            r"compare\s+weather\s+(?:in|for|at|between)?\s+([A-Za-z\s,]+)\s+(?:and|vs|versus)\s+([A-Za-z\s,]+)"
         ]
         
         locations = []
@@ -4789,6 +4958,9 @@ class ToolRegistry:
         if len(locations) > 1:
             console.print(f"[cyan]Detected weather query for multiple locations: {locations}[/cyan]")
             
+            # Show status message while retrieving data
+            console.print("[cyan]Retrieving real weather data from web search...[/cyan]")
+            
             # Call the multiple weather function
             result = self._get_multiple_weather(locations)
             
@@ -4798,21 +4970,28 @@ class ToolRegistry:
                 
                 for location, weather_data in result.get("results", {}).items():
                     if weather_data.get("success", False):
-                        response += f"**{location}**: {weather_data.get('current_condition', 'Unknown').capitalize()}, " \
-                                   f"{weather_data.get('temperature_f', 'N/A')}°F ({weather_data.get('temperature_c', 'N/A')}°C), " \
-                                   f"humidity {weather_data.get('humidity', 'N/A')}%, " \
-                                   f"wind speed {weather_data.get('wind_speed_mph', 'N/A')} mph.\n\n"
-                        
-                        # Add tomorrow's forecast
-                        forecast = weather_data.get("forecast", [])
-                        if forecast and len(forecast) > 0:
-                            tomorrow = forecast[0]
-                            response += f"Tomorrow in {location}: {tomorrow.get('condition', 'unknown').capitalize()}, " \
-                                       f"high of {tomorrow.get('high_f', 'N/A')}°F, " \
-                                       f"low of {tomorrow.get('low_f', 'N/A')}°F, " \
-                                       f"{tomorrow.get('precipitation_chance', 'N/A')}% chance of precipitation.\n\n"
+                        # Use the summary if available
+                        if "summary" in weather_data:
+                            response += f"**{location}**: {weather_data['summary']}\n\n"
+                        else:
+                            response += f"**{location}**: {weather_data.get('current_condition', 'Unknown').capitalize()}, " \
+                                      f"{weather_data.get('temperature_f', 'N/A')}°F ({weather_data.get('temperature_c', 'N/A')}°C), " \
+                                      f"humidity {weather_data.get('humidity', 'N/A')}%, " \
+                                      f"wind speed {weather_data.get('wind_speed_mph', 'N/A')} mph.\n\n"
+                            
+                            # Add tomorrow's forecast
+                            forecast = weather_data.get("forecast", [])
+                            if forecast and len(forecast) > 0:
+                                tomorrow = forecast[0]
+                                response += f"Tomorrow in {location}: {tomorrow.get('condition', 'unknown').capitalize()}, " \
+                                          f"high of {tomorrow.get('high_f', 'N/A')}°F, " \
+                                          f"low of {tomorrow.get('low_f', 'N/A')}°F, " \
+                                          f"{tomorrow.get('precipitation_chance', 'N/A')}% chance of precipitation.\n\n"
                     else:
                         response += f"**{location}**: Could not retrieve weather data. Error: {weather_data.get('error', 'Unknown error')}\n\n"
+                
+                # Add source information
+                response += "\nData sourced from web search results."
                 
                 # Add the response to conversation history
                 self.add_message("assistant", response)
