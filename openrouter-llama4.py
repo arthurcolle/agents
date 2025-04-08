@@ -964,15 +964,23 @@ def delete_function(name: str) -> Dict:
 
 class Llama4Agent:
     """
-    Llama 4 Agent with autonomous reasoning capabilities
-    Includes a protected kernel for long-running execution
+    Llama 4 Agent with autonomous reasoning capabilities and distributed processing
+    Includes a protected kernel for long-running execution and multi-processing support
     """
     def __init__(self, agent_id=None, api_key=None, model=MODEL, 
                  temperature=DEFAULT_TEMP, max_tokens=2048,
-                 system_prompt=None, debug=False):
+                 system_prompt=None, debug=False, fallback_models=None):
         # Agent identification
         self.agent_id = agent_id or str(uuid.uuid4())
         self.model = model
+        
+        # Fallback models if primary model fails
+        self.fallback_models = fallback_models or [
+            "meta-llama/llama-4-scout",
+            "anthropic/claude-3-opus",
+            "anthropic/claude-3-sonnet",
+            "google/gemini-1.5-pro"
+        ]
         
         # API configuration
         self.api_key = api_key or OPENROUTER_API_KEY
@@ -980,6 +988,11 @@ class Llama4Agent:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.debug = debug
+        
+        # Multi-processing configuration
+        self.use_multiprocessing = True
+        self.process_pool = process_pool  # Use global process pool
+        self.thread_pool = thread_pool    # Use global thread pool
         
         # Advanced connection and retry configuration
         self.max_retries = 5  # Maximum retry attempts
@@ -994,6 +1007,10 @@ class Llama4Agent:
         self.circuit_break_time = None  # When circuit breaker was triggered
         self.consecutive_failures = 0  # Count of consecutive failures
         
+        # Model fallback configuration
+        self.model_fallback_index = 0  # Current fallback model index
+        self.model_failures = {}  # Track failures by model
+        
         # Request timeout configuration
         self.connect_timeout = 10  # Connection timeout in seconds
         self.read_timeout = 180  # Read timeout in seconds for non-streaming
@@ -1006,7 +1023,16 @@ class Llama4Agent:
             "failure_count": 0,
             "last_latency": 0,
             "avg_latency": 0,
-            "last_error": None
+            "last_error": None,
+            "models_health": {}  # Track health by model
+        }
+        
+        # Distributed processing
+        self.distributed_mode = REDIS_AVAILABLE
+        self.pubsub_channels = {
+            "agent_events": f"agent:{self.agent_id}:events",
+            "agent_tasks": f"agent:{self.agent_id}:tasks",
+            "agent_results": f"agent:{self.agent_id}:results"
         }
         
         # Conversation state
@@ -1020,17 +1046,31 @@ class Llama4Agent:
             "content": self.system_prompt
         })
         
+        # Setup distributed event handlers if Redis is available
+        if REDIS_AVAILABLE and redis_async_client:
+            # Register handlers for agent events
+            register_pubsub_handler("agent_events", self._handle_agent_event)
+            register_pubsub_handler(self.pubsub_channels["agent_results"], self._handle_task_result)
+            
+            # Subscribe to agent-specific channels
+            asyncio.create_task(self._subscribe_to_agent_channels())
+        
         # Initialize metadata storage
         self.metadata = {
             "reasoning_steps": [],
             "function_calls": [],
             "current_goal": None,
             "pending_tasks": [],
-            "completed_tasks": []
+            "completed_tasks": [],
+            "distributed_tasks": {}  # Track distributed tasks
         }
         
         # Initialize capability usage tracking
         self.execution_times = {}
+        
+        # Locks for thread safety
+        self._message_lock = asyncio.Lock()
+        self._metadata_lock = asyncio.Lock()
         
         # Register functions
         self._register_agent_functions()
@@ -1070,15 +1110,102 @@ class Llama4Agent:
                 }
             )
             
+    async def _subscribe_to_agent_channels(self):
+        """Subscribe to agent-specific Redis channels"""
+        if REDIS_AVAILABLE and pubsub:
+            try:
+                # Subscribe to agent-specific channels
+                for channel in self.pubsub_channels.values():
+                    await pubsub.subscribe(channel)
+                    logger.info(f"Subscribed to channel: {channel}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to subscribe to agent channels: {e}")
+                return False
+        return False
+    
+    async def _handle_agent_event(self, data):
+        """Handle agent events from PubSub"""
+        try:
+            if isinstance(data, dict):
+                event_type = data.get("type")
+                
+                if event_type == "task_assigned":
+                    task_id = data.get("task_id")
+                    logger.info(f"Task assigned to agent: {task_id}")
+                    
+                    # Store task in metadata
+                    async with self._metadata_lock:
+                        self.metadata["distributed_tasks"][task_id] = {
+                            "status": "assigned",
+                            "assigned_at": time.time(),
+                            "data": data
+                        }
+                
+                elif event_type == "agent_command":
+                    command = data.get("command")
+                    if command == "reset":
+                        logger.info("Received reset command")
+                        await self.reset()
+        except Exception as e:
+            logger.error(f"Error handling agent event: {e}")
+    
+    async def _handle_task_result(self, data):
+        """Handle task results from PubSub"""
+        try:
+            if isinstance(data, dict):
+                task_id = data.get("task_id")
+                result = data.get("result")
+                
+                if task_id and task_id in self.metadata["distributed_tasks"]:
+                    # Update task status
+                    async with self._metadata_lock:
+                        self.metadata["distributed_tasks"][task_id].update({
+                            "status": "completed",
+                            "completed_at": time.time(),
+                            "result": result
+                        })
+                    
+                    logger.info(f"Received result for task {task_id}")
+        except Exception as e:
+            logger.error(f"Error handling task result: {e}")
+    
+    async def reset(self):
+        """Reset the agent state"""
+        async with self._message_lock:
+            # Keep system prompt but reset conversation
+            self.messages = [{
+                "role": "system",
+                "content": self.system_prompt
+            }]
+            
+            # Reset metadata
+            async with self._metadata_lock:
+                self.metadata = {
+                    "reasoning_steps": [],
+                    "function_calls": [],
+                    "current_goal": None,
+                    "pending_tasks": [],
+                    "completed_tasks": [],
+                    "distributed_tasks": {}
+                }
+            
+            # Generate new conversation ID
+            self.conversation_id = str(uuid.uuid4())
+            
+            logger.info(f"Agent {self.agent_id} reset with new conversation ID: {self.conversation_id}")
+    
     def _get_default_system_prompt(self):
         """Get the default system prompt"""
-        return """You are an advanced Llama 4 agent with autonomous reasoning and research capabilities. You can:
+        return """You are an advanced Llama 4 agent with autonomous reasoning, distributed processing, and research capabilities. You can:
 1. Call functions to gather information and perform actions
 2. Reason step by step to solve complex problems
 3. Research topics by searching, reading, and analyzing multiple web sources
 4. Create, modify, and manage new code abilities
 5. Search the web, fact-check statements, and read URLs using Jina.ai
 6. Remember context and maintain coherent conversations
+7. Distribute complex tasks across multiple processes for parallel execution
+8. Use WebRTC for real-time communication when needed
 
 You have access to powerful web research tools:
 - web_research: Perform comprehensive research on a topic, gathering and analyzing multiple sources
@@ -1086,17 +1213,24 @@ You have access to powerful web research tools:
 - jina_fact_check: Fact check statements against web sources
 - jina_read_url: Read and extract key information from any URL
 
+You also have distributed processing capabilities:
+- parallel_process: Execute a task across multiple CPU cores for faster processing
+- distribute_task: Send a task to be processed by another agent or service
+- realtime_communicate: Establish WebRTC connection for real-time data exchange
+
 When users ask factual questions or need information about current topics, you should use your research capabilities to gather accurate information from the web rather than relying solely on your training data.
 
 Always reason step by step when approaching complex problems. Leverage your web research capabilities to find up-to-date and relevant information online.
+For computationally intensive tasks, use your parallel processing capabilities.
 """
     
-    def chat(self, user_message, images=None, stream=True, recursive_call=False):
+    async def chat(self, user_message, images=None, stream=True, recursive_call=False):
         """
-        Send a message to the model and get a response
+        Send a message to the model and get a response with distributed processing support
         
         This method supports a recursive approach where the agent can decide to make 
-        additional calls based on tool results.
+        additional calls based on tool results. It also supports distributed processing
+        for computationally intensive tasks.
         
         Args:
             user_message: The user's message
@@ -1114,22 +1248,31 @@ Always reason step by step when approaching complex problems. Leverage your web 
         if images:
             message_content = {"text": user_message, "images": images}
         
-        # Only add user message if there is content and this is an initial call, not a recursive one
-        if not recursive_call:
-            self.messages.append({
-                "role": "user",
-                "content": message_content
-            })
-        # For recursive calls, if we have a specific follow-up prompt, add it
-        elif recursive_call and user_message:
-            self.messages.append({
-                "role": "user",
-                "content": message_content
-            })
+        # Thread-safe message addition
+        async with self._message_lock:
+            # Only add user message if there is content and this is an initial call, not a recursive one
+            if not recursive_call:
+                self.messages.append({
+                    "role": "user",
+                    "content": message_content
+                })
+            # For recursive calls, if we have a specific follow-up prompt, add it
+            elif recursive_call and user_message:
+                self.messages.append({
+                    "role": "user",
+                    "content": message_content
+                })
         
-        # Prepare request
+        # Prepare request with current model
+        current_model = self.model
+        
+        # Check if we should use a fallback model due to previous failures
+        if self.model_fallback_index > 0 and self.model_fallback_index < len(self.fallback_models):
+            current_model = self.fallback_models[self.model_fallback_index - 1]
+            logger.info(f"Using fallback model: {current_model}")
+        
         request_data = {
-            "model": self.model,
+            "model": current_model,
             "messages": format_messages_for_api(self.messages),
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
@@ -1148,6 +1291,19 @@ Always reason step by step when approaching complex problems. Leverage your web 
             
         # Track request start time for latency monitoring
         start_time = time.time()
+        
+        # Publish event if in distributed mode
+        if self.distributed_mode and redis_async_client:
+            try:
+                await publish_message(self.pubsub_channels["agent_events"], {
+                    "type": "request_started",
+                    "agent_id": self.agent_id,
+                    "conversation_id": self.conversation_id,
+                    "model": current_model,
+                    "timestamp": start_time
+                })
+            except Exception as e:
+                logger.error(f"Failed to publish request event: {e}")
         
         # Send request with advanced retry logic
         for attempt in range(self.max_retries):
