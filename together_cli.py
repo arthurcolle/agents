@@ -3299,8 +3299,9 @@ def extract_python_code(text: str) -> list:
     pattern = r'<\|python_start\|>(.*?)(?:<\|python_end\|>|<\|python_end)'
     matches = re.findall(pattern, text, re.DOTALL)
     return [match.strip() for match in matches]
-        
-        """Parse function calls from text in various Llama 4 supported formats.
+
+def parse_function_calls(text: str) -> List[Dict[str, Any]]:
+    """Parse function calls from text in various Llama 4 supported formats.
         
         Supports two formats:
         1. [func_name(param1=value1, param2=value2)]
