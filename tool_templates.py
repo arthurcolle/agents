@@ -168,7 +168,7 @@ def summarize_text(text, max_sentences=3):
     from collections import Counter
     
     # Split text into sentences
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = re.split(r'(?<=[.!?])\\s+', text)
     
     if len(sentences) <= max_sentences:
         return {
