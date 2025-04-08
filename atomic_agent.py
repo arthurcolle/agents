@@ -2184,6 +2184,20 @@ class ToolRegistry:
             function=self._respond_to_user
         )
         
+        # Weather function for direct location queries
+        self.register_function(
+            name="weather_for_location",
+            description="Get current weather information for a specific location",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "Location (e.g., city name, city and state)"}
+                },
+                "required": ["location"]
+            },
+            function=self._weather_for_location
+        )
+        
         # Scout Agent Orchestration tools
         self.register_function(
             name="orchestrate_tasks",
@@ -2746,7 +2760,7 @@ class ToolRegistry:
             
             for i, result in enumerate(results):
                 task_result = {
-                    "subtask": subtasks[i],
+                    "subtask": subtasks[i] if i < len(subtasks) else f"Task {i+1}",
                     "status": result["status"]
                 }
                 
@@ -4241,6 +4255,10 @@ class ToolRegistry:
             return {"location": location, "current_condition": condition, "temperature_f": temp_f, "temperature_c": temp_c, "humidity": humidity, "wind_speed_mph": wind_speed, "forecast": forecast, "last_updated": time.strftime("%Y-%m-%d %H:%M:%S"), "success": True}
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _weather_for_location(self, location: str) -> Dict[str, Any]:
+        """Get weather for a specific location - wrapper around _get_weather"""
+        return self._get_weather(location=location)
 
     def _execute_python(self, code: str, save_artifact: bool = False, artifact_name: str = "", description: str = "") -> Dict[str, Any]:
         try:
@@ -5218,7 +5236,7 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
         weather_match = re.search(r"weather\s+(?:in|for|at)\s+([A-Za-z\s,]+)", text.lower())
         if weather_match:
             location = weather_match.group(1).strip()
-            function_calls.append({"name": "get_weather", "arguments": {"location": location}})
+            function_calls.append({"name": "weather_for_location", "arguments": {"location": location}})
     
     # If we found potential function calls but couldn't parse any, log a warning
     if potential_function_call_found and not function_calls:

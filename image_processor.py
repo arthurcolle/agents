@@ -544,6 +544,7 @@ class ImageProcessor:
         """
         try:
             from PIL import ImageGrab
+            import time
             
             # Try to get image from clipboard
             image = ImageGrab.grabclipboard()
