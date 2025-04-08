@@ -3317,7 +3317,7 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
 
     # Look for the standard format: [func_name(param1="value1", param2=value2)]
     import re
-        pattern = r'\[(\w+)\((.*?)\)\]'
+    pattern = r'\[(\w+)\((.*?)\)\]'
         matches = re.findall(pattern, text)
         
         for match in matches:
