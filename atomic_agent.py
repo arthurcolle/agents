@@ -816,7 +816,7 @@ class ToolRegistry:
     def _multiply_numbers(self, a: float, b: float) -> Dict[str, Any]:
         return {"result": a * b, "success": True}
 
-    def _decompose_prompt(self, transcript: str) -> Dict[str, Any]:
+    def _divide_numbers(self, a: float, b: float) -> Dict[str, Any]:
         if b == 0:
             return {"error": "Division by zero is not allowed", "success": False}
         return {"result": a / b, "success": True}
