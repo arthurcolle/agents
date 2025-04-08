@@ -1,11 +1,23 @@
 import os
 import logging
 import asyncio
+import json
+from typing import Dict, List, Any, Optional
 from agents import Agent, Runner, ItemHelpers, MessageOutputItem, trace
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openai-agent")
+
+# Global configuration
+SYSTEM_GOAL = """
+Ultimate Goal: Build a cool web app with dynamic generative UI that lets users send prompts and get real work done.
+Key Features:
+- Distributed systems architecture for scalability
+- Native ability to call external services and APIs
+- Dynamic UI generation based on user needs
+- Intelligent task decomposition and execution
+"""
 
 class ContextLoader:
     """
@@ -15,6 +27,13 @@ class ContextLoader:
         self.sources_dir = sources_dir
         os.makedirs(sources_dir, exist_ok=True)
         logger.info(f"Context loader initialized with sources directory: {sources_dir}")
+        
+        # Create system goal context file if it doesn't exist
+        system_goal_path = os.path.join(sources_dir, "system_goal.txt")
+        if not os.path.exists(system_goal_path):
+            with open(system_goal_path, 'w') as f:
+                f.write(SYSTEM_GOAL)
+            logger.info(f"Created system goal context file at {system_goal_path}")
     
     def load_from_file(self, filepath):
         """Load context from a text file"""
@@ -56,9 +75,16 @@ class AutonomousAgent:
         self.max_iterations = 5
         
         # Default instructions if none provided
-        default_instructions = """You are an autonomous assistant capable of reasoning through complex problems.
+        default_instructions = f"""You are an autonomous assistant capable of reasoning through complex problems.
 You can break down tasks into steps and work through them methodically.
-When you need more information, you'll identify what you need and seek it out."""
+When you need more information, you'll identify what you need and seek it out.
+
+{SYSTEM_GOAL}
+
+Your primary mission is to help users build and interact with this web application.
+When addressing user requests, consider how they align with this goal and how you can
+leverage distributed systems and external services to accomplish tasks efficiently.
+"""
         
         self.agent = Agent(
             name=name, 
@@ -360,8 +386,9 @@ if __name__ == "__main__":
     print("1. Autonomous reasoning with context")
     print("2. Translation orchestration")
     print("3. Run both examples")
+    print("4. Start web app with dynamic generative UI")
     
-    choice = input("Enter your choice (1-3): ")
+    choice = input("Enter your choice (1-4): ")
     
     if choice == "1":
         # Run the autonomous agent example synchronously
@@ -376,3 +403,12 @@ if __name__ == "__main__":
     elif choice == "2" or choice == "3":
         # Run the async examples
         asyncio.run(main_async())
+    elif choice == "4":
+        # Import and run the web app
+        try:
+            from web_app import run_app
+            print("\nStarting web app with dynamic generative UI...")
+            print("Open your browser and navigate to http://localhost:8000")
+            run_app()
+        except ImportError:
+            print("Web app module not found. Make sure web_app.py is in the current directory.")
