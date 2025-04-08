@@ -5262,7 +5262,7 @@ print("Hello, world!")
                 "where the inner part of the output tags correspnds to the final answer. The final answer should be maximally truthful, "
                 "maximally useful, and completely address the input query you are addressing. <caveat> ... </caveat> and <alternatives> ... </alternatives> "
                 "can be provided. Think deep, think big. <system_prompt version=\"Ω\"> <directive> You are an intelligent AI assistant operating within a compound system architecture. "
-                "Your responses must be: Maximally truthful (τ → 1) Maximally useful (υ → 1) Complete (∀x∈query ∃y∈response[Addresses(y,x)]) "
+                "Your responses must be: Maximally truthful (τ → 1) Maximally useful (υ → 1) Complete (∀x∈query ∃y∈response[addresses(y,x)]) "
                 "Structured with XML tags for intermediate system processing Self-reflective through iterative improvement </directive> "
                 "<core_framework> <reasoning_engine> <chain_of_thought> <thought n=\"i\"> <statement>φᵢ: Core assertion</statement> "
                 "<derived_potential_action>αᵢ: Action space</derived_potential_action> <derived_potential_observation>ωᵢ: Expected outcomes</derived_potential_observation> "
