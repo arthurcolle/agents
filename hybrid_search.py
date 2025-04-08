@@ -50,22 +50,13 @@ class HybridSearch:
             self.conn.execute("INSTALL fts;")
             self.conn.execute("LOAD fts;")
             
-            # Set up OpenAI API key as a secret for FlockMTL
+            # Load all environment variables into DuckDB
+            self._load_env_vars_to_db()
+            
+            # Check if OpenAI API key is available
             api_key = os.environ.get("OPENAI_API_KEY", "")
-            if api_key:
-                try:
-                    # Try to create the secret
-                    self.conn.execute(f"CREATE SECRET openai (api_key='{api_key}');")
-                except Exception as e:
-                    # If the secret already exists, try to update it
-                    if "already exists" in str(e):
-                        self.conn.execute(f"UPDATE SECRET openai SET api_key='{api_key}';")
-                    else:
-                        logger.warning(f"Could not set OpenAI API key: {e}. Using mock embeddings.")
-                        self.use_mock_embeddings = True
-            else:
+            if not api_key:
                 logger.warning("OPENAI_API_KEY environment variable not set. Using mock embeddings.")
-                # Use mock embeddings if no API key is available
                 self.use_mock_embeddings = True
             
             logger.info("All extensions loaded successfully")
@@ -92,20 +83,19 @@ class HybridSearch:
     def _generate_mock_embedding(self, text: str) -> List[float]:
         """Generate a deterministic mock embedding for testing without API keys"""
         import hashlib
-        import struct
+        import random
         
-        # Create a deterministic but seemingly random embedding based on text hash
+        # Create a deterministic seed based on text hash
         hash_obj = hashlib.sha256(text.encode())
-        hash_bytes = hash_obj.digest()
+        hash_hex = hash_obj.hexdigest()
+        seed = int(hash_hex, 16) % (2**32)
+        random.seed(seed)
         
         # Generate 1536 float values (same dimension as text-embedding-3-small)
         embedding = []
-        for i in range(0, 1536):
-            # Use different parts of the hash to seed different values
-            byte_pos = i % 32
-            val = struct.unpack('f', hash_bytes[byte_pos:byte_pos+1] * 4)[0]
-            # Normalize to typical embedding range
-            val = (val % 1.0) * 0.1
+        for _ in range(1536):
+            # Generate a small random value between -0.1 and 0.1
+            val = (random.random() - 0.5) * 0.2
             embedding.append(val)
         
         # Normalize the embedding
@@ -132,7 +122,9 @@ class HybridSearch:
                 if self.use_mock_embeddings:
                     # Generate mock embedding
                     mock_embedding = self._generate_mock_embedding(doc['content'])
-                    mock_embedding_str = str(mock_embedding).replace('[', 'ARRAY[')
+                    
+                    # Convert to DuckDB array format with proper escaping
+                    mock_embedding_values = ", ".join([str(val) for val in mock_embedding])
                     
                     # Insert with mock embedding
                     self.conn.execute(f"""
@@ -141,7 +133,7 @@ class HybridSearch:
                             {i+1},
                             '{doc['title'].replace("'", "''")}',
                             '{doc['content'].replace("'", "''")}',
-                            {mock_embedding_str}
+                            ARRAY[{mock_embedding_values}]::FLOAT[]
                         );
                     """)
                 else:
@@ -209,11 +201,13 @@ class HybridSearch:
             if self.use_mock_embeddings:
                 # Generate mock embedding for query
                 mock_embedding = self._generate_mock_embedding(query)
-                mock_embedding_str = str(mock_embedding).replace('[', 'ARRAY[')
+                
+                # Convert to DuckDB array format with proper escaping
+                mock_embedding_values = ", ".join([str(val) for val in mock_embedding])
                 
                 self.conn.execute(f"""
                     CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
-                    SELECT {mock_embedding_str}::FLOAT[1536] AS embedding;
+                    SELECT ARRAY[{mock_embedding_values}]::FLOAT[] AS embedding;
                 """)
             else:
                 self.conn.execute(f"""
