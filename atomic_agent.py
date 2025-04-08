@@ -4633,8 +4633,8 @@ class TogetherAgent:
         if not self.use_mock:
             self.client = Together(api_key=self.api_key)
             
-        # Initialize advanced memory system
-        self.memory = VectorMemory(embedding_model, vector_store)
+            # Initialize advanced memory system
+            self.memory = VectorMemory(embedding_model, vector_store)
         else:
             from types import SimpleNamespace
             def mock_completion(**kwargs):
