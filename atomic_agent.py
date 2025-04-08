@@ -4371,7 +4371,7 @@ class ToolRegistry:
             together = Together()
             
             extraction_response = together.chat.completions.create(
-                model="meta-llama/Llama-3.1-8B-Instruct",  # Use a smaller model for extraction
+                model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",  # Use the same model as the agent
                 messages=extraction_prompt,
                 response_format={"type": "json_object", "schema": WeatherExtraction.model_json_schema()},
                 temperature=0.2  # Low temperature for more factual extraction
