@@ -6338,6 +6338,29 @@ print("Hello, world!")
                                     
                                     # Try to parse function calls from the corrected response
                                     corrected_function_calls = parse_function_calls(corrected_content)
+                                    
+                                    # Check if any of the function calls are to non-existent functions
+                                    invalid_functions = [fc["name"] for fc in corrected_function_calls 
+                                                        if not self.tool_registry.has_tool(fc["name"]) 
+                                                        and not self._find_similar_tool(fc["name"])]
+                                    
+                                    # If there are invalid functions and this is the last retry, 
+                                    # generate a direct response instead
+                                    if invalid_functions and retry_count >= max_retries:
+                                        console.print(f"[yellow]Invalid functions detected after max retries: {invalid_functions}. Generating direct response.[/yellow]")
+                                        direct_prompt = "Please provide a direct response without using any functions."
+                                        self.add_message("user", direct_prompt)
+                                        direct_response = self.client.completions.create(
+                                            model=self.model,
+                                            prompt=self.format_llama4_prompt() + "\nAssistant: ",
+                                            max_tokens=1024,
+                                            stop=["<|eot|>"]
+                                        )
+                                        direct_content = direct_response.choices[0].text + "<|eot|>"
+                                        direct_message = {"role": "assistant", "content": direct_content}
+                                        self.conversation_history.append(direct_message)
+                                        return direct_content.rstrip("<|eot|>")
+                                    
                                     if corrected_function_calls:
                                         # Process the corrected function calls
                                         corrected_results = []
@@ -6461,6 +6484,21 @@ print("Hello, world!")
                                         except Exception as e:
                                             console.print(f"[red]Error executing code: {str(e)}[/red]")
                                             console.print(traceback.format_exc())
+                        # Check for common patterns that might indicate the model is trying to call a non-existent function
+                        if "<|python_start|>" in response_content and any(func in response_content for func in ["get_user_info", "get_name", "user_info"]):
+                            # Replace with a direct response for basic questions
+                            self.conversation_history.pop()  # Remove the problematic response
+                            direct_response = self.client.completions.create(
+                                model=self.model,
+                                prompt=self.format_llama4_prompt() + "\n\nAssistant: I don't have access to personal information about you unless you share it with me. How can I help you today?",
+                                max_tokens=1024,
+                                stop=["<|eot|>"]
+                            )
+                            direct_content = direct_response.choices[0].text + "<|eot|>"
+                            direct_message = {"role": "assistant", "content": direct_content}
+                            self.conversation_history.append(direct_message)
+                            return direct_content.rstrip("<|eot|>")
+                        
                         return response_content
                 else:
                     response = self.client.chat.completions.create(
