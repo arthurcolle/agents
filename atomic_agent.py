@@ -159,6 +159,8 @@ class ScoutAgent:
         self.image_processing_limit = 5
         self.status = "idle"  # idle, working, completed, error
         self.chains_of_thought = []
+        self.rollouts = []  # Store different solution paths/rollouts
+        self.max_rollouts = 3  # Maximum number of rollouts to generate
         self.is_available = threading.Event()
         self.is_available.set()  # Initially available
         
@@ -325,7 +327,7 @@ class ScoutAgent:
         })
         
     def perform_task(self, task, context=None):
-        """Main method to process a task with chain-of-thought reasoning"""
+        """Main method to process a task with chain-of-thought reasoning and multiple rollouts"""
         # Add the task to the conversation history
         if context:
             task_with_context = f"Task: {task}\n\nContext: {context}"
@@ -334,14 +336,17 @@ class ScoutAgent:
             
         self.conversation_history.append({"role": "user", "content": task_with_context})
         
-        # Prompt the agent to think through the task step by step
+        from together import Together
+        together = Together()
+        
+        # Generate multiple rollouts/solution paths
+        rollout_results = []
+        
+        # First generate a chain of thought
         cot_prompt = {
             "role": "user", 
             "content": f"For this task: '{task}', please use chain-of-thought reasoning. First, break down the task into steps. Then think through each step carefully before providing your final answer or solution."
         }
-        
-        from together import Together
-        together = Together()
         
         # Generate the chain of thought
         cot_response = together.chat.completions.create(
@@ -354,11 +359,63 @@ class ScoutAgent:
         cot_content = cot_response.choices[0].message.content
         self.add_chain_of_thought(cot_content)
         
-        # Now generate the actual solution
+        # Now generate multiple solution rollouts with different approaches
         self.conversation_history.append({"role": "assistant", "content": cot_content})
+        
+        for i in range(self.max_rollouts):
+            rollout_prompt = {
+                "role": "user",
+                "content": f"Based on your thinking above, provide solution approach #{i+1} to this task. Try to use a different strategy or perspective than your previous approaches."
+            }
+            
+            if i > 0:
+                # Add previous rollouts to the context to ensure diversity
+                rollout_prompt["content"] += f"\n\nYour previous solution approaches were:\n" + "\n".join([
+                    f"Approach #{j+1}: {r['solution'][:100]}..." for j, r in enumerate(rollout_results)
+                ])
+            
+            rollout_response = together.chat.completions.create(
+                model=self.model,
+                messages=self.conversation_history + [rollout_prompt],
+                max_tokens=1024,
+                temperature=0.7 + (i * 0.1)  # Increase temperature for more diversity in later rollouts
+            )
+            
+            rollout_content = rollout_response.choices[0].message.content
+            
+            # Store this rollout
+            rollout_result = {
+                "rollout_id": i+1,
+                "solution": rollout_content,
+                "timestamp": time.time()
+            }
+            rollout_results.append(rollout_result)
+            
+            # Add a brief evaluation of this rollout
+            eval_prompt = {
+                "role": "user",
+                "content": f"Evaluate the strengths and weaknesses of solution approach #{i+1}."
+            }
+            
+            eval_response = together.chat.completions.create(
+                model=self.model,
+                messages=self.conversation_history + [{"role": "assistant", "content": rollout_content}] + [eval_prompt],
+                max_tokens=512
+            )
+            
+            eval_content = eval_response.choices[0].message.content
+            rollout_result["evaluation"] = eval_content
+        
+        # Store all rollouts
+        self.rollouts.extend(rollout_results)
+        
+        # Select the best rollout based on evaluations
+        best_rollout = self._select_best_rollout(rollout_results)
+        
+        # Add the final selected solution to conversation history
         self.conversation_history.append({
             "role": "user", 
-            "content": "Based on your thinking above, what is your final answer or solution?"
+            "content": "Based on all the approaches you've considered, what is your final recommended solution?"
         })
         
         final_response = together.chat.completions.create(
@@ -375,8 +432,61 @@ class ScoutAgent:
             "chain_of_thought": cot_content,
             "solution": final_content,
             "agent_id": self.agent_id,
-            "specialization": self.specialization
+            "specialization": self.specialization,
+            "rollouts": rollout_results,
+            "best_rollout": best_rollout
         }
+    
+    def _select_best_rollout(self, rollouts):
+        """Select the best rollout based on evaluations"""
+        if not rollouts:
+            return None
+            
+        # If we only have one rollout, return it
+        if len(rollouts) == 1:
+            return rollouts[0]
+            
+        # Create a prompt to compare all rollouts
+        comparison_prompt = {
+            "role": "user",
+            "content": "Compare all the solution approaches and select the best one. Explain your reasoning."
+        }
+        
+        # Add all rollouts to the conversation history temporarily
+        temp_history = self.conversation_history.copy()
+        for i, rollout in enumerate(rollouts):
+            temp_history.append({
+                "role": "assistant", 
+                "content": f"Solution Approach #{i+1}:\n{rollout['solution']}\n\nEvaluation: {rollout['evaluation']}"
+            })
+        
+        from together import Together
+        together = Together()
+        
+        # Generate comparison
+        comparison_response = together.chat.completions.create(
+            model=self.model,
+            messages=temp_history + [comparison_prompt],
+            max_tokens=512
+        )
+        
+        comparison_content = comparison_response.choices[0].message.content
+        
+        # Try to extract the best rollout number
+        best_id = 1  # Default to first rollout
+        match = re.search(r"(?:approach|solution|rollout)\s*#?\s*(\d+)", comparison_content.lower())
+        if match:
+            try:
+                best_id = int(match.group(1))
+                if best_id < 1 or best_id > len(rollouts):
+                    best_id = 1
+            except:
+                best_id = 1
+                
+        best_rollout = rollouts[best_id-1]
+        best_rollout["comparison"] = comparison_content
+        
+        return best_rollout
     
     def stop(self):
         self.stop_event.set()
@@ -514,6 +624,18 @@ class AgentOrchestrator:
         for scout_id, scout in self.scouts.items():
             all_thoughts.extend(scout.chains_of_thought)
         return sorted(all_thoughts, key=lambda x: x["timestamp"])
+        
+    def get_all_rollouts(self):
+        """Get all solution rollouts from all scouts"""
+        all_rollouts = []
+        for scout_id, scout in self.scouts.items():
+            for rollout in scout.rollouts:
+                # Add scout information to each rollout
+                rollout_copy = rollout.copy()
+                rollout_copy["scout_id"] = scout_id
+                rollout_copy["specialization"] = scout.specialization
+                all_rollouts.append(rollout_copy)
+        return sorted(all_rollouts, key=lambda x: x["timestamp"], reverse=True)
         
     def execute_parallel_tasks(self, tasks, context=None):
         """Execute multiple tasks in parallel and wait for all results"""
@@ -1038,6 +1160,21 @@ class ToolRegistry:
         )
         
         self.register_function(
+            name="generate_solution_rollouts",
+            description="Generate multiple solution approaches (rollouts) for a given task",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "The task to generate solutions for"},
+                    "num_rollouts": {"type": "integer", "description": "Number of different solution approaches to generate", "default": 3},
+                    "specialization": {"type": "string", "description": "Type of scout agent to use (research, code, planning, creative, critical)", "default": ""}
+                },
+                "required": ["task"]
+            },
+            function=self._generate_solution_rollouts
+        )
+        
+        self.register_function(
             name="assign_specialized_task",
             description="Assign a task to a specific type of specialized scout agent",
             parameters={
@@ -1070,6 +1207,16 @@ class ToolRegistry:
                 "properties": {}
             },
             function=self._get_chains_of_thought
+        )
+        
+        self.register_function(
+            name="get_solution_rollouts",
+            description="Get all solution rollouts from scout agents",
+            parameters={
+                "type": "object",
+                "properties": {}
+            },
+            function=self._get_solution_rollouts
         )
         
         # Date and time tools
@@ -1527,7 +1674,8 @@ class ToolRegistry:
                     "status": scout.status,
                     "is_available": scout.is_available.is_set(),
                     "pending_tasks": scout.task_queue.qsize(),
-                    "completed_chains": len(scout.chains_of_thought)
+                    "completed_chains": len(scout.chains_of_thought),
+                    "completed_rollouts": len(scout.rollouts)
                 })
             
             return {
@@ -1536,6 +1684,41 @@ class ToolRegistry:
                 "scouts": scout_statuses,
                 "busy_scouts": len([s for s in scout_statuses if not s["is_available"]]),
                 "available_scouts": len([s for s in scout_statuses if s["is_available"]])
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _get_solution_rollouts(self) -> Dict[str, Any]:
+        """Get all solution rollouts from scout agents"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            all_rollouts = agent.agent_orchestrator.get_all_rollouts()
+            
+            # Group by scout agent
+            scout_rollouts = {}
+            for rollout in all_rollouts:
+                scout_id = rollout.get("scout_id", "unknown")
+                if scout_id not in scout_rollouts:
+                    scout_rollouts[scout_id] = []
+                scout_rollouts[scout_id].append(rollout)
+            
+            # Get most recent rollouts
+            recent_rollouts = all_rollouts[:min(len(all_rollouts), 5)]
+            
+            return {
+                "success": True,
+                "total_rollouts": len(all_rollouts),
+                "scouts_with_rollouts": len(scout_rollouts),
+                "recent_rollouts": recent_rollouts,
+                "rollouts_by_scout": scout_rollouts
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
@@ -1571,6 +1754,88 @@ class ToolRegistry:
                 "scouts_with_chains": len(scout_thoughts),
                 "recent_chains": recent_thoughts,
                 "chains_by_scout": scout_thoughts
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _generate_solution_rollouts(self, task: str, num_rollouts: int = 3, specialization: str = "") -> Dict[str, Any]:
+        """Generate multiple solution approaches (rollouts) for a given task"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            # Set the maximum number of rollouts
+            for scout_id, scout in agent.agent_orchestrator.scouts.items():
+                scout.max_rollouts = min(num_rollouts, 5)  # Cap at 5 to prevent excessive API calls
+                
+            # Find a suitable scout agent based on specialization
+            suitable_scout = None
+            if specialization:
+                for scout_id, scout in agent.agent_orchestrator.scouts.items():
+                    if scout.specialization == specialization and scout.is_available.is_set():
+                        suitable_scout = scout
+                        break
+            
+            # If no specific specialization or no suitable scout found, use any available scout
+            if not suitable_scout:
+                for scout_id, scout in agent.agent_orchestrator.scouts.items():
+                    if scout.is_available.is_set():
+                        suitable_scout = scout
+                        break
+            
+            if not suitable_scout:
+                return {"error": "No available scout agents to perform the task", "success": False}
+            
+            # Assign the task to the selected scout
+            task_id = suitable_scout.add_task(suitable_scout.perform_task, task)
+            
+            # Wait for completion
+            start_time = time.time()
+            max_wait_time = 120  # Maximum wait time in seconds (longer for multiple rollouts)
+            
+            while True:
+                result = suitable_scout.get_result(task_id)
+                if result["status"] in ["completed", "failed"]:
+                    break
+                    
+                if time.time() - start_time > max_wait_time:
+                    return {"error": "Timed out waiting for scout agent to complete rollouts", "success": False}
+                
+                time.sleep(0.5)
+            
+            if result["status"] == "failed":
+                return {"error": result.get("error", "Unknown error during rollout generation"), "success": False}
+            
+            # Extract rollouts from the result
+            rollouts = result.get("result", {}).get("rollouts", [])
+            best_rollout = result.get("result", {}).get("best_rollout", {})
+            
+            # Format the response
+            formatted_rollouts = []
+            for rollout in rollouts:
+                formatted_rollouts.append({
+                    "rollout_id": rollout.get("rollout_id", 0),
+                    "solution": rollout.get("solution", ""),
+                    "evaluation": rollout.get("evaluation", "")
+                })
+            
+            return {
+                "success": True,
+                "task": task,
+                "num_rollouts": len(formatted_rollouts),
+                "rollouts": formatted_rollouts,
+                "best_rollout_id": best_rollout.get("rollout_id", 1) if best_rollout else 1,
+                "best_solution": best_rollout.get("solution", "") if best_rollout else "",
+                "comparison": best_rollout.get("comparison", "") if best_rollout else "",
+                "scout_id": suitable_scout.agent_id,
+                "specialization": suitable_scout.specialization,
+                "execution_time": time.time() - start_time
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
