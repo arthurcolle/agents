@@ -3394,37 +3394,37 @@ class CLIAgent:
                     # Get the final response after tool calls
                     self.console.print("[bold green]Processing results...[/bold green]")
                     second_response = client.chat.completions.create(
-                            model=self.model,
-                            messages=self.conversation_history
-                        )
+                        model=self.model,
+                        messages=self.conversation_history
+                    )
+                    
+                    primary_response = second_response.choices[0].message.content
+                    
+                    # Meta-cognitive reflection (outer model) if enabled
+                    final_response = primary_response
+                    meta_reflection = None
+                    
+                    if self.enable_meta:
+                        self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
+                        # Get meta-evaluation
+                        reflection = await self.meta_layer.reflect(message, primary_response, client)
+                        meta_reflection = reflection
                         
-                        primary_response = second_response.choices[0].message.content
-                        
-                        # Meta-cognitive reflection (outer model) if enabled
-                        final_response = primary_response
-                        meta_reflection = None
-                        
-                        if self.enable_meta:
-                            self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
-                            # Get meta-evaluation
-                            reflection = await self.meta_layer.reflect(message, primary_response, client)
-                                meta_reflection = reflection
-                                
-                                # Improve response based on meta-reflection
-                                if reflection and "evaluation" in reflection:
-                                    improved_response = await self.meta_layer.improve(
-                                        message, 
-                                        primary_response, 
-                                        reflection["evaluation"],
-                                        client
-                                    )
-                                    final_response = improved_response
-                                    
-                                    # Add meta-reflection to conversation history as a system note
-                                    self.conversation_history.append({
-                                        "role": "system",
-                                        "content": f"Meta-reflection: {reflection['evaluation']}"
-                                    })
+                        # Improve response based on meta-reflection
+                        if reflection and "evaluation" in reflection:
+                            improved_response = await self.meta_layer.improve(
+                                message, 
+                                primary_response, 
+                                reflection["evaluation"],
+                                client
+                            )
+                            final_response = improved_response
+                            
+                            # Add meta-reflection to conversation history as a system note
+                            self.conversation_history.append({
+                                "role": "system",
+                                "content": f"Meta-reflection: {reflection['evaluation']}"
+                            })
                         
                         # Add the final response to the conversation
                         self.conversation_history.append({
@@ -3454,11 +3454,11 @@ class CLIAgent:
                             self.interaction_count > 1):
                             self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
                             replay_result = await self._perform_experience_replay(client)
-                                if replay_result["success"] and self.console:
-                                    self.console.print(
-                                        f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
-                                        style="dim"
-                                    )
+                            if replay_result["success"] and self.console:
+                                self.console.print(
+                                    f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
+                                    style="dim"
+                                )
                         
                         return final_response
                 else:
@@ -3473,23 +3473,23 @@ class CLIAgent:
                         self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
                         # Get meta-evaluation
                         reflection = await self.meta_layer.reflect(message, primary_response, client)
-                            meta_reflection = reflection
+                        meta_reflection = reflection
+                        
+                        # Improve response based on meta-reflection
+                        if reflection and "evaluation" in reflection:
+                            improved_response = await self.meta_layer.improve(
+                                message, 
+                                primary_response, 
+                                reflection["evaluation"],
+                                client
+                            )
+                            final_response = improved_response
                             
-                            # Improve response based on meta-reflection
-                            if reflection and "evaluation" in reflection:
-                                improved_response = await self.meta_layer.improve(
-                                    message, 
-                                    primary_response, 
-                                    reflection["evaluation"],
-                                    client
-                                )
-                                final_response = improved_response
-                                
-                                # Add meta-reflection to conversation history as a system note
-                                self.conversation_history.append({
-                                    "role": "system",
-                                    "content": f"Meta-reflection: {reflection['evaluation']}"
-                                })
+                            # Add meta-reflection to conversation history as a system note
+                            self.conversation_history.append({
+                                "role": "system",
+                                "content": f"Meta-reflection: {reflection['evaluation']}"
+                            })
                     
                     # Add the response to the conversation history
                     self.conversation_history.append({
@@ -3511,11 +3511,11 @@ class CLIAgent:
                         self.interaction_count > 1):
                         self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
                         replay_result = await self._perform_experience_replay(client)
-                            if replay_result["success"] and self.console:
-                                self.console.print(
-                                    f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
-                                    style="dim"
-                                )
+                        if replay_result["success"] and self.console:
+                            self.console.print(
+                                f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
+                                style="dim"
+                            )
                     
                     # Notify hooks that the agent has completed
                     self.hooks.on_end("CLI Agent", final_response)
