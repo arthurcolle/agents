@@ -5131,6 +5131,7 @@ For each function call, provide:
 3. A brief reasoning for why this function is needed
 4. A priority level (1-5) to indicate importance
 
+ALL functions can be executed in parallel, including weather queries for multiple locations, web searches, and other operations.
 Group related operations that can be executed in parallel, and specify an execution strategy.
 """
     system_found = False
@@ -5184,7 +5185,11 @@ Group related operations that can be executed in parallel, and specify an execut
         return []
 
 def execute_parallel_functions(function_calls: List[Dict[str, Any]], tool_registry):
-    """Execute multiple function calls in parallel with advanced error handling and retry logic"""
+    """Execute multiple function calls in parallel with advanced error handling and retry logic
+    
+    This function supports all types of functions, including weather queries for multiple locations,
+    web searches, and other operations that can be executed in parallel.
+    """
     task_processor = AsyncTaskProcessor()
     tasks = []
     
@@ -6034,6 +6039,61 @@ print("Hello, world!")
                 
         self.conversation_history.append(message)
 
+    def _check_multi_location_weather_query(self, query: str) -> Optional[str]:
+        """Check if the query is asking for weather in multiple locations"""
+        # Common patterns for multi-location weather queries
+        patterns = [
+            r"weather\s+in\s+([A-Za-z\s,]+)\s+and\s+([A-Za-z\s,]+)",
+            r"weather\s+for\s+([A-Za-z\s,]+)\s+and\s+([A-Za-z\s,]+)",
+            r"weather\s+(?:in|for|at)\s+([A-Za-z\s,]+)(?:\s*,\s*|\s+and\s+)([A-Za-z\s,]+)"
+        ]
+        
+        locations = []
+        
+        # Try each pattern
+        for pattern in patterns:
+            matches = re.findall(pattern, query, re.IGNORECASE)
+            if matches:
+                for match in matches:
+                    locations.extend([loc.strip() for loc in match if loc.strip()])
+                break
+        
+        # If we found multiple locations, process them
+        if len(locations) > 1:
+            console.print(f"[cyan]Detected weather query for multiple locations: {locations}[/cyan]")
+            
+            # Call the multiple weather function
+            result = self.tool_registry._get_multiple_weather(locations)
+            
+            if result.get("success", False):
+                # Format the results into a nice response
+                response = f"Here's the current weather for the locations you asked about:\n\n"
+                
+                for location, weather_data in result.get("results", {}).items():
+                    if weather_data.get("success", False):
+                        response += f"**{location}**: {weather_data.get('current_condition', 'Unknown').capitalize()}, " \
+                                   f"{weather_data.get('temperature_f', 'N/A')}°F ({weather_data.get('temperature_c', 'N/A')}°C), " \
+                                   f"humidity {weather_data.get('humidity', 'N/A')}%, " \
+                                   f"wind speed {weather_data.get('wind_speed_mph', 'N/A')} mph.\n\n"
+                        
+                        # Add tomorrow's forecast
+                        forecast = weather_data.get("forecast", [])
+                        if forecast and len(forecast) > 0:
+                            tomorrow = forecast[0]
+                            response += f"Tomorrow in {location}: {tomorrow.get('condition', 'unknown').capitalize()}, " \
+                                       f"high of {tomorrow.get('high_f', 'N/A')}°F, " \
+                                       f"low of {tomorrow.get('low_f', 'N/A')}°F, " \
+                                       f"{tomorrow.get('precipitation_chance', 'N/A')}% chance of precipitation.\n\n"
+                    else:
+                        response += f"**{location}**: Could not retrieve weather data. Error: {weather_data.get('error', 'Unknown error')}\n\n"
+                
+                # Add the response to conversation history
+                self.add_message("assistant", response)
+                
+                return response
+        
+        return None
+        
     def generate_response(self, user_input):
         # Store last user message and add to conversation history
         if isinstance(user_input, list):
