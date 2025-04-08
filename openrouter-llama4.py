@@ -113,12 +113,11 @@ if REDIS_AVAILABLE:
         
         # Initialize async client for async code
         async def init_async_redis():
-            global redis_async_client, pubsub, pubsub_listener_task
+            global redis_async_client, pubsub, pubsub_listener_task, REDIS_AVAILABLE
             try:
                 # Check if redis has asyncio attribute
                 if not hasattr(redis, 'asyncio'):
                     logger.error("Redis module does not have asyncio attribute. Install redis with 'pip install redis[hiredis]'")
-                    global REDIS_AVAILABLE
                     REDIS_AVAILABLE = False
                     return None
                 
@@ -139,8 +138,8 @@ if REDIS_AVAILABLE:
                 return redis_async_client
             except Exception as e:
                 logger.error(f"Failed to initialize async Redis client: {e}")
-                # Global declaration must come before assignment
-                global REDIS_AVAILABLE
+                # Use nonlocal to modify the outer scope variable instead of global
+                nonlocal REDIS_AVAILABLE
                 REDIS_AVAILABLE = False
                 return None
         
