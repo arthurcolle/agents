@@ -9,6 +9,9 @@ import asyncio
 import time
 import random
 import uuid
+import shutil
+import glob
+import subprocess
 from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.markdown import Markdown
@@ -267,6 +270,325 @@ class ModalIntegration:
                 "data": None
             }
 
+class FileSystemTools:
+    """
+    Tools for interacting with the file system
+    """
+    def __init__(self):
+        logger.info("Initializing file system tools")
+    
+    def list_files(self, path: str = ".", pattern: str = "*") -> Dict:
+        """List files in a directory with optional glob pattern"""
+        try:
+            # Normalize path
+            norm_path = os.path.normpath(os.path.expanduser(path))
+            
+            # Get files matching pattern
+            files = glob.glob(os.path.join(norm_path, pattern))
+            
+            # Get file info
+            file_info = []
+            for file_path in files:
+                try:
+                    stat = os.stat(file_path)
+                    file_info.append({
+                        "name": os.path.basename(file_path),
+                        "path": file_path,
+                        "size": stat.st_size,
+                        "modified": time.ctime(stat.st_mtime),
+                        "is_dir": os.path.isdir(file_path)
+                    })
+                except Exception as e:
+                    logger.warning(f"Error getting info for {file_path}: {e}")
+            
+            return {
+                "success": True,
+                "message": f"Found {len(file_info)} files matching pattern '{pattern}' in '{norm_path}'",
+                "data": file_info
+            }
+        except Exception as e:
+            logger.error(f"Error listing files: {e}")
+            return {
+                "success": False,
+                "message": f"Error listing files: {str(e)}",
+                "data": None
+            }
+    
+    def read_file(self, filepath: str, max_size: int = 1024 * 1024) -> Dict:
+        """Read the contents of a file"""
+        try:
+            # Normalize path
+            norm_path = os.path.normpath(os.path.expanduser(filepath))
+            
+            # Check if file exists
+            if not os.path.exists(norm_path):
+                return {
+                    "success": False,
+                    "message": f"File not found: {norm_path}",
+                    "data": None
+                }
+            
+            # Check file size
+            file_size = os.path.getsize(norm_path)
+            if file_size > max_size:
+                return {
+                    "success": False,
+                    "message": f"File too large ({file_size} bytes). Max size is {max_size} bytes.",
+                    "data": None
+                }
+            
+            # Read file
+            with open(norm_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            
+            return {
+                "success": True,
+                "message": f"Successfully read file: {norm_path} ({len(content)} bytes)",
+                "data": {
+                    "content": content,
+                    "size": file_size,
+                    "path": norm_path
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error reading file: {e}")
+            return {
+                "success": False,
+                "message": f"Error reading file: {str(e)}",
+                "data": None
+            }
+    
+    def write_file(self, filepath: str, content: str, overwrite: bool = False) -> Dict:
+        """Write content to a file"""
+        try:
+            # Normalize path
+            norm_path = os.path.normpath(os.path.expanduser(filepath))
+            
+            # Check if file exists and overwrite is False
+            if os.path.exists(norm_path) and not overwrite:
+                return {
+                    "success": False,
+                    "message": f"File already exists: {norm_path}. Set overwrite=true to overwrite.",
+                    "data": None
+                }
+            
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(os.path.abspath(norm_path)), exist_ok=True)
+            
+            # Write file
+            with open(norm_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            return {
+                "success": True,
+                "message": f"Successfully wrote {len(content)} bytes to {norm_path}",
+                "data": {
+                    "path": norm_path,
+                    "size": len(content)
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error writing file: {e}")
+            return {
+                "success": False,
+                "message": f"Error writing file: {str(e)}",
+                "data": None
+            }
+    
+    def copy_file(self, source: str, destination: str, overwrite: bool = False) -> Dict:
+        """Copy a file from source to destination"""
+        try:
+            # Normalize paths
+            norm_source = os.path.normpath(os.path.expanduser(source))
+            norm_dest = os.path.normpath(os.path.expanduser(destination))
+            
+            # Check if source exists
+            if not os.path.exists(norm_source):
+                return {
+                    "success": False,
+                    "message": f"Source file not found: {norm_source}",
+                    "data": None
+                }
+            
+            # Check if destination exists and overwrite is False
+            if os.path.exists(norm_dest) and not overwrite:
+                return {
+                    "success": False,
+                    "message": f"Destination file already exists: {norm_dest}. Set overwrite=true to overwrite.",
+                    "data": None
+                }
+            
+            # Create destination directory if it doesn't exist
+            os.makedirs(os.path.dirname(os.path.abspath(norm_dest)), exist_ok=True)
+            
+            # Copy file
+            shutil.copy2(norm_source, norm_dest)
+            
+            return {
+                "success": True,
+                "message": f"Successfully copied {norm_source} to {norm_dest}",
+                "data": {
+                    "source": norm_source,
+                    "destination": norm_dest
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error copying file: {e}")
+            return {
+                "success": False,
+                "message": f"Error copying file: {str(e)}",
+                "data": None
+            }
+    
+    def delete_file(self, filepath: str, recursive: bool = False) -> Dict:
+        """Delete a file or directory"""
+        try:
+            # Normalize path
+            norm_path = os.path.normpath(os.path.expanduser(filepath))
+            
+            # Check if file exists
+            if not os.path.exists(norm_path):
+                return {
+                    "success": False,
+                    "message": f"File not found: {norm_path}",
+                    "data": None
+                }
+            
+            # Delete file or directory
+            if os.path.isdir(norm_path):
+                if recursive:
+                    shutil.rmtree(norm_path)
+                else:
+                    os.rmdir(norm_path)
+            else:
+                os.remove(norm_path)
+            
+            return {
+                "success": True,
+                "message": f"Successfully deleted: {norm_path}",
+                "data": {
+                    "path": norm_path,
+                    "was_directory": os.path.isdir(norm_path)
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error deleting file: {e}")
+            return {
+                "success": False,
+                "message": f"Error deleting file: {str(e)}",
+                "data": None
+            }
+
+class CodingTools:
+    """
+    Tools for code execution and management
+    """
+    def __init__(self):
+        logger.info("Initializing coding tools")
+        self.temp_dir = os.path.join(os.getcwd(), "temp_code")
+        os.makedirs(self.temp_dir, exist_ok=True)
+    
+    def execute_python(self, code: str, timeout: int = 10) -> Dict:
+        """Execute Python code in a controlled environment"""
+        try:
+            # Create a temporary file
+            temp_file = os.path.join(self.temp_dir, f"code_{uuid.uuid4().hex}.py")
+            
+            # Write code to file
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(code)
+            
+            # Execute code in a subprocess
+            process = subprocess.Popen(
+                [sys.executable, temp_file],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+                return_code = process.returncode
+            except subprocess.TimeoutExpired:
+                process.kill()
+                return {
+                    "success": False,
+                    "message": f"Code execution timed out after {timeout} seconds",
+                    "data": {
+                        "stdout": "",
+                        "stderr": "Execution timed out",
+                        "return_code": -1
+                    }
+                }
+            
+            # Clean up
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+            
+            return {
+                "success": return_code == 0,
+                "message": "Code executed successfully" if return_code == 0 else f"Code execution failed with return code {return_code}",
+                "data": {
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "return_code": return_code
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error executing Python code: {e}")
+            return {
+                "success": False,
+                "message": f"Error executing Python code: {str(e)}",
+                "data": None
+            }
+    
+    def execute_shell(self, command: str, timeout: int = 10) -> Dict:
+        """Execute a shell command"""
+        try:
+            # Execute command in a subprocess
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+                return_code = process.returncode
+            except subprocess.TimeoutExpired:
+                process.kill()
+                return {
+                    "success": False,
+                    "message": f"Command execution timed out after {timeout} seconds",
+                    "data": {
+                        "stdout": "",
+                        "stderr": "Execution timed out",
+                        "return_code": -1
+                    }
+                }
+            
+            return {
+                "success": return_code == 0,
+                "message": "Command executed successfully" if return_code == 0 else f"Command execution failed with return code {return_code}",
+                "data": {
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "return_code": return_code,
+                    "command": command
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error executing shell command: {e}")
+            return {
+                "success": False,
+                "message": f"Error executing shell command: {str(e)}",
+                "data": None
+            }
+
 class CLIAgent:
     """
     CLI agent for conversational data analysis
@@ -275,6 +597,8 @@ class CLIAgent:
         self.model = model
         self.data_tools = DataAnalysisTools()
         self.modal = ModalIntegration()
+        self.file_tools = FileSystemTools()
+        self.code_tools = CodingTools()
         self.conversation_history = []
         self.console = console or Console()
         self.hooks = CLIAgentHooks(self.console, display_name="Data Analysis Agent")
@@ -305,6 +629,162 @@ class CLIAgent:
         # Define available tools
         # Add advanced visualization tool
         self.tools = [
+            # File system tools
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_files",
+                    "description": "List files in a directory with optional glob pattern",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Directory path to list files from (default: current directory)"
+                            },
+                            "pattern": {
+                                "type": "string",
+                                "description": "Glob pattern to filter files (default: *)"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read the contents of a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to the file to read"
+                            },
+                            "max_size": {
+                                "type": "integer",
+                                "description": "Maximum file size in bytes (default: 1MB)"
+                            }
+                        },
+                        "required": ["filepath"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "description": "Write content to a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to the file to write"
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Content to write to the file"
+                            },
+                            "overwrite": {
+                                "type": "boolean",
+                                "description": "Whether to overwrite the file if it exists (default: false)"
+                            }
+                        },
+                        "required": ["filepath", "content"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "copy_file",
+                    "description": "Copy a file from source to destination",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "source": {
+                                "type": "string",
+                                "description": "Path to the source file"
+                            },
+                            "destination": {
+                                "type": "string",
+                                "description": "Path to the destination file"
+                            },
+                            "overwrite": {
+                                "type": "boolean",
+                                "description": "Whether to overwrite the destination file if it exists (default: false)"
+                            }
+                        },
+                        "required": ["source", "destination"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "delete_file",
+                    "description": "Delete a file or directory",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to the file or directory to delete"
+                            },
+                            "recursive": {
+                                "type": "boolean",
+                                "description": "Whether to recursively delete directories (default: false)"
+                            }
+                        },
+                        "required": ["filepath"]
+                    }
+                }
+            },
+            # Coding tools
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_python",
+                    "description": "Execute Python code in a controlled environment",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string",
+                                "description": "Python code to execute"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Timeout in seconds (default: 10)"
+                            }
+                        },
+                        "required": ["code"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_shell",
+                    "description": "Execute a shell command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "Shell command to execute"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Timeout in seconds (default: 10)"
+                            }
+                        },
+                        "required": ["command"]
+                    }
+                }
+            },
             {
                 "type": "function",
                 "function": {
@@ -541,6 +1021,22 @@ class CLIAgent:
                 result = self.modal.call_function(**arguments)
             elif name == "create_advanced_visualization":
                 result = self.data_tools.visualizer.create_visualization(**arguments)
+            # File system tools
+            elif name == "list_files":
+                result = self.file_tools.list_files(**arguments)
+            elif name == "read_file":
+                result = self.file_tools.read_file(**arguments)
+            elif name == "write_file":
+                result = self.file_tools.write_file(**arguments)
+            elif name == "copy_file":
+                result = self.file_tools.copy_file(**arguments)
+            elif name == "delete_file":
+                result = self.file_tools.delete_file(**arguments)
+            # Coding tools
+            elif name == "execute_python":
+                result = self.code_tools.execute_python(**arguments)
+            elif name == "execute_shell":
+                result = self.code_tools.execute_shell(**arguments)
             # Dynamic agent tools
             elif name == "create_agent":
                 result = self._create_agent(**arguments)
