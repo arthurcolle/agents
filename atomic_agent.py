@@ -801,19 +801,46 @@ class ToolRegistry:
             self.register_function(
                 name="web_search",
                 description="Search the web using Jina's search API",
-                parameters={"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}}, "required": ["query"]},
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query"
+                        }
+                    },
+                    "required": ["query"]
+                },
                 function=self._web_search
             )
             self.register_function(
                 name="web_read",
                 description="Read web page content using Jina's reader API",
-                parameters={"type": "object", "properties": {"url": {"type": "string", "description": "URL"}}, "required": ["url"]},
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "URL to read content from"
+                        }
+                    },
+                    "required": ["url"]
+                },
                 function=self._web_read
             )
             self.register_function(
                 name="fact_check",
                 description="Verify a statement using Jina's fact checking API",
-                parameters={"type": "object", "properties": {"query": {"type": "string", "description": "Statement"}}, "required": ["query"]},
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The statement to fact check"
+                        }
+                    },
+                    "required": ["query"]
+                },
                 function=self._fact_check
             )
         # Planning tools
