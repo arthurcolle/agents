@@ -3495,7 +3495,291 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
         # Add the message to conversation history
         self.conversation_history.append(message)
     
-    def process_tool_calls(self, tool_calls) -> List[Dict[str, Any]]:
+    def chat(self, message) -> str:
+        """Send a message to the agent and get a response.
+        
+        Args:
+            message: The user message (can be a string or a structured multi-modal message)
+        
+        Returns:
+            The agent's response as a string
+        """
+        # Add the user message to the conversation
+        self.add_message("user", message)
+        
+        # Get the tools in the format expected by the API
+        tools = self.tool_registry.get_openai_tools_format()
+        
+        # Check if we should perform periodic environment analysis
+        user_message_count = len([msg for msg in self.conversation_history if msg.get("role") == "user"])
+        
+        # Perform environment analysis every 3 user messages or if this is the first message
+        if user_message_count == 1 or user_message_count % 3 == 0:
+            # Use the tool registry to analyze the environment
+            self.tool_registry._analyze_environment(aspect="all")
+            
+            # Check if automatic adaptation is needed
+            env = self.environment_state
+            
+            # Simple adaptation heuristics based on analysis
+            if env["user_behavior"]["technical_level"] == "high" and env["task_complexity"]["current_level"] == "high":
+                # For highly technical users with complex tasks
+                self.tool_registry._adapt_to_environment(
+                    adaptation_strategy="increase_technical_detail",
+                    reason="User exhibits high technical knowledge and is working on complex tasks",
+                    system_prompt_update="Focus on providing detailed technical explanations and comprehensive code examples. Prioritize correctness and best practices over simplicity."
+                )
+            elif env["user_behavior"]["technical_level"] == "low" and env["conversation_context"]["sentiment"] == "negative":
+                # For users struggling with technical content
+                self.tool_registry._adapt_to_environment(
+                    adaptation_strategy="simplify_explanations",
+                    reason="User appears to be struggling with technical content",
+                    system_prompt_update="Simplify explanations, avoid jargon, provide more step-by-step guidance, and use analogies where possible."
+                )
+            elif env["conversation_context"]["task_oriented"] and env["task_complexity"]["current_level"] == "medium":
+                # For task-focused users with medium complexity
+                self.tool_registry._adapt_to_environment(
+                    adaptation_strategy="focus_on_practical_solutions",
+                    reason="User is task-oriented and working on moderately complex tasks",
+                    system_prompt_update="Focus on practical solutions, provide executable examples, and offer step-by-step procedures. Be concise but thorough."
+                )
+            elif "multimodal" in env["user_behavior"]["detected_preferences"]:
+                # For users who are using multi-modal features
+                self.tool_registry._adapt_to_environment(
+                    adaptation_strategy="optimize_multimodal",
+                    reason="User is working with multi-modal content like images",
+                    system_prompt_update="Pay special attention to visual content in the conversation. Provide detailed descriptions and analyses of images when they're present."
+                )
+        
+        while True:
+            try:
+                # For Llama 4 models with multi-modal or tool support
+                if self.model.startswith("meta-llama/Llama-4"):
+                    # Detect if this is a multi-modal conversation
+                    has_multimodal = any(
+                        isinstance(msg.get("content"), list) for msg in self.conversation_history
+                    )
+                    
+                    if has_multimodal:
+                        # Use the chat completions API for multi-modal support
+                        response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=self.conversation_history,
+                            tools=tools,
+                            tool_choice="auto",
+                            max_tokens=1024
+                        )
+                        
+                        # Get the assistant's response
+                        assistant_message = response.choices[0].message
+                        
+                        # Add the assistant's message to the conversation history
+                        self.conversation_history.append(assistant_message.model_dump())
+                        
+                        # Check if the assistant wants to use tools
+                        if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls:
+                            # Process the tool calls
+                            results = self.process_tool_calls(assistant_message.tool_calls)
+                            
+                            # Log the results
+                            for result in results:
+                                console.print(f"[green]Result from {result['function_name']}:[/green]")
+                                console.print(json.dumps(result['result'], indent=2))
+                            
+                            # After processing tool calls, get a final response that incorporates the tool results
+                            final_response = self.client.chat.completions.create(
+                                model=self.model,
+                                messages=self.conversation_history,
+                                tools=tools,
+                                tool_choice="none"  # Force text response after tool use
+                            )
+                            
+                            final_message = final_response.choices[0].message
+                            self.conversation_history.append(final_message.model_dump())
+                            return final_message.content
+                        
+                        # Return the assistant's response content
+                        return assistant_message.content
+                    else:
+                        # For text-only Llama 4, can use either method - prefer completions for now
+                        # Format the Llama 4 prompt using the dedicated method
+                        formatted_prompt = self.format_llama4_prompt()
+                        
+                        # Create parameters dict with optional logprobs
+                        params = {
+                            "model": self.model,
+                            "prompt": formatted_prompt,
+                            "max_tokens": 1024,
+                            "stop": ["<|eot|>"]
+                        }
+                        
+                        # Add logprobs if this is a compatible model and enabled
+                        if self.is_llama4 and self.enable_logprobs:
+                            params["logprobs"] = 1
+                        
+                        response = self.client.completions.create(**params)
+                        
+                        # Extract text and add the eot token back
+                        assistant_content = response.choices[0].text + "<|eot|>"
+                        assistant_message = {"role": "assistant", "content": assistant_content}
+                        
+                        # Save logprobs info if available
+                        if hasattr(response.choices[0], "logprobs") and response.choices[0].logprobs:
+                            logprobs_data = response.choices[0].logprobs
+                            assistant_message["logprobs"] = {
+                                "tokens": logprobs_data.tokens,
+                                "token_logprobs": logprobs_data.token_logprobs
+                            }
+                            
+                            # For debugging/analysis, calculate the average logprob
+                            if len(logprobs_data.token_logprobs) > 0:
+                                avg_logprob = sum(lp for lp in logprobs_data.token_logprobs if lp is not None) / len(logprobs_data.token_logprobs)
+                                assistant_message["avg_logprob"] = avg_logprob
+                        
+                        # Add to conversation history
+                        self.conversation_history.append(assistant_message)
+                        
+                        # Check for function calls in the text
+                        if "[" in assistant_content and "(" in assistant_content and ")" in assistant_content or "<function=" in assistant_content:
+                            # Parse function calls from text using class method
+                            function_calls = self.parse_function_calls(assistant_content)
+                            
+                            if function_calls:
+                                # Process function calls
+                                results = []
+                                for func_call in function_calls:
+                                    name = func_call["name"]
+                                    args = func_call["arguments"]
+                                    console.print(f"[cyan]Calling function: [bold]{name}[/bold][/cyan]")
+                                    console.print(f"[cyan]With arguments:[/cyan] {json.dumps(args, indent=2)}")
+                                    
+                                    result = self.tool_registry.call_function(name, args)
+                                    console.print(f"[green]Result from {name}:[/green]")
+                                    console.print(json.dumps(result, indent=2))
+                                    
+                                    # Add tool result to conversation history
+                                    self.conversation_history.append({
+                                        "role": "tool",
+                                        "name": name,
+                                        "content": json.dumps(result, indent=2)
+                                    })
+                                    
+                                    results.append({"function_name": name, "arguments": args, "result": result})
+                                
+                                # Process the results to generate a final response without recursion
+                                final_prompt = f"Based on these function results: {json.dumps(results)}, provide a direct answer to the user's question."
+                                final_response = self.client.completions.create(
+                                    model=self.model,
+                                    prompt=self.format_llama4_prompt() + "\n\nUser: " + final_prompt + "<|eot|>\nAssistant: ",
+                                    max_tokens=1024,
+                                    stop=["<|eot|>"]
+                                )
+                                
+                                # Extract the final response text
+                                final_content = final_response.choices[0].text + "<|eot|>"
+                                final_message = {"role": "assistant", "content": final_content}
+                                self.conversation_history.append(final_message)
+                                
+                                # Return the formatted response directly
+                                return final_content.rstrip("<|eot|>")
+                        
+                        # Parse and handle code execution blocks
+                        response_content = assistant_content.rstrip("<|eot|>")
+                        if "<|python_start|>" in response_content and "<|python_end" in response_content:
+                            # Extract and execute python code
+                            code_blocks = self.extract_python_code(response_content)
+                            if code_blocks:
+                                for code_block in code_blocks:
+                                    if "Run the code" in message or "run the code" in message:
+                                        console.print("[cyan]Executing Python code:[/cyan]")
+                                        
+                                        # Direct execution using our own _execute_python method
+                                        import io
+                                        import datetime  # Ensure datetime module is available
+                                        from contextlib import redirect_stdout, redirect_stderr
+                                        
+                                        stdout_capture = io.StringIO()
+                                        stderr_capture = io.StringIO()
+                                        local_vars = {}
+                                        
+                                        # Prepare execution environment with imports
+                                        exec_globals = globals().copy()
+                                        # Add datetime modules to globals
+                                        from datetime import date, datetime, timedelta
+                                        exec_globals['date'] = date
+                                        exec_globals['datetime'] = datetime
+                                        exec_globals['timedelta'] = timedelta
+                                        
+                                        try:
+                                            console.print(f"[dim]{code_block}[/dim]")
+                                            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                                                exec(code_block, exec_globals, local_vars)
+                                            
+                                            stdout = stdout_capture.getvalue()
+                                            stderr = stderr_capture.getvalue()
+                                            
+                                            if stdout:
+                                                console.print("[green]Execution result:[/green]")
+                                                console.print(stdout)
+                                            
+                                            if stderr:
+                                                console.print("[red]Errors:[/red]")
+                                                console.print(stderr)
+                                                
+                                        except Exception as e:
+                                            import traceback
+                                            console.print(f"[red]Error executing code: {str(e)}[/red]")
+                                            console.print(traceback.format_exc())
+                                    else:
+                                        # If not asked to run, just display the code
+                                        pass
+                        
+                        # Return the normal text content
+                        return response_content
+                else:
+                    # For non-Llama 4 models, use regular OpenAI format
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=self.conversation_history,
+                        tools=tools,
+                        tool_choice="auto"
+                    )
+                
+                    # Get the assistant's response
+                    assistant_message = response.choices[0].message
+                    
+                    # Add the assistant's message to the conversation history
+                    self.conversation_history.append(assistant_message.model_dump())
+                    
+                    # Check if the assistant wants to use tools
+                    if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls:
+                        # Process the tool calls
+                        results = self.process_tool_calls(assistant_message.tool_calls)
+                        
+                        # Log the results
+                        for result in results:
+                            console.print(f"[green]Result from {result['function_name']}:[/green]")
+                            console.print(json.dumps(result['result'], indent=2))
+                        
+                        # After processing tool calls, get a final response that incorporates the tool results
+                        final_response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=self.conversation_history,
+                            tools=tools,
+                            tool_choice="none"  # Force text response after tool use
+                        )
+                        
+                        final_message = final_response.choices[0].message
+                        self.conversation_history.append(final_message.model_dump())
+                        return final_message.content
+                    
+                    # Return the assistant's response content
+                    return assistant_message.content
+            
+            except Exception as e:
+                console.print(f"[red]Error: {str(e)}[/red]")
+                console.print(traceback.format_exc())
+                return f"Error: {str(e)}"
         """Process tool calls from the agent's response."""
         results = []
         
