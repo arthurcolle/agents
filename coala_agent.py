@@ -71,7 +71,8 @@ except ImportError:
     from rich.panel import Panel
 
 # --- Initialization ---
-console = Console() # Initialize console early
+# Initialize console early, before it might be used in except blocks
+console = Console()
 
 # --- Import from atomic_agent ---
 try:
