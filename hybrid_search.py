@@ -24,6 +24,7 @@ class HybridSearch:
         """
         self.db_path = db_path
         self.conn = duckdb.connect(database=db_path)
+        self.use_mock_embeddings = False
         
         # Set OpenAI API key if provided
         if api_key:
@@ -49,6 +50,15 @@ class HybridSearch:
             self.conn.execute("INSTALL fts;")
             self.conn.execute("LOAD fts;")
             
+            # Set up OpenAI API key as a secret for FlockMTL
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if api_key:
+                self.conn.execute(f"CREATE OR REPLACE SECRET openai (api_key='{api_key}');")
+            else:
+                logger.warning("OPENAI_API_KEY environment variable not set. Using mock embeddings.")
+                # Use mock embeddings if no API key is available
+                self.use_mock_embeddings = True
+            
             logger.info("All extensions loaded successfully")
         except Exception as e:
             logger.error(f"Error loading extensions: {e}")
@@ -70,6 +80,32 @@ class HybridSearch:
             logger.error(f"Error creating document table: {e}")
             raise
     
+    def _generate_mock_embedding(self, text: str) -> List[float]:
+        """Generate a deterministic mock embedding for testing without API keys"""
+        import hashlib
+        import struct
+        
+        # Create a deterministic but seemingly random embedding based on text hash
+        hash_obj = hashlib.sha256(text.encode())
+        hash_bytes = hash_obj.digest()
+        
+        # Generate 1536 float values (same dimension as text-embedding-3-small)
+        embedding = []
+        for i in range(0, 1536):
+            # Use different parts of the hash to seed different values
+            byte_pos = i % 32
+            val = struct.unpack('f', hash_bytes[byte_pos:byte_pos+1] * 4)[0]
+            # Normalize to typical embedding range
+            val = (val % 1.0) * 0.1
+            embedding.append(val)
+        
+        # Normalize the embedding
+        magnitude = sum(x**2 for x in embedding) ** 0.5
+        if magnitude > 0:
+            embedding = [x/magnitude for x in embedding]
+            
+        return embedding
+    
     def insert_documents(self, documents: List[Dict[str, Any]], table_name: str = "documents"):
         """
         Insert documents into the database and generate embeddings.
@@ -84,17 +120,33 @@ class HybridSearch:
             
             # Insert documents and generate embeddings
             for i, doc in enumerate(documents):
-                # Generate embedding using FlockMTL's llm_embedding function
-                self.conn.execute(f"""
-                    INSERT INTO {table_name} (id, title, content, embedding)
-                    SELECT 
-                        {i+1} as id,
-                        '{doc['title'].replace("'", "''")}' as title,
-                        '{doc['content'].replace("'", "''")}' as content,
-                        llm_embedding({{'model_name':'text-embedding-3-small'}}, 
-                                     {{'content': '{doc['content'].replace("'", "''")}'}}
-                        )::FLOAT[1536] as embedding;
-                """)
+                if self.use_mock_embeddings:
+                    # Generate mock embedding
+                    mock_embedding = self._generate_mock_embedding(doc['content'])
+                    mock_embedding_str = str(mock_embedding).replace('[', 'ARRAY[')
+                    
+                    # Insert with mock embedding
+                    self.conn.execute(f"""
+                        INSERT INTO {table_name} (id, title, content, embedding)
+                        VALUES (
+                            {i+1},
+                            '{doc['title'].replace("'", "''")}',
+                            '{doc['content'].replace("'", "''")}',
+                            {mock_embedding_str}
+                        );
+                    """)
+                else:
+                    # Generate embedding using FlockMTL's llm_embedding function
+                    self.conn.execute(f"""
+                        INSERT INTO {table_name} (id, title, content, embedding)
+                        SELECT 
+                            {i+1} as id,
+                            '{doc['title'].replace("'", "''")}' as title,
+                            '{doc['content'].replace("'", "''")}' as content,
+                            llm_embedding({{'model_name':'text-embedding-3-small'}}, 
+                                         {{'content': '{doc['content'].replace("'", "''")}'}}
+                            )::FLOAT[1536] as embedding;
+                    """)
             
             logger.info(f"Inserted {len(documents)} documents into {table_name}")
         except Exception as e:
@@ -145,11 +197,21 @@ class HybridSearch:
         """
         try:
             # Generate query embedding
-            self.conn.execute(f"""
-                CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
-                SELECT llm_embedding({{'model_name':'text-embedding-3-small'}}, 
-                                   {{'query': '{query.replace("'", "''")}'}})::FLOAT[1536] AS embedding;
-            """)
+            if self.use_mock_embeddings:
+                # Generate mock embedding for query
+                mock_embedding = self._generate_mock_embedding(query)
+                mock_embedding_str = str(mock_embedding).replace('[', 'ARRAY[')
+                
+                self.conn.execute(f"""
+                    CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
+                    SELECT {mock_embedding_str}::FLOAT[1536] AS embedding;
+                """)
+            else:
+                self.conn.execute(f"""
+                    CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
+                    SELECT llm_embedding({{'model_name':'text-embedding-3-small'}}, 
+                                       {{'query': '{query.replace("'", "''")}'}})::FLOAT[1536] AS embedding;
+                """)
             
             # Perform hybrid search with fusion
             result = self.conn.execute(f"""
