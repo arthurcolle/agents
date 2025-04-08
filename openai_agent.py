@@ -2,13 +2,80 @@ import os
 import logging
 import asyncio
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 import aiohttp
 from pydantic import BaseModel
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openai-agent")
+
+# Mock implementations for missing classes and functions
+class MessageOutputItem:
+    """Mock implementation of MessageOutputItem"""
+    def __init__(self, content: str):
+        self.content = content
+
+class ItemHelpers:
+    """Mock implementation of ItemHelpers"""
+    @staticmethod
+    def text_message_output(item: MessageOutputItem) -> str:
+        return item.content if hasattr(item, 'content') else ""
+
+class AgentResult:
+    """Mock implementation of agent result"""
+    def __init__(self, final_output: str, new_items: List[Any] = None):
+        self.final_output = final_output
+        self.new_items = new_items or []
+    
+    def to_input_list(self) -> List[str]:
+        return [self.final_output]
+
+class Agent:
+    """Mock implementation of Agent"""
+    def __init__(self, name: str, instructions: str, model: str, 
+                 handoff_description: str = None, tools: List[Any] = None):
+        self.name = name
+        self.instructions = instructions
+        self.model = model
+        self.handoff_description = handoff_description
+        self.tools = tools or []
+        logger.info(f"Created agent: {name}")
+    
+    def as_tool(self, tool_name: str, tool_description: str) -> Dict[str, Any]:
+        """Convert agent to a tool"""
+        return {
+            "name": tool_name,
+            "description": tool_description,
+            "agent": self
+        }
+
+class Runner:
+    """Mock implementation of Runner"""
+    @staticmethod
+    def run_sync(agent: Agent, query: str) -> AgentResult:
+        logger.info(f"Running agent {agent.name} with query: {query}")
+        # In a real implementation, this would call the LLM
+        return AgentResult(f"Mock response from {agent.name}: {query}")
+    
+    @staticmethod
+    async def run(agent: Agent, query: str) -> AgentResult:
+        logger.info(f"Running agent {agent.name} with query: {query}")
+        # In a real implementation, this would call the LLM
+        return AgentResult(f"Mock response from {agent.name}: {query}")
+
+def trace(name: str):
+    """Mock implementation of trace context manager"""
+    class TraceMock:
+        def __enter__(self):
+            logger.info(f"Starting trace: {name}")
+            return self
+        
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            logger.info(f"Ending trace: {name}")
+            return False
+    
+    return TraceMock()
 
 # Import Jina client (with fallback for import errors)
 try:
