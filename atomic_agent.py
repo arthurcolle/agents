@@ -2717,9 +2717,13 @@ class ToolRegistry:
     # --- Tool Implementations ---
     # Note: These methods now accept an optional 'agent' parameter
 
-    def _respond_to_user(self, message: str) -> Dict[str, Any]:
-        """Simple tool to respond directly to the user with text"""
+    def _respond_to_user(self, message: str = None, response: str = None, agent=None) -> Dict[str, Any]:
+        """Simple tool to respond directly to the user with text. Accepts 'message' or 'response'."""
+        text_to_send = message if message is not None else response
+        if text_to_send is None:
+            return {"error": "No message or response provided", "success": False}
         return {
+            "success": True,
             "response_sent": text_to_send
         }
     def _orchestrate_tasks(self, main_task: str, subtasks: List[str] = None, priority: int = 1, context: Dict[str, Any] = None, agent=None) -> Dict[str, Any]:
