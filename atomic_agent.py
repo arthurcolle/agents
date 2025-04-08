@@ -5741,20 +5741,6 @@ print("Hello, world!")
         except Exception as e:
             console.print(f"[red]Error pasting from clipboard: {str(e)}[/red]")
             return f"Error pasting from clipboard: {str(e)}"
-        if isinstance(message, str):
-            image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', message)
-            if not image_urls:
-                return message
-            for url in image_urls:
-                message = message.replace(url, '')
-            text_content = message.strip()
-            multimodal = []
-            if text_content:
-                multimodal.append({"type": "text", "text": text_content})
-            for url in image_urls:
-                multimodal.append({"type": "image_url", "image_url": {"url": url}})
-            return multimodal
-        return message
 
     def add_message(self, role: str, content):
         if hasattr(self, "is_llama4") and self.is_llama4 and role == "user" and isinstance(content, str):
