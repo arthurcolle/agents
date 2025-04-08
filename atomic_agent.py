@@ -2195,8 +2195,46 @@ class ToolRegistry:
 # Helper Functions
 # =======================
 def extract_python_code(text: str) -> list:
+    """Extract Python code blocks with better handling of formatting issues"""
     pattern = r'<\|python_start\|>(.*?)(?:<\|python_end\|>|<\|python_end)'
-    return [match.strip() for match in re.findall(pattern, text, re.DOTALL)]
+    code_blocks = [match.strip() for match in re.findall(pattern, text, re.DOTALL)]
+    
+    # Process each code block to fix common formatting issues
+    fixed_blocks = []
+    for block in code_blocks:
+        # Fix compressed one-liners for if statements, function definitions, etc.
+        lines = []
+        for line in block.split('\n'):
+            # Skip purely decorative lines
+            if all(c in '┏━┓┃┗┛ ' for c in line):
+                continue
+                
+            # Fix compressed if statements
+            if ' if ' in line and ': ' in line and 'return' in line and not line.strip().startswith('if'):
+                parts = line.split(' if ')
+                pre = parts[0].strip()
+                rest = parts[1].strip()
+                if_parts = rest.split(': ')
+                if len(if_parts) == 2:
+                    lines.append(f"{pre} if {if_parts[0]}:")
+                    lines.append(f"    {if_parts[1]}")
+                    continue
+            
+            # Fix compressed function definitions
+            if 'def ' in line and '(' in line and ')' in line and ': ' in line and not line.strip().startswith('def'):
+                parts = line.split('def ')
+                pre = parts[0].strip()
+                rest = 'def ' + parts[1].strip()
+                if pre:
+                    lines.append(pre)
+                lines.append(rest)
+                continue
+                
+            lines.append(line)
+        
+        fixed_blocks.append('\n'.join(lines))
+    
+    return fixed_blocks
 
 def parse_function_calls(text: str) -> List[Dict[str, Any]]:
     """
@@ -2692,7 +2730,52 @@ print("Hello, world!")
         return "Unknown error"
     
     def extract_python_code(self, text: str) -> List[str]:
-        return extract_python_code(text)
+        """Extract Python code blocks from text with better handling of formatting issues"""
+        code_blocks = extract_python_code(text)
+        
+        # Process each code block to fix common formatting issues
+        fixed_blocks = []
+        for block in code_blocks:
+            lines = block.split('\n')
+            fixed_lines = []
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                # Skip purely decorative lines
+                if all(c in '┏━┓┃┗┛ ' for c in line):
+                    i += 1
+                    continue
+                
+                # Fix compressed if statements
+                if ' if ' in line and ': ' in line and not line.strip().startswith('if'):
+                    parts = line.split(' if ')
+                    pre = parts[0].strip()
+                    rest = parts[1].strip()
+                    if_parts = rest.split(': ')
+                    if len(if_parts) == 2:
+                        fixed_lines.append(f"{pre} if {if_parts[0]}:")
+                        fixed_lines.append(f"    {if_parts[1]}")
+                        i += 1
+                        continue
+                
+                # Fix compressed function definitions
+                if 'def ' in line and '(' in line and ')' in line and ': ' in line and not line.strip().startswith('def'):
+                    parts = line.split('def ')
+                    pre = parts[0].strip()
+                    rest = 'def ' + parts[1].strip()
+                    if pre:
+                        fixed_lines.append(pre)
+                    fixed_lines.append(rest)
+                    i += 1
+                    continue
+                
+                # Add the line as is if no fixes needed
+                fixed_lines.append(line)
+                i += 1
+            
+            fixed_blocks.append('\n'.join(fixed_lines))
+        
+        return fixed_blocks
 
     def process_tool_calls(self, tool_calls):
         results = []
@@ -3055,6 +3138,23 @@ print("Hello, world!")
                                                 # Skip purely decorative lines with box drawing characters
                                                 if all(c in '┏━┓┃┗┛ ' for c in line):
                                                     continue
+                                                # Fix lines that have been compressed without proper newlines
+                                                if ' if ' in line and ':' in line and 'return' in line:
+                                                    parts = line.split(' if ')
+                                                    pre = parts[0].strip()
+                                                    rest = parts[1].strip()
+                                                    if_parts = rest.split(': return')
+                                                    if len(if_parts) == 2:
+                                                        clean_code.append(f"{pre} if {if_parts[0]}:")
+                                                        clean_code.append(f"    return{if_parts[1]}")
+                                                        continue
+                                                # Fix other compressed lines
+                                                if ' return ' in line and line.count('return') == 1:
+                                                    parts = line.split(' return ')
+                                                    if parts[0].strip() and parts[1].strip():
+                                                        clean_code.append(parts[0].strip())
+                                                        clean_code.append(f"return {parts[1].strip()}")
+                                                        continue
                                                 clean_code.append(line)
                                             
                                             # Join the cleaned code
