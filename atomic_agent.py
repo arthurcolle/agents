@@ -6158,13 +6158,57 @@ print("Hello, world!")
             multimodal = []
             if text_content:
                 multimodal.append({"type": "text", "text": text_content})
-            for url in image_urls:
-                multimodal.append({"type": "image_url", "image_url": {"url": url}})
-                self.interaction_memory.append({"type": "image", "url": url, "timestamp": time.time()})
+            
+            # Try to use the image processor for enhanced processing
+            try:
+                from image_processor import ImageProcessor
+                image_processor = ImageProcessor()
                 
-                # Add image to memory for retrieval
-                if hasattr(self, 'memory'):
-                    self.memory.add_memory(url, {"type": "image", "source": "user_input"})
+                for url in image_urls:
+                    # Process the image to extract features
+                    try:
+                        # Process image and store features in memory
+                        image_tensor = image_processor.process_image(url)
+                        features = image_processor.extract_image_features(image_tensor)
+                        
+                        # Add to multimodal message
+                        multimodal.append({"type": "image_url", "image_url": {"url": url}})
+                        
+                        # Add to interaction memory with enhanced metadata
+                        self.interaction_memory.append({
+                            "type": "image", 
+                            "url": url, 
+                            "timestamp": time.time(),
+                            "features": features.tolist() if hasattr(features, "tolist") else features,
+                            "processed": True
+                        })
+                        
+                        # Add image to memory for retrieval with enhanced metadata
+                        if hasattr(self, 'memory'):
+                            self.memory.add_memory(url, {
+                                "type": "image", 
+                                "source": "user_input",
+                                "features": features.tolist() if hasattr(features, "tolist") else features,
+                                "processed_with": "ImageProcessor"
+                            })
+                    except Exception as e:
+                        # Fall back to basic processing if advanced processing fails
+                        console.print(f"[yellow]Warning: Advanced image processing failed: {e}. Using basic processing.[/yellow]")
+                        multimodal.append({"type": "image_url", "image_url": {"url": url}})
+                        self.interaction_memory.append({"type": "image", "url": url, "timestamp": time.time()})
+                        
+                        # Add image to memory for retrieval
+                        if hasattr(self, 'memory'):
+                            self.memory.add_memory(url, {"type": "image", "source": "user_input"})
+            except ImportError:
+                # Fall back to the original method if image_processor.py is not available
+                for url in image_urls:
+                    multimodal.append({"type": "image_url", "image_url": {"url": url}})
+                    self.interaction_memory.append({"type": "image", "url": url, "timestamp": time.time()})
+                    
+                    # Add image to memory for retrieval
+                    if hasattr(self, 'memory'):
+                        self.memory.add_memory(url, {"type": "image", "source": "user_input"})
                 
             return multimodal
         return message
