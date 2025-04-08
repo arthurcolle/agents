@@ -94,32 +94,107 @@ except Exception as e:
 try:
     import torch
     import transformers
-    from sentence_transformers import SentenceTransformer
+    import base64
+    from io import BytesIO
+    from PIL import Image
+    import requests
     ADVANCED_EMBEDDINGS_AVAILABLE = True
-    # Initialize sentence transformer model for embeddings
+    # Initialize Jina embedding client
     try:
-        embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        console.print("[green]Sentence Transformer model loaded successfully[/green]")
+        JINA_API_KEY = os.environ.get("JINA_API_KEY")
+        if JINA_API_KEY:
+            console.print("[green]Jina API key found, will use jina-clip-v2 for embeddings[/green]")
+            embedding_model = "jina-clip-v2"
+        else:
+            console.print("[yellow]Warning: JINA_API_KEY not found in environment variables. Using fallback embedding method.[/yellow]")
+            from sentence_transformers import SentenceTransformer
+            embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            console.print("[green]Sentence Transformer model loaded as fallback[/green]")
     except Exception as e:
-        console.print(f"[yellow]Warning: Could not load embedding model: {e}[/yellow]")
+        console.print(f"[yellow]Warning: Could not initialize embedding system: {e}[/yellow]")
         embedding_model = None
 except ImportError:
     ADVANCED_EMBEDDINGS_AVAILABLE = False
     embedding_model = None
-    console.print("[yellow]Advanced embedding features not available. Install with: pip install torch transformers sentence-transformers[/yellow]")
+    console.print("[yellow]Advanced embedding features not available. Install with: pip install torch transformers requests pillow[/yellow]")
 
 # =======================
 # Vector Memory System
 # =======================
 class VectorMemory:
     """Advanced memory system using vector embeddings for semantic retrieval"""
-    def __init__(self, embedding_model=None, vector_store=None, dimension=384):
+    def __init__(self, embedding_model=None, vector_store=None, dimension=1024):
         self.embedding_model = embedding_model
         self.vector_store = vector_store
         self.dimension = dimension
         self.memory_items = []
         self.embeddings = []
         self.available = ADVANCED_EMBEDDINGS_AVAILABLE and embedding_model is not None
+        self.jina_api_key = os.environ.get("JINA_API_KEY")
+        self.image_embeddings = {}  # Store image embeddings by URL
+        
+    def _get_jina_embedding(self, content, is_image=False):
+        """Get embedding from Jina API for text or image"""
+        if not self.jina_api_key:
+            return None
+            
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.jina_api_key}"
+        }
+        
+        if is_image:
+            # Check if it's a URL or base64
+            if content.startswith('http'):
+                payload = {
+                    "model": "jina-clip-v2",
+                    "input": [{"image": content}]
+                }
+            else:
+                # Assume it's base64
+                payload = {
+                    "model": "jina-clip-v2",
+                    "input": [{"image": content}]
+                }
+        else:
+            # Text embedding
+            payload = {
+                "model": "jina-clip-v2",
+                "input": [{"text": content}]
+            }
+            
+        try:
+            response = requests.post(
+                "https://api.jina.ai/v1/embeddings",
+                headers=headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if "data" in result and len(result["data"]) > 0:
+                    return np.array(result["data"][0]["embedding"])
+            
+            console.print(f"[yellow]Warning: Failed to get Jina embedding. Status: {response.status_code}, Response: {response.text}[/yellow]")
+            return None
+        except Exception as e:
+            console.print(f"[yellow]Warning: Error getting Jina embedding: {e}[/yellow]")
+            return None
+    
+    def _get_embedding(self, content, is_image=False):
+        """Get embedding using the appropriate method"""
+        # Try Jina first if available
+        if self.jina_api_key:
+            embedding = self._get_jina_embedding(content, is_image)
+            if embedding is not None:
+                return embedding
+                
+        # Fallback to sentence-transformers for text
+        if not is_image and isinstance(self.embedding_model, SentenceTransformer):
+            return self.embedding_model.encode(content)
+            
+        # Return None if no embedding method worked
+        return None
         
     def add_memory(self, content: str, metadata: Dict[str, Any] = None) -> str:
         """Add a memory item and generate its embedding"""
@@ -136,36 +211,60 @@ class VectorMemory:
         
         self.memory_items.append(memory_item)
         
+        # Check if this is an image URL
+        is_image = False
+        if metadata and metadata.get("type") == "image":
+            is_image = True
+        elif isinstance(content, str) and (content.startswith('http') and any(ext in content.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp'])):
+            is_image = True
+            memory_item["metadata"]["type"] = "image"
+        
         # Generate and store embedding if available
         if self.available:
-            embedding = self.embedding_model.encode(content)
-            self.embeddings.append(embedding)
+            embedding = self._get_embedding(content, is_image)
             
-            # Store in Redis if available
-            if self.vector_store:
-                try:
-                    # Store as JSON with embedding
-                    memory_with_embedding = memory_item.copy()
-                    memory_with_embedding["embedding"] = embedding.tolist()
-                    self.vector_store.set(f"memory:{memory_id}", json.dumps(memory_with_embedding))
-                except Exception as e:
-                    console.print(f"[yellow]Warning: Failed to store memory in Redis: {e}[/yellow]")
+            if embedding is not None:
+                self.embeddings.append(embedding)
+                
+                # If it's an image, store in image embeddings dictionary
+                if is_image:
+                    self.image_embeddings[content] = embedding
+                
+                # Store in Redis if available
+                if self.vector_store:
+                    try:
+                        # Store as JSON with embedding
+                        memory_with_embedding = memory_item.copy()
+                        memory_with_embedding["embedding"] = embedding.tolist()
+                        memory_with_embedding["is_image"] = is_image
+                        self.vector_store.set(f"memory:{memory_id}", json.dumps(memory_with_embedding))
+                    except Exception as e:
+                        console.print(f"[yellow]Warning: Failed to store memory in Redis: {e}[/yellow]")
         
         return memory_id
     
-    def search_memory(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_memory(self, query: str, limit: int = 5, include_images: bool = True) -> List[Dict[str, Any]]:
         """Search memory using vector similarity"""
         if not self.available or not self.memory_items:
             # Fallback to keyword search if embeddings not available
             return self._keyword_search(query, limit)
-            
-        query_embedding = self.embedding_model.encode(query)
         
+        # Check if query might be an image URL
+        is_image_query = query.startswith('http') and any(ext in query.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp'])
+        
+        # Get query embedding
+        query_embedding = self._get_embedding(query, is_image=is_image_query)
+        
+        if query_embedding is None:
+            # Fallback to keyword search if embedding fails
+            return self._keyword_search(query, limit)
+            
         # Calculate similarities
         similarities = []
         for i, embedding in enumerate(self.embeddings):
-            similarity = self._cosine_similarity(query_embedding, embedding)
-            similarities.append((similarity, i))
+            if embedding is not None:  # Skip items without embeddings
+                similarity = self._cosine_similarity(query_embedding, embedding)
+                similarities.append((similarity, i))
         
         # Sort by similarity (highest first)
         similarities.sort(reverse=True)
@@ -176,7 +275,18 @@ class VectorMemory:
             memory_item = self.memory_items[idx].copy()
             memory_item["relevance_score"] = float(similarity)
             memory_item["access_count"] += 1
+            
+            # Skip images if not requested
+            if not include_images and memory_item.get("metadata", {}).get("type") == "image":
+                continue
+                
             results.append(memory_item)
+            
+        # If we don't have enough results after filtering, get more
+        if len(results) < limit and not include_images:
+            more_results = self.search_memory(query, limit=limit*2, include_images=include_images)
+            results.extend([r for r in more_results if r["id"] not in [item["id"] for item in results]])
+            results = results[:limit]
             
         return results
     
@@ -3164,6 +3274,20 @@ class ToolRegistry:
             function=self.search
         )
         
+        self.register_function(
+            name="search_similar_images",
+            description="Search for similar images in the conversation history",
+            parameters={
+                "type": "object", 
+                "properties": {
+                    "image_url": {"type": "string", "description": "URL of the image to find similar images for"},
+                    "limit": {"type": "integer", "description": "Maximum number of results to return", "default": 3}
+                }, 
+                "required": ["image_url"]
+            },
+            function=self._search_similar_images
+        )
+        
         # Register a more robust weather function
         self.register_function(
             name="get_weather",
@@ -3307,6 +3431,21 @@ class ToolRegistry:
             description="Search the knowledge base for relevant information",
             parameters={"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}}, "required": ["query"]},
             function=self._search_knowledge
+        )
+        
+        self.register_function(
+            name="search_conversation_history",
+            description="Search the conversation history for relevant content",
+            parameters={
+                "type": "object", 
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "limit": {"type": "integer", "description": "Maximum number of results to return", "default": 5},
+                    "include_images": {"type": "boolean", "description": "Whether to include images in the search", "default": True}
+                }, 
+                "required": ["query"]
+            },
+            function=self._search_conversation_history
         )
         self.register_function(
             name="monitor_task",
@@ -4191,6 +4330,38 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
     
+    def _search_similar_images(self, image_url: str, limit: int = 3) -> Dict[str, Any]:
+        """Search for similar images in the conversation history"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            results = agent.search_similar_images(image_url, limit)
+            
+            formatted_results = []
+            for result in results:
+                formatted_results.append({
+                    "content": result["content"],
+                    "type": result.get("metadata", {}).get("type", "unknown"),
+                    "relevance_score": result.get("relevance_score", 0),
+                    "timestamp": result.get("created_at", "unknown")
+                })
+            
+            return {
+                "success": True,
+                "query_image": image_url,
+                "results_count": len(formatted_results),
+                "results": formatted_results
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
     def _fact_check(self, query: str) -> Dict[str, Any]:
         """Legacy wrapper for the fact_check function"""
         return self.fact_check(query)
@@ -4310,6 +4481,40 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
+    def _search_conversation_history(self, query: str, limit: int = 5, include_images: bool = True) -> Dict[str, Any]:
+        """Search the conversation history for relevant content"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent or not hasattr(agent, 'memory'):
+                return {"error": "Could not access TogetherAgent memory", "success": False}
+            
+            results = agent.memory.search_memory(query, limit=limit, include_images=include_images)
+            
+            formatted_results = []
+            for result in results:
+                formatted_result = {
+                    "content": result["content"],
+                    "type": result.get("metadata", {}).get("type", "text"),
+                    "role": result.get("metadata", {}).get("role", "unknown"),
+                    "relevance_score": result.get("relevance_score", 0),
+                    "timestamp": result.get("created_at", "unknown")
+                }
+                formatted_results.append(formatted_result)
+            
+            return {
+                "success": True,
+                "query": query,
+                "results_count": len(formatted_results),
+                "results": formatted_results
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
     def _search_knowledge(self, query: str) -> Dict[str, Any]:
         try:
             agent = None
@@ -4953,6 +5158,13 @@ print("Hello, world!")
         
         return None
     
+    def search_similar_images(self, image_url: str, limit: int = 3) -> List[Dict[str, Any]]:
+        """Search for similar images in the conversation history"""
+        if not hasattr(self, 'memory') or not self.memory.available:
+            return []
+            
+        return self.memory.search_memory(image_url, limit=limit, include_images=True)
+    
     def _get_function_suggestion(self, function_name: str, arguments: Dict[str, Any], result: Dict[str, Any]) -> str:
         """Generate a helpful suggestion for fixing a function call error."""
         if not self.tool_registry.has_tool(function_name):
@@ -5099,6 +5311,11 @@ print("Hello, world!")
             for url in image_urls:
                 multimodal.append({"type": "image_url", "image_url": {"url": url}})
                 self.interaction_memory.append({"type": "image", "url": url, "timestamp": time.time()})
+                
+                # Add image to memory for retrieval
+                if hasattr(self, 'memory'):
+                    self.memory.add_memory(url, {"type": "image", "source": "user_input"})
+                
             return multimodal
         return message
         if isinstance(message, str):
@@ -5127,12 +5344,25 @@ print("Hello, world!")
         message = {"role": role}
         if isinstance(content, list):
             message["content"] = content
+            
+            # For multimodal content, add each part to memory
+            if hasattr(self, 'memory'):
+                for item in content:
+                    if item.get("type") == "text":
+                        self.memory.add_memory(item.get("text", ""), {"type": "text", "role": role})
+                    elif item.get("type") == "image_url" and "url" in item.get("image_url", {}):
+                        self.memory.add_memory(item["image_url"]["url"], {"type": "image", "role": role})
         else:
             if hasattr(self, "is_llama4") and self.is_llama4 and role != "system" and not content.endswith("<|eot|>"):
                 content += "<|eot|>"
             message["content"] = content
             if role == "user":
                 self.update_environment_user_behavior(content)
+                
+            # Add text content to memory
+            if hasattr(self, 'memory') and content and role in ["user", "assistant"]:
+                self.memory.add_memory(content, {"type": "text", "role": role})
+                
         self.conversation_history.append(message)
 
     def generate_response(self, user_input):
@@ -5144,16 +5374,7 @@ print("Hello, world!")
         self.last_user_message = user_input
         self.add_message("user", user_input)
         
-        # Store user input in memory
-        if isinstance(user_input, str):
-            self.memory.add_memory(user_input, {"category": "user_input", "type": "message"})
-        elif isinstance(user_input, list):
-            text_content = ""
-            for item in user_input:
-                if item.get("type") == "text":
-                    text_content += item.get("text", "")
-            if text_content:
-                self.memory.add_memory(text_content, {"category": "user_input", "type": "multimodal_message"})
+        # Note: We don't need to explicitly store in memory here anymore since add_message now handles it
         
         # Both continuous learning and meta-cognitive reflection are optional features
         # that may not be implemented in all agent versions
@@ -5504,13 +5725,31 @@ def main():
         print("[yellow]Redis package not found. Installing...[/yellow]")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "redis"])
         import redis
+        
+    # Check for Jina API key
+    jina_api_key = os.environ.get("JINA_API_KEY")
+    if jina_api_key:
+        console.print("[green]JINA_API_KEY found. Will use jina-clip-v2 for embeddings.[/green]")
+    else:
+        console.print("[yellow]Warning: JINA_API_KEY not found in environment variables.[/yellow]")
+        console.print("[yellow]Set JINA_API_KEY to enable advanced image and text embeddings.[/yellow]")
     
     parser = argparse.ArgumentParser(description="Chat with an orchestrator AI agent with specialized scout agents using Together API")
     parser.add_argument("--model", default="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", help="Model to use (default: meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8)")
     parser.add_argument("--scouts", type=int, default=5, help="Number of scout agents to initialize (default: 5)")
     parser.add_argument("--logprobs", action="store_true", help="Enable returning logprobs for confidence analysis")
     parser.add_argument("--test-mode", action="store_true", help="Run in test mode with mock API responses")
+    parser.add_argument("--install-deps", action="store_true", help="Install required dependencies")
     args = parser.parse_args()
+    
+    # Install dependencies if requested
+    if args.install_deps:
+        console.print("[cyan]Installing required dependencies...[/cyan]")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "pillow", "numpy", "redis"])
+            console.print("[green]Dependencies installed successfully[/green]")
+        except Exception as e:
+            console.print(f"[red]Error installing dependencies: {e}[/red]")
     
     welcome = (
         "[bold blue]Enhanced Together Agent CLI with Scout Orchestration[/bold blue]\n"
