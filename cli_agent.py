@@ -4317,12 +4317,13 @@ class CLIAgent:
                             }
                         } for tool_call in assistant_message.tool_calls
                     ]
-                    self.conversation_history.append({
+                    history_entry = {
                         "role": "assistant",
                         # Include content if the model provided any text alongside tool calls
                         "content": assistant_message.content,
                         "tool_calls": raw_tool_calls
-                    })
+                    }
+                    self.conversation_history.append(history_entry)
 
                     # Execute tools in parallel
                     tool_results = await self._execute_parallel_tools_async(assistant_message.tool_calls)
