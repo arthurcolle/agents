@@ -2483,6 +2483,7 @@ print("Hello, world!")
         self.enable_planning = True
         self.planning_session = None
         self.task_processor = AsyncTaskProcessor()
+        self.interaction_memory = []
         self.environment_state = {
             "system": self._detect_system_info(),
             "user_behavior": {"message_count": 0, "avg_message_length": 0, "technical_level": "medium", "detected_preferences": []},
@@ -2717,6 +2718,21 @@ print("Hello, world!")
                 multimodal.append({"type": "text", "text": text_content})
             for url in image_urls:
                 multimodal.append({"type": "image_url", "image_url": {"url": url}})
+                self.interaction_memory.append({"type": "image", "url": url, "timestamp": time.time()})
+            return multimodal
+        return message
+        if isinstance(message, str):
+            image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', message)
+            if not image_urls:
+                return message
+            for url in image_urls:
+                message = message.replace(url, '')
+            text_content = message.strip()
+            multimodal = []
+            if text_content:
+                multimodal.append({"type": "text", "text": text_content})
+            for url in image_urls:
+                multimodal.append({"type": "image_url", "image_url": {"url": url}})
             return multimodal
         return message
 
@@ -2741,6 +2757,10 @@ print("Hello, world!")
 
     def generate_response(self, user_input):
         # Store last user message and add to conversation history
+        if isinstance(user_input, list):
+            for item in user_input:
+                if item.get("type") == "image_url":
+                    self.interaction_memory.append({"type": "image", "url": item["image_url"]["url"], "timestamp": time.time()})
         self.last_user_message = user_input
         self.add_message("user", user_input)
         
