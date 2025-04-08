@@ -30,6 +30,8 @@ import urllib.parse
 import asyncio
 import traceback
 import redis
+import numpy as np
+from typing import Dict, List, Any, Callable, Optional, Union, Tuple, Set
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO, BytesIO
 from pathlib import Path
@@ -78,9 +80,178 @@ try:
     pubsub = redis_client.pubsub()
     pubsub.subscribe('agent_messages')
     console.print("[green]Redis PubSub initialized successfully[/green]")
+    
+    # Initialize Redis for vector storage
+    vector_store = redis.Redis(host='localhost', port=6379, db=1)
+    console.print("[green]Redis Vector Store initialized successfully[/green]")
 except Exception as e:
     console.print(f"[yellow]Warning: Redis PubSub initialization failed: {e}[/yellow]")
     pubsub = None
+    vector_store = None
+
+# Try to import optional dependencies for advanced features
+try:
+    import torch
+    import transformers
+    from sentence_transformers import SentenceTransformer
+    ADVANCED_EMBEDDINGS_AVAILABLE = True
+    # Initialize sentence transformer model for embeddings
+    try:
+        embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        console.print("[green]Sentence Transformer model loaded successfully[/green]")
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not load embedding model: {e}[/yellow]")
+        embedding_model = None
+except ImportError:
+    ADVANCED_EMBEDDINGS_AVAILABLE = False
+    embedding_model = None
+    console.print("[yellow]Advanced embedding features not available. Install with: pip install torch transformers sentence-transformers[/yellow]")
+
+# =======================
+# Vector Memory System
+# =======================
+class VectorMemory:
+    """Advanced memory system using vector embeddings for semantic retrieval"""
+    def __init__(self, embedding_model=None, vector_store=None, dimension=384):
+        self.embedding_model = embedding_model
+        self.vector_store = vector_store
+        self.dimension = dimension
+        self.memory_items = []
+        self.embeddings = []
+        self.available = ADVANCED_EMBEDDINGS_AVAILABLE and embedding_model is not None
+        
+    def add_memory(self, content: str, metadata: Dict[str, Any] = None) -> str:
+        """Add a memory item and generate its embedding"""
+        memory_id = str(uuid.uuid4())
+        timestamp = time.time()
+        memory_item = {
+            "id": memory_id,
+            "content": content,
+            "metadata": metadata or {},
+            "timestamp": timestamp,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp)),
+            "access_count": 0
+        }
+        
+        self.memory_items.append(memory_item)
+        
+        # Generate and store embedding if available
+        if self.available:
+            embedding = self.embedding_model.encode(content)
+            self.embeddings.append(embedding)
+            
+            # Store in Redis if available
+            if self.vector_store:
+                try:
+                    # Store as JSON with embedding
+                    memory_with_embedding = memory_item.copy()
+                    memory_with_embedding["embedding"] = embedding.tolist()
+                    self.vector_store.set(f"memory:{memory_id}", json.dumps(memory_with_embedding))
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Failed to store memory in Redis: {e}[/yellow]")
+        
+        return memory_id
+    
+    def search_memory(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search memory using vector similarity"""
+        if not self.available or not self.memory_items:
+            # Fallback to keyword search if embeddings not available
+            return self._keyword_search(query, limit)
+            
+        query_embedding = self.embedding_model.encode(query)
+        
+        # Calculate similarities
+        similarities = []
+        for i, embedding in enumerate(self.embeddings):
+            similarity = self._cosine_similarity(query_embedding, embedding)
+            similarities.append((similarity, i))
+        
+        # Sort by similarity (highest first)
+        similarities.sort(reverse=True)
+        
+        # Return top matches
+        results = []
+        for similarity, idx in similarities[:limit]:
+            memory_item = self.memory_items[idx].copy()
+            memory_item["relevance_score"] = float(similarity)
+            memory_item["access_count"] += 1
+            results.append(memory_item)
+            
+        return results
+    
+    def _cosine_similarity(self, a, b):
+        """Calculate cosine similarity between two vectors"""
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    
+    def _keyword_search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Fallback keyword-based search"""
+        query_terms = query.lower().split()
+        results = []
+        
+        for item in self.memory_items:
+            content = item["content"].lower()
+            # Calculate a simple relevance score based on term frequency
+            score = sum(content.count(term) for term in query_terms)
+            if score > 0:
+                result = item.copy()
+                result["relevance_score"] = score
+                result["access_count"] += 1
+                results.append(result)
+                
+        # Sort by relevance score
+        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return results[:limit]
+    
+    def get_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific memory by ID"""
+        for item in self.memory_items:
+            if item["id"] == memory_id:
+                item["access_count"] += 1
+                return item
+        return None
+    
+    def forget_memory(self, memory_id: str) -> bool:
+        """Remove a memory item"""
+        for i, item in enumerate(self.memory_items):
+            if item["id"] == memory_id:
+                self.memory_items.pop(i)
+                if self.available and i < len(self.embeddings):
+                    self.embeddings.pop(i)
+                if self.vector_store:
+                    try:
+                        self.vector_store.delete(f"memory:{memory_id}")
+                    except Exception:
+                        pass
+                return True
+        return False
+    
+    def summarize_memories(self, category: str = None) -> Dict[str, Any]:
+        """Generate a summary of stored memories"""
+        if not self.memory_items:
+            return {"count": 0, "categories": [], "oldest": None, "newest": None}
+            
+        categories = set()
+        timestamps = []
+        
+        for item in self.memory_items:
+            if "category" in item.get("metadata", {}):
+                categories.add(item["metadata"]["category"])
+            timestamps.append(item["timestamp"])
+            
+        filtered_items = self.memory_items
+        if category:
+            filtered_items = [item for item in self.memory_items 
+                             if item.get("metadata", {}).get("category") == category]
+            
+        return {
+            "count": len(self.memory_items),
+            "filtered_count": len(filtered_items),
+            "categories": list(categories),
+            "oldest": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(min(timestamps))) if timestamps else None,
+            "newest": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(max(timestamps))) if timestamps else None,
+            "total_tokens": sum(len(item["content"].split()) for item in filtered_items),
+            "category_filter": category
+        }
 
 # =======================
 # MultiPrompt Class
@@ -143,7 +314,7 @@ class KnowledgeItem:
 # Scout Agent
 # ================================
 class ScoutAgent:
-    """Scout agent that can autonomously perform specialized tasks."""
+    """Scout agent that can autonomously perform specialized tasks with advanced capabilities."""
     def __init__(self, agent_id, specialization, model="meta-llama/Llama-4-Turbo-17B-Instruct-FP8"):
         self.agent_id = agent_id
         self.specialization = specialization
@@ -163,6 +334,25 @@ class ScoutAgent:
         self.max_rollouts = 3  # Maximum number of rollouts to generate
         self.is_available = threading.Event()
         self.is_available.set()  # Initially available
+        
+        # Advanced capabilities
+        self.memory = VectorMemory(embedding_model, vector_store)
+        self.skills = set([specialization])  # Start with base specialization
+        self.performance_metrics = {
+            "tasks_completed": 0,
+            "success_rate": 1.0,
+            "avg_execution_time": 0,
+            "total_execution_time": 0,
+            "feedback_scores": []
+        }
+        self.learning_rate = 0.1  # For skill acquisition
+        self.skill_proficiency = {specialization: 1.0}  # Base skill starts at 100%
+        self.collaboration_history = {}  # Track collaborations with other agents
+        self.reinforcement_learning = {
+            "exploration_rate": 0.2,  # Probability of trying new approaches
+            "learning_enabled": True,
+            "reward_history": []
+        }
         
         # Initialize Redis pubsub for agent communication
         try:
@@ -327,7 +517,9 @@ class ScoutAgent:
         })
         
     def perform_task(self, task, context=None):
-        """Main method to process a task with chain-of-thought reasoning and multiple rollouts"""
+        """Main method to process a task with advanced reasoning, learning, and multiple rollouts"""
+        start_time = time.time()
+        
         # Add the task to the conversation history
         if context:
             task_with_context = f"Task: {task}\n\nContext: {context}"
@@ -336,16 +528,39 @@ class ScoutAgent:
             
         self.conversation_history.append({"role": "user", "content": task_with_context})
         
+        # Store task in memory for future reference
+        memory_metadata = {
+            "type": "task",
+            "category": self.specialization,
+            "context": context
+        }
+        memory_id = self.memory.add_memory(task, memory_metadata)
+        
+        # Check if we've done similar tasks before
+        similar_experiences = self.memory.search_memory(task, limit=3)
+        
+        # Determine if we should explore new approaches based on RL exploration rate
+        should_explore = (random.random() < self.reinforcement_learning["exploration_rate"]) and self.reinforcement_learning["learning_enabled"]
+        
         from together import Together
         together = Together()
         
         # Generate multiple rollouts/solution paths
         rollout_results = []
         
-        # First generate a chain of thought
+        # Enhance prompt with similar past experiences if available
+        experience_context = ""
+        if similar_experiences and not should_explore:
+            experience_context = "\n\nRelevant past experiences:\n"
+            for i, exp in enumerate(similar_experiences):
+                experience_context += f"{i+1}. {exp['content']}\n"
+                if "solution" in exp.get("metadata", {}):
+                    experience_context += f"   Previous solution: {exp['metadata']['solution']}\n"
+        
+        # First generate a chain of thought with enhanced context
         cot_prompt = {
             "role": "user", 
-            "content": f"For this task: '{task}', please use chain-of-thought reasoning. First, break down the task into steps. Then think through each step carefully before providing your final answer or solution."
+            "content": f"For this task: '{task}', please use chain-of-thought reasoning. First, break down the task into steps. Then think through each step carefully before providing your final answer or solution.{experience_context}"
         }
         
         # Generate the chain of thought
@@ -427,6 +642,63 @@ class ScoutAgent:
         final_content = final_response.choices[0].message.content
         self.conversation_history.append({"role": "assistant", "content": final_content})
         
+        # Update performance metrics
+        execution_time = time.time() - start_time
+        self.performance_metrics["tasks_completed"] += 1
+        self.performance_metrics["total_execution_time"] += execution_time
+        self.performance_metrics["avg_execution_time"] = (
+            self.performance_metrics["total_execution_time"] / 
+            self.performance_metrics["tasks_completed"]
+        )
+        
+        # Store the solution in memory for future reference
+        solution_metadata = {
+            "type": "solution",
+            "task_id": memory_id,
+            "category": self.specialization,
+            "execution_time": execution_time,
+            "solution": final_content,
+            "best_rollout_id": best_rollout.get("rollout_id") if best_rollout else None
+        }
+        self.memory.add_memory(final_content, solution_metadata)
+        
+        # Apply reinforcement learning if enabled
+        if self.reinforcement_learning["learning_enabled"]:
+            # Calculate a reward based on solution quality (using best_rollout evaluation)
+            if best_rollout and "evaluation" in best_rollout:
+                # Extract sentiment from evaluation to estimate quality
+                evaluation = best_rollout["evaluation"].lower()
+                positive_terms = ["excellent", "good", "effective", "efficient", "optimal", "best"]
+                negative_terms = ["limitation", "drawback", "issue", "problem", "concern", "weakness"]
+                
+                positive_score = sum(1 for term in positive_terms if term in evaluation)
+                negative_score = sum(1 for term in negative_terms if term in evaluation)
+                
+                # Calculate reward between -1 and 1
+                reward = (positive_score - negative_score) / max(1, positive_score + negative_score)
+                
+                # Store reward
+                self.reinforcement_learning["reward_history"].append(reward)
+                
+                # Adjust exploration rate based on recent performance
+                if len(self.reinforcement_learning["reward_history"]) >= 5:
+                    recent_rewards = self.reinforcement_learning["reward_history"][-5:]
+                    avg_reward = sum(recent_rewards) / len(recent_rewards)
+                    
+                    # If we're doing well, reduce exploration (exploit more)
+                    # If we're doing poorly, increase exploration
+                    if avg_reward > 0.5:
+                        self.reinforcement_learning["exploration_rate"] = max(
+                            0.05, self.reinforcement_learning["exploration_rate"] * 0.9
+                        )
+                    elif avg_reward < 0:
+                        self.reinforcement_learning["exploration_rate"] = min(
+                            0.5, self.reinforcement_learning["exploration_rate"] * 1.1
+                        )
+        
+        # Check if we should acquire a new skill based on this task
+        self._consider_skill_acquisition(task, final_content, best_rollout)
+        
         return {
             "task": task,
             "chain_of_thought": cot_content,
@@ -434,8 +706,49 @@ class ScoutAgent:
             "agent_id": self.agent_id,
             "specialization": self.specialization,
             "rollouts": rollout_results,
-            "best_rollout": best_rollout
+            "best_rollout": best_rollout,
+            "execution_time": execution_time,
+            "memory_id": memory_id,
+            "similar_past_experiences": [exp["id"] for exp in similar_experiences] if similar_experiences else []
         }
+        
+    def _consider_skill_acquisition(self, task, solution, best_rollout):
+        """Consider acquiring a new skill based on task execution"""
+        # Potential new skills to detect in the task/solution
+        potential_skills = {
+            "research": ["research", "analyze", "investigate", "study", "examine", "review"],
+            "code": ["code", "program", "develop", "implement", "script", "function", "class"],
+            "planning": ["plan", "strategy", "roadmap", "timeline", "schedule", "organize"],
+            "creative": ["create", "design", "innovate", "imagine", "novel", "artistic"],
+            "critical": ["evaluate", "assess", "critique", "review", "analyze", "judge"],
+            "data_analysis": ["data", "statistics", "analyze", "dataset", "correlation", "regression"],
+            "summarization": ["summarize", "condense", "digest", "synopsis", "overview"],
+            "translation": ["translate", "language", "conversion", "interpret"],
+            "mathematical": ["math", "equation", "calculate", "formula", "computation"]
+        }
+        
+        # Check if task/solution contains indicators of skills we don't have
+        combined_text = f"{task} {solution}".lower()
+        
+        for skill, indicators in potential_skills.items():
+            # Skip skills we already have
+            if skill in self.skills:
+                continue
+                
+            # Count occurrences of skill indicators
+            indicator_count = sum(1 for indicator in indicators if indicator in combined_text)
+            
+            # If enough indicators are present, consider acquiring the skill
+            if indicator_count >= 3:
+                # Probability of acquiring skill depends on learning rate and indicator count
+                acquisition_probability = min(0.8, self.learning_rate * indicator_count / len(indicators))
+                
+                if random.random() < acquisition_probability:
+                    # Acquire the new skill
+                    self.skills.add(skill)
+                    # Start with partial proficiency
+                    self.skill_proficiency[skill] = 0.3
+                    console.print(f"[green]Agent {self.agent_id} acquired new skill: {skill}[/green]")
     
     def _select_best_rollout(self, rollouts):
         """Select the best rollout based on evaluations"""
@@ -500,7 +813,7 @@ class ScoutAgent:
 # Central Agent Orchestrator
 # ================================
 class AgentOrchestrator:
-    """Orchestrates multiple scout agents to perform tasks in parallel."""
+    """Advanced orchestrator that coordinates multiple scout agents with dynamic team formation."""
     def __init__(self, num_scouts=3, model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"):
         self.model = model
         self.scouts = {}
@@ -512,6 +825,26 @@ class AgentOrchestrator:
         self.processed_urls = set()
         self.url_pattern = re.compile(r'https?://[^\s<>"\']+|www\.[^\s<>"\']+')
         self.image_processing_limit = 5
+        
+        # Advanced orchestration capabilities
+        self.memory = VectorMemory(embedding_model, vector_store)
+        self.team_history = {}  # Track team formations and their performance
+        self.task_decomposition_cache = {}  # Cache task decompositions
+        self.agent_performance_history = {}  # Track agent performance by task type
+        self.collaboration_graph = {}  # Graph of agent collaborations
+        self.skill_registry = {  # Registry of skills and which agents have them
+            "research": set(),
+            "code": set(),
+            "planning": set(),
+            "creative": set(),
+            "critical": set(),
+            "data_analysis": set(),
+            "summarization": set(),
+            "translation": set(),
+            "mathematical": set()
+        }
+        self.adaptive_scheduling = True  # Enable adaptive task scheduling
+        self.learning_enabled = True  # Enable learning from task execution
         
         # Initialize Redis for orchestrator
         try:
@@ -543,49 +876,439 @@ class AgentOrchestrator:
         self.orchestrator_thread.start()
         
     def _orchestrator(self):
-        """Main orchestrator loop that distributes tasks to scouts"""
+        """Advanced orchestrator loop with dynamic team formation and adaptive scheduling"""
         while not self.stop_event.is_set():
             try:
                 task_id, task, priority, context = self.task_queue.get(timeout=1)
                 
-                # Find an available scout with the right specialization
-                assigned = False
+                # Store task in memory
+                memory_metadata = {
+                    "type": "orchestrator_task",
+                    "priority": priority,
+                    "context": context
+                }
+                memory_id = self.memory.add_memory(task, memory_metadata)
                 
-                # First try to match by specialization
-                if "specialization" in context:
-                    target_specialization = context["specialization"]
-                    for agent_id, scout in self.scouts.items():
-                        if scout.specialization == target_specialization and scout.is_available.is_set():
-                            scout_task_id = scout.add_task(scout.perform_task, task, context)
-                            self.results[task_id] = {
-                                "status": "assigned", 
-                                "scout_id": agent_id,
-                                "scout_task_id": scout_task_id
-                            }
-                            assigned = True
-                            break
+                # Check if we've seen similar tasks before
+                similar_tasks = self.memory.search_memory(task, limit=3)
                 
-                # If no scout with matching specialization is available, use any available scout
-                if not assigned:
-                    for agent_id, scout in self.scouts.items():
-                        if scout.is_available.is_set():
-                            scout_task_id = scout.add_task(scout.perform_task, task, context)
-                            self.results[task_id] = {
-                                "status": "assigned", 
-                                "scout_id": agent_id,
-                                "scout_task_id": scout_task_id
-                            }
-                            assigned = True
-                            break
+                # Analyze task to determine required skills
+                required_skills = self._analyze_task_skills(task)
+                
+                # Determine if this is a complex task that needs decomposition
+                is_complex = self._is_complex_task(task)
+                
+                if is_complex and self.adaptive_scheduling:
+                    # Decompose complex task into subtasks
+                    subtasks = self._decompose_task(task, context)
+                    
+                    # Create a team of agents for this complex task
+                    team = self._form_optimal_team(required_skills, len(subtasks))
+                    
+                    # Assign subtasks to team members
+                    subtask_assignments = self._assign_subtasks_to_team(subtasks, team)
+                    
+                    # Track this team formation
+                    team_id = str(uuid.uuid4())
+                    self.team_history[team_id] = {
+                        "task_id": task_id,
+                        "members": team,
+                        "subtasks": subtask_assignments,
+                        "formation_time": time.time(),
+                        "status": "working"
+                    }
+                    
+                    # Assign subtasks to team members
+                    for subtask_id, assignment in subtask_assignments.items():
+                        subtask = assignment["subtask"]
+                        agent_id = assignment["agent_id"]
+                        
+                        # Add team context to subtask
+                        subtask_context = context.copy() if context else {}
+                        subtask_context["team_id"] = team_id
+                        subtask_context["parent_task_id"] = task_id
+                        
+                        # Assign to agent
+                        scout = self.scouts[agent_id]
+                        scout_task_id = scout.add_task(scout.perform_task, subtask, subtask_context)
+                        
+                        # Update assignment with task ID
+                        assignment["scout_task_id"] = scout_task_id
+                    
+                    # Update task status
+                    self.results[task_id] = {
+                        "status": "decomposed",
+                        "team_id": team_id,
+                        "subtask_count": len(subtasks),
+                        "memory_id": memory_id
+                    }
+                    
+                else:
+                    # Standard task assignment with skill matching
+                    assigned = False
+                    
+                    # Find the best agent based on skills and performance history
+                    best_agent_id = self._find_best_agent_for_task(task, required_skills, context)
+                    
+                    if best_agent_id:
+                        scout = self.scouts[best_agent_id]
+                        scout_task_id = scout.add_task(scout.perform_task, task, context)
+                        self.results[task_id] = {
+                            "status": "assigned", 
+                            "scout_id": best_agent_id,
+                            "scout_task_id": scout_task_id,
+                            "memory_id": memory_id
+                        }
+                        assigned = True
+                    
+                    # If no optimal assignment found, try specialization matching
+                    if not assigned and "specialization" in context:
+                        target_specialization = context["specialization"]
+                        for agent_id, scout in self.scouts.items():
+                            if scout.specialization == target_specialization and scout.is_available.is_set():
+                                scout_task_id = scout.add_task(scout.perform_task, task, context)
+                                self.results[task_id] = {
+                                    "status": "assigned", 
+                                    "scout_id": agent_id,
+                                    "scout_task_id": scout_task_id,
+                                    "memory_id": memory_id
+                                }
+                                assigned = True
+                                break
+                    
+                    # If still not assigned, use any available scout
+                    if not assigned:
+                        for agent_id, scout in self.scouts.items():
+                            if scout.is_available.is_set():
+                                scout_task_id = scout.add_task(scout.perform_task, task, context)
+                                self.results[task_id] = {
+                                    "status": "assigned", 
+                                    "scout_id": agent_id,
+                                    "scout_task_id": scout_task_id,
+                                    "memory_id": memory_id
+                                }
+                                assigned = True
+                                break
+                                
+                    # If all scouts are busy, prioritize based on task importance
+                    if not assigned:
+                        if priority > 1:  # High priority task
+                            # Find the scout working on the lowest priority task
+                            lowest_priority_scout = None
+                            lowest_priority = float('inf')
                             
-                # If all scouts are busy, wait and retry
-                if not assigned:
-                    # Put the task back in the queue with its original priority
-                    self.task_queue.put((task_id, task, priority, context))
-                    time.sleep(0.5)  # Wait a bit before retrying
+                            for agent_id, scout in self.scouts.items():
+                                # Check current task priority
+                                current_tasks = self._get_agent_current_tasks(agent_id)
+                                if current_tasks:
+                                    current_priority = min(task.get("priority", 1) for task in current_tasks)
+                                    if current_priority < lowest_priority:
+                                        lowest_priority = current_priority
+                                        lowest_priority_scout = agent_id
+                            
+                            if lowest_priority_scout and lowest_priority < priority:
+                                # Preempt the lower priority task
+                                scout = self.scouts[lowest_priority_scout]
+                                scout_task_id = scout.add_task(scout.perform_task, task, context)
+                                self.results[task_id] = {
+                                    "status": "assigned_preemptive", 
+                                    "scout_id": lowest_priority_scout,
+                                    "scout_task_id": scout_task_id,
+                                    "memory_id": memory_id
+                                }
+                                assigned = True
+                        
+                        # If still not assigned, put back in queue
+                        if not assigned:
+                            # Put the task back in the queue with its original priority
+                            self.task_queue.put((task_id, task, priority, context))
+                            time.sleep(0.5)  # Wait a bit before retrying
                     
             except queue.Empty:
                 continue
+                
+    def _analyze_task_skills(self, task):
+        """Analyze a task to determine required skills"""
+        required_skills = set()
+        task_lower = task.lower()
+        
+        # Simple keyword-based skill detection
+        skill_keywords = {
+            "research": ["research", "find", "search", "investigate", "explore", "analyze"],
+            "code": ["code", "program", "develop", "implement", "function", "class", "algorithm"],
+            "planning": ["plan", "schedule", "organize", "strategy", "roadmap", "timeline"],
+            "creative": ["create", "design", "generate", "imagine", "creative", "novel"],
+            "critical": ["evaluate", "assess", "critique", "review", "analyze", "critical"],
+            "data_analysis": ["data", "analyze", "statistics", "dataset", "correlation", "visualization"],
+            "summarization": ["summarize", "summary", "condense", "overview", "digest"],
+            "translation": ["translate", "language", "conversion"],
+            "mathematical": ["math", "calculate", "equation", "formula", "computation"]
+        }
+        
+        for skill, keywords in skill_keywords.items():
+            if any(keyword in task_lower for keyword in keywords):
+                required_skills.add(skill)
+        
+        # If no skills detected, add a default
+        if not required_skills:
+            required_skills.add("general")
+            
+        return required_skills
+        
+    def _is_complex_task(self, task):
+        """Determine if a task is complex and should be decomposed"""
+        # Simple heuristics for complexity
+        word_count = len(task.split())
+        sentence_count = len(re.split(r'[.!?]+', task))
+        question_count = task.count('?')
+        
+        # Check for indicators of complexity
+        complexity_indicators = [
+            "multiple", "several", "various", "different", "steps",
+            "complex", "complicated", "detailed", "comprehensive",
+            "analyze and", "research and", "implement and"
+        ]
+        
+        has_complexity_indicators = any(indicator in task.lower() for indicator in complexity_indicators)
+        
+        # Task is complex if it's long or has complexity indicators
+        return (word_count > 50 or 
+                sentence_count > 3 or 
+                question_count > 1 or 
+                has_complexity_indicators)
+                
+    def _decompose_task(self, task, context=None):
+        """Decompose a complex task into subtasks"""
+        # Check cache first
+        cache_key = hashlib.md5(task.encode()).hexdigest()
+        if cache_key in self.task_decomposition_cache:
+            return self.task_decomposition_cache[cache_key]
+            
+        # Use LLM to decompose the task
+        from together import Together
+        together = Together()
+        
+        decomposition_prompt = [
+            {"role": "system", "content": "You are an expert at breaking down complex tasks into smaller, manageable subtasks."},
+            {"role": "user", "content": f"Break down the following task into 2-5 subtasks that can be worked on independently. Return ONLY a JSON array of subtask descriptions.\n\nTask: {task}"}
+        ]
+        
+        try:
+            response = together.chat.completions.create(
+                model=self.model,
+                messages=decomposition_prompt,
+                max_tokens=1024,
+                response_format={"type": "json_object"}
+            )
+            
+            result = json.loads(response.choices[0].message.content)
+            
+            # Extract subtasks from response
+            if isinstance(result, dict) and "subtasks" in result:
+                subtasks = result["subtasks"]
+            elif isinstance(result, list):
+                subtasks = result
+            else:
+                # Fallback if format is unexpected
+                subtasks = [task]
+                
+            # Cache the decomposition
+            self.task_decomposition_cache[cache_key] = subtasks
+            
+            return subtasks
+            
+        except Exception as e:
+            console.print(f"[yellow]Error decomposing task: {e}[/yellow]")
+            # Fallback to simple decomposition
+            return [task]
+            
+    def _form_optimal_team(self, required_skills, team_size):
+        """Form an optimal team based on required skills and agent capabilities"""
+        team = []
+        
+        # First, add agents with the required skills
+        for skill in required_skills:
+            if skill in self.skill_registry:
+                skilled_agents = self.skill_registry[skill]
+                available_skilled_agents = [
+                    agent_id for agent_id in skilled_agents 
+                    if agent_id not in team and self.scouts[agent_id].is_available.is_set()
+                ]
+                
+                if available_skilled_agents:
+                    # Choose the agent with highest proficiency in this skill
+                    best_agent = max(
+                        available_skilled_agents,
+                        key=lambda a: self.scouts[a].skill_proficiency.get(skill, 0)
+                    )
+                    team.append(best_agent)
+                
+                # Stop if we have enough team members
+                if len(team) >= team_size:
+                    break
+        
+        # If we need more team members, add available agents
+        if len(team) < team_size:
+            for agent_id, scout in self.scouts.items():
+                if agent_id not in team and scout.is_available.is_set():
+                    team.append(agent_id)
+                    if len(team) >= team_size:
+                        break
+        
+        return team
+        
+    def _assign_subtasks_to_team(self, subtasks, team):
+        """Assign subtasks to team members optimally"""
+        assignments = {}
+        
+        # If team is empty, can't assign
+        if not team:
+            return assignments
+            
+        # Analyze subtasks to determine required skills
+        subtask_skills = {}
+        for i, subtask in enumerate(subtasks):
+            subtask_id = f"subtask_{i+1}"
+            subtask_skills[subtask_id] = self._analyze_task_skills(subtask)
+            
+        # Create a mapping of agents to their skills
+        agent_skills = {}
+        for agent_id in team:
+            scout = self.scouts[agent_id]
+            agent_skills[agent_id] = scout.skills
+            
+        # Assign subtasks to agents based on skill matching
+        assigned_agents = set()
+        
+        # First pass: assign subtasks to agents with matching skills
+        for subtask_id, skills in subtask_skills.items():
+            best_agent = None
+            best_match = 0
+            
+            for agent_id in team:
+                if agent_id in assigned_agents:
+                    continue
+                    
+                # Count matching skills
+                match_count = len(skills.intersection(agent_skills[agent_id]))
+                
+                # Consider agent's proficiency in these skills
+                proficiency = 0
+                for skill in skills:
+                    proficiency += self.scouts[agent_id].skill_proficiency.get(skill, 0)
+                
+                # Combined score
+                score = match_count + proficiency
+                
+                if score > best_match:
+                    best_match = score
+                    best_agent = agent_id
+            
+            if best_agent:
+                assignments[subtask_id] = {
+                    "subtask": subtasks[int(subtask_id.split('_')[1]) - 1],
+                    "agent_id": best_agent,
+                    "skills_required": list(skills)
+                }
+                assigned_agents.add(best_agent)
+        
+        # Second pass: assign remaining subtasks to any available team members
+        unassigned_subtasks = [
+            (subtask_id, subtasks[int(subtask_id.split('_')[1]) - 1])
+            for subtask_id in subtask_skills
+            if subtask_id not in assignments
+        ]
+        
+        available_agents = [agent_id for agent_id in team if agent_id not in assigned_agents]
+        
+        for i, (subtask_id, subtask) in enumerate(unassigned_subtasks):
+            if i < len(available_agents):
+                agent_id = available_agents[i]
+                assignments[subtask_id] = {
+                    "subtask": subtask,
+                    "agent_id": agent_id,
+                    "skills_required": list(subtask_skills[subtask_id])
+                }
+            else:
+                # If we run out of agents, assign to agents that already have tasks
+                # (round-robin assignment)
+                agent_id = team[i % len(team)]
+                assignments[subtask_id] = {
+                    "subtask": subtask,
+                    "agent_id": agent_id,
+                    "skills_required": list(subtask_skills[subtask_id])
+                }
+        
+        return assignments
+        
+    def _get_agent_current_tasks(self, agent_id):
+        """Get the current tasks assigned to an agent"""
+        current_tasks = []
+        
+        for task_id, result in self.results.items():
+            if result.get("status") in ["assigned", "assigned_preemptive"] and result.get("scout_id") == agent_id:
+                scout = self.scouts[agent_id]
+                scout_task_id = result.get("scout_task_id")
+                
+                if scout_task_id:
+                    task_result = scout.get_result(scout_task_id)
+                    if task_result.get("status") == "pending":
+                        current_tasks.append({
+                            "task_id": task_id,
+                            "scout_task_id": scout_task_id,
+                            "priority": self._get_task_priority(task_id)
+                        })
+        
+        return current_tasks
+        
+    def _get_task_priority(self, task_id):
+        """Get the priority of a task"""
+        # Default priority is 1
+        priority = 1
+        
+        # Look through the task queue for this task
+        for item in list(self.task_queue.queue):
+            if item[0] == task_id:  # item[0] is the task_id
+                priority = item[2]  # item[2] is the priority
+                break
+                
+        return priority
+        
+    def _find_best_agent_for_task(self, task, required_skills, context=None):
+        """Find the best agent for a task based on skills and performance history"""
+        candidates = []
+        
+        for agent_id, scout in self.scouts.items():
+            if not scout.is_available.is_set():
+                continue
+                
+            # Calculate skill match score
+            skill_match = len(required_skills.intersection(scout.skills))
+            
+            # Calculate proficiency score
+            proficiency = sum(scout.skill_proficiency.get(skill, 0) for skill in required_skills)
+            
+            # Calculate performance score based on history
+            performance_score = 0
+            if agent_id in self.agent_performance_history:
+                history = self.agent_performance_history[agent_id]
+                if history["tasks_completed"] > 0:
+                    performance_score = history["success_rate"] * 2  # Weight success rate highly
+                    
+                    # Bonus for specialization match
+                    if "specialization" in context and scout.specialization == context["specialization"]:
+                        performance_score += 1
+            
+            # Combined score
+            total_score = skill_match + proficiency + performance_score
+            
+            candidates.append((agent_id, total_score))
+        
+        # Sort by score (highest first)
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # Return the best candidate, or None if no candidates
+        return candidates[0][0] if candidates else None
                 
     def add_task(self, task, priority=1, context=None):
         """Add a task to be processed by a scout agent"""
@@ -636,6 +1359,145 @@ class AgentOrchestrator:
                 rollout_copy["specialization"] = scout.specialization
                 all_rollouts.append(rollout_copy)
         return sorted(all_rollouts, key=lambda x: x["timestamp"], reverse=True)
+        
+    def update_skill_registry(self):
+        """Update the skill registry based on current scout skills"""
+        # Reset registry
+        for skill in self.skill_registry:
+            self.skill_registry[skill] = set()
+            
+        # Update with current skills
+        for agent_id, scout in self.scouts.items():
+            for skill in scout.skills:
+                if skill in self.skill_registry:
+                    self.skill_registry[skill].add(agent_id)
+                    
+    def update_collaboration_graph(self, team_id):
+        """Update the collaboration graph based on team performance"""
+        if team_id not in self.team_history:
+            return
+            
+        team_info = self.team_history[team_id]
+        team_members = team_info.get("members", [])
+        
+        # Update collaboration links between team members
+        for i, agent1 in enumerate(team_members):
+            if agent1 not in self.collaboration_graph:
+                self.collaboration_graph[agent1] = {}
+                
+            for agent2 in team_members[i+1:]:
+                if agent2 not in self.collaboration_graph:
+                    self.collaboration_graph[agent2] = {}
+                    
+                # Increment collaboration count
+                self.collaboration_graph[agent1][agent2] = self.collaboration_graph[agent1].get(agent2, 0) + 1
+                self.collaboration_graph[agent2][agent1] = self.collaboration_graph[agent2].get(agent1, 0) + 1
+                
+    def get_collaboration_network(self):
+        """Get the collaboration network statistics"""
+        if not self.collaboration_graph:
+            return {"nodes": [], "edges": [], "stats": {"density": 0, "avg_collaborations": 0}}
+            
+        nodes = []
+        edges = []
+        total_collaborations = 0
+        collaboration_count = 0
+        
+        for agent1, collaborators in self.collaboration_graph.items():
+            nodes.append({"id": agent1, "specialization": self.scouts[agent1].specialization})
+            
+            for agent2, count in collaborators.items():
+                edges.append({"source": agent1, "target": agent2, "count": count})
+                total_collaborations += count
+                collaboration_count += 1
+                
+        # Calculate network statistics
+        agent_count = len(self.scouts)
+        max_possible_edges = (agent_count * (agent_count - 1)) / 2
+        density = collaboration_count / max_possible_edges if max_possible_edges > 0 else 0
+        avg_collaborations = total_collaborations / collaboration_count if collaboration_count > 0 else 0
+        
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "stats": {
+                "density": density,
+                "avg_collaborations": avg_collaborations,
+                "total_collaborations": total_collaborations
+            }
+        }
+        
+    def get_agent_performance_metrics(self):
+        """Get performance metrics for all agents"""
+        metrics = {}
+        
+        for agent_id, scout in self.scouts.items():
+            metrics[agent_id] = {
+                "specialization": scout.specialization,
+                "tasks_completed": scout.performance_metrics["tasks_completed"],
+                "success_rate": scout.performance_metrics["success_rate"],
+                "avg_execution_time": scout.performance_metrics["avg_execution_time"],
+                "skills": list(scout.skills),
+                "skill_proficiency": scout.skill_proficiency
+            }
+            
+        return metrics
+        
+    def optimize_team_structure(self):
+        """Optimize the team structure based on performance history"""
+        if not self.learning_enabled:
+            return {"status": "learning_disabled"}
+            
+        # Update skill registry
+        self.update_skill_registry()
+        
+        # Analyze skill gaps
+        skill_coverage = {}
+        for skill, agents in self.skill_registry.items():
+            skill_coverage[skill] = len(agents) / len(self.scouts) if self.scouts else 0
+            
+        # Identify skills with low coverage
+        low_coverage_skills = [skill for skill, coverage in skill_coverage.items() if coverage < 0.3]
+        
+        # Encourage skill acquisition for underrepresented skills
+        for agent_id, scout in self.scouts.items():
+            for skill in low_coverage_skills:
+                if skill not in scout.skills:
+                    # Increase learning rate for this agent
+                    scout.learning_rate = min(0.5, scout.learning_rate * 1.2)
+                    break
+        
+        # Analyze collaboration patterns
+        collaboration_network = self.get_collaboration_network()
+        
+        # Identify isolated agents (low collaboration)
+        agent_collaboration_counts = {}
+        for agent_id in self.scouts:
+            agent_collaboration_counts[agent_id] = 0
+            
+        for edge in collaboration_network.get("edges", []):
+            agent_collaboration_counts[edge["source"]] += edge["count"]
+            agent_collaboration_counts[edge["target"]] += edge["count"]
+            
+        isolated_agents = [
+            agent_id for agent_id, count in agent_collaboration_counts.items()
+            if count < collaboration_network["stats"].get("avg_collaborations", 0) / 2
+        ]
+        
+        # Encourage isolated agents to collaborate more
+        for agent_id in isolated_agents:
+            scout = self.scouts[agent_id]
+            # Increase exploration rate to try new approaches
+            scout.reinforcement_learning["exploration_rate"] = min(
+                0.5, scout.reinforcement_learning["exploration_rate"] * 1.2
+            )
+            
+        return {
+            "skill_coverage": skill_coverage,
+            "low_coverage_skills": low_coverage_skills,
+            "isolated_agents": isolated_agents,
+            "optimization_applied": True
+        }
         
     def execute_parallel_tasks(self, tasks, context=None):
         """Execute multiple tasks in parallel and wait for all results"""
@@ -1172,6 +2034,78 @@ class ToolRegistry:
                 "required": ["task"]
             },
             function=self._generate_solution_rollouts
+        )
+        
+        # Advanced agent management tools
+        self.register_function(
+            name="optimize_agent_team",
+            description="Optimize the agent team structure based on performance history",
+            parameters={
+                "type": "object",
+                "properties": {}
+            },
+            function=self._optimize_agent_team
+        )
+        
+        self.register_function(
+            name="get_agent_performance",
+            description="Get performance metrics for all agents",
+            parameters={
+                "type": "object",
+                "properties": {}
+            },
+            function=self._get_agent_performance
+        )
+        
+        self.register_function(
+            name="get_collaboration_network",
+            description="Get the collaboration network between agents",
+            parameters={
+                "type": "object",
+                "properties": {}
+            },
+            function=self._get_collaboration_network
+        )
+        
+        # Advanced memory management tools
+        self.register_function(
+            name="search_agent_memory",
+            description="Search the agent's semantic memory",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "limit": {"type": "integer", "description": "Maximum number of results", "default": 5}
+                },
+                "required": ["query"]
+            },
+            function=self._search_agent_memory
+        )
+        
+        self.register_function(
+            name="add_to_memory",
+            description="Add an item to the agent's semantic memory",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Content to remember"},
+                    "category": {"type": "string", "description": "Memory category", "default": "general"}
+                },
+                "required": ["content"]
+            },
+            function=self._add_to_memory
+        )
+        
+        self.register_function(
+            name="get_memory_summary",
+            description="Get a summary of the agent's memory",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "description": "Filter by category", "default": ""}
+                }
+            },
+            function=self._get_memory_summary
         )
         
         self.register_function(
@@ -1719,6 +2653,173 @@ class ToolRegistry:
                 "scouts_with_rollouts": len(scout_rollouts),
                 "recent_rollouts": recent_rollouts,
                 "rollouts_by_scout": scout_rollouts
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _optimize_agent_team(self) -> Dict[str, Any]:
+        """Optimize the agent team structure based on performance history"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            result = agent.agent_orchestrator.optimize_team_structure()
+            result["success"] = True
+            return result
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _get_agent_performance(self) -> Dict[str, Any]:
+        """Get performance metrics for all agents"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            metrics = agent.agent_orchestrator.get_agent_performance_metrics()
+            
+            # Calculate overall statistics
+            total_tasks = sum(m["tasks_completed"] for m in metrics.values())
+            avg_success_rate = sum(m["success_rate"] for m in metrics.values()) / len(metrics) if metrics else 0
+            avg_execution_time = sum(m["avg_execution_time"] for m in metrics.values()) / len(metrics) if metrics else 0
+            
+            # Count skills across agents
+            skill_counts = {}
+            for agent_metrics in metrics.values():
+                for skill in agent_metrics["skills"]:
+                    skill_counts[skill] = skill_counts.get(skill, 0) + 1
+            
+            return {
+                "success": True,
+                "agent_metrics": metrics,
+                "overall_stats": {
+                    "total_agents": len(metrics),
+                    "total_tasks_completed": total_tasks,
+                    "avg_success_rate": avg_success_rate,
+                    "avg_execution_time": avg_execution_time,
+                    "skill_distribution": skill_counts
+                }
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _get_collaboration_network(self) -> Dict[str, Any]:
+        """Get the collaboration network between agents"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            network = agent.agent_orchestrator.get_collaboration_network()
+            network["success"] = True
+            return network
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _search_agent_memory(self, query: str, limit: int = 5) -> Dict[str, Any]:
+        """Search the agent's semantic memory"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            # Search both orchestrator memory and individual agent memories
+            orchestrator_results = agent.agent_orchestrator.memory.search_memory(query, limit)
+            
+            # Also search individual agent memories
+            agent_results = {}
+            for agent_id, scout in agent.agent_orchestrator.scouts.items():
+                scout_results = scout.memory.search_memory(query, limit=3)
+                if scout_results:
+                    agent_results[agent_id] = scout_results
+            
+            return {
+                "success": True,
+                "query": query,
+                "orchestrator_results": orchestrator_results,
+                "agent_results": agent_results,
+                "total_results": len(orchestrator_results) + sum(len(results) for results in agent_results.values())
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _add_to_memory(self, content: str, category: str = "general") -> Dict[str, Any]:
+        """Add an item to the agent's semantic memory"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            metadata = {
+                "category": category,
+                "source": "user_input",
+                "timestamp": time.time()
+            }
+            
+            memory_id = agent.agent_orchestrator.memory.add_memory(content, metadata)
+            
+            return {
+                "success": True,
+                "memory_id": memory_id,
+                "content": content,
+                "category": category,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _get_memory_summary(self, category: str = "") -> Dict[str, Any]:
+        """Get a summary of the agent's memory"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            orchestrator_summary = agent.agent_orchestrator.memory.summarize_memories(category)
+            
+            # Also get summaries from individual agents
+            agent_summaries = {}
+            for agent_id, scout in agent.agent_orchestrator.scouts.items():
+                agent_summaries[agent_id] = scout.memory.summarize_memories(category)
+            
+            return {
+                "success": True,
+                "orchestrator_memory": orchestrator_summary,
+                "agent_memories": agent_summaries,
+                "total_memories": orchestrator_summary.get("count", 0) + sum(
+                    summary.get("count", 0) for summary in agent_summaries.values()
+                )
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
@@ -3531,6 +4632,9 @@ class TogetherAgent:
         self.use_mock = "dummy_api_key_for_testing" in self.api_key
         if not self.use_mock:
             self.client = Together(api_key=self.api_key)
+            
+        # Initialize advanced memory system
+        self.memory = VectorMemory(embedding_model, vector_store)
         else:
             from types import SimpleNamespace
             def mock_completion(**kwargs):
@@ -3568,6 +4672,9 @@ print("Hello, world!")
         self.agent_orchestrator = AgentOrchestrator(num_scouts=num_scouts, model=model)
         console.print(f"[green]Agent Orchestrator initialized with {len(self.agent_orchestrator.scouts)} scout agents[/green]")
         
+        # Initialize advanced capabilities
+        self._initialize_advanced_capabilities()
+        
         # Keep task_processor for backward compatibility
         self.task_processor = AsyncTaskProcessor()
         self.interaction_memory = []
@@ -3578,6 +4685,61 @@ print("Hello, world!")
             "task_complexity": {"current_level": "medium", "adaptations_made": []},
             "last_analysis_time": time.time()
         }
+        
+    def _initialize_advanced_capabilities(self):
+        """Initialize advanced capabilities for the agent"""
+        # Set up continuous learning
+        self.continuous_learning = {
+            "enabled": True,
+            "learning_rate": 0.1,
+            "adaptation_threshold": 0.7,
+            "performance_history": [],
+            "last_optimization_time": time.time()
+        }
+        
+        # Set up advanced planning
+        self.planning_system = {
+            "enabled": True,
+            "planning_horizon": 5,  # Number of steps to plan ahead
+            "execution_monitoring": True,
+            "plan_adaptation_threshold": 0.5,
+            "current_plans": []
+        }
+        
+        # Set up meta-cognition
+        self.meta_cognition = {
+            "enabled": True,
+            "reflection_frequency": 5,  # Reflect every N interactions
+            "last_reflection_time": time.time(),
+            "insights": [],
+            "self_improvement_goals": [
+                "Improve task decomposition accuracy",
+                "Enhance collaboration between agents",
+                "Optimize memory retrieval relevance"
+            ]
+        }
+        
+        # Register advanced capabilities with scouts
+        for scout_id, scout in self.agent_orchestrator.scouts.items():
+            # Enable reinforcement learning for all scouts
+            scout.reinforcement_learning["learning_enabled"] = True
+            
+            # Set initial exploration rates based on specialization
+            if scout.specialization == "creative":
+                scout.reinforcement_learning["exploration_rate"] = 0.3  # Higher exploration for creative agents
+            elif scout.specialization == "research":
+                scout.reinforcement_learning["exploration_rate"] = 0.2  # Medium exploration for research
+            else:
+                scout.reinforcement_learning["exploration_rate"] = 0.1  # Lower for other specializations
+                
+        # Initialize the skill registry
+        self.agent_orchestrator.update_skill_registry()
+        
+        # Store initialization in memory
+        self.memory.add_memory(
+            f"Agent initialized with {len(self.agent_orchestrator.scouts)} scout agents and advanced capabilities enabled.",
+            {"category": "system", "type": "initialization"}
+        )
         # For Llama-4 models, add a system prompt with explicit instructions
         self.is_llama4 = "llama-4" in self.model.lower()
         if self.is_llama4:
@@ -3898,6 +5060,23 @@ print("Hello, world!")
                     self.interaction_memory.append({"type": "image", "url": item["image_url"]["url"], "timestamp": time.time()})
         self.last_user_message = user_input
         self.add_message("user", user_input)
+        
+        # Store user input in memory
+        if isinstance(user_input, str):
+            self.memory.add_memory(user_input, {"category": "user_input", "type": "message"})
+        elif isinstance(user_input, list):
+            text_content = ""
+            for item in user_input:
+                if item.get("type") == "text":
+                    text_content += item.get("text", "")
+            if text_content:
+                self.memory.add_memory(text_content, {"category": "user_input", "type": "multimodal_message"})
+        
+        # Check if we should perform continuous learning
+        self._check_continuous_learning()
+        
+        # Check if we should perform meta-cognitive reflection
+        self._check_meta_cognitive_reflection()
         
         # Special handling for tool listing requests
         if isinstance(user_input, str) and user_input.lower().strip() in [
@@ -4362,3 +5541,86 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 
+    def _check_continuous_learning(self):
+        """Check if we should perform continuous learning and optimization"""
+        if not self.continuous_learning["enabled"]:
+            return
+            
+        current_time = time.time()
+        time_since_last_optimization = current_time - self.continuous_learning["last_optimization_time"]
+        
+        # Perform optimization every 10 minutes or after 5 user interactions
+        user_message_count = len([msg for msg in self.conversation_history if msg.get("role") == "user"])
+        
+        if (time_since_last_optimization > 600 or  # 10 minutes
+            (user_message_count > 0 and user_message_count % 5 == 0)):
+            
+            # Optimize agent team
+            optimization_result = self.agent_orchestrator.optimize_team_structure()
+            
+            # Update last optimization time
+            self.continuous_learning["last_optimization_time"] = current_time
+            
+            # Store optimization result in memory
+            self.memory.add_memory(
+                f"Performed agent team optimization. Results: {json.dumps(optimization_result)}",
+                {"category": "system", "type": "optimization"}
+            )
+            
+    def _check_meta_cognitive_reflection(self):
+        """Check if we should perform meta-cognitive reflection"""
+        if not self.meta_cognition["enabled"]:
+            return
+            
+        current_time = time.time()
+        time_since_last_reflection = current_time - self.meta_cognition["last_reflection_time"]
+        user_message_count = len([msg for msg in self.conversation_history if msg.get("role") == "user"])
+        
+        # Perform reflection based on frequency setting
+        if (user_message_count > 0 and 
+            user_message_count % self.meta_cognition["reflection_frequency"] == 0):
+            
+            # Perform reflection
+            reflection = self._generate_meta_cognitive_reflection()
+            
+            # Update last reflection time
+            self.meta_cognition["last_reflection_time"] = current_time
+            
+            # Store reflection in memory and insights
+            self.memory.add_memory(
+                reflection,
+                {"category": "meta_cognition", "type": "reflection"}
+            )
+            
+            self.meta_cognition["insights"].append({
+                "timestamp": current_time,
+                "reflection": reflection
+            })
+            
+    def _generate_meta_cognitive_reflection(self) -> str:
+        """Generate a meta-cognitive reflection on recent performance"""
+        # Get recent conversation history
+        recent_messages = self.conversation_history[-min(10, len(self.conversation_history)):]
+        
+        # Get recent agent performance
+        agent_metrics = self.agent_orchestrator.get_agent_performance_metrics()
+        
+        # Get recent memory items
+        recent_memories = self.memory.search_memory("recent performance", limit=5)
+        
+        # Create reflection prompt
+        reflection_prompt = [
+            {"role": "system", "content": "You are an advanced AI performing meta-cognitive reflection on your own performance. Analyze recent interactions and agent performance to identify strengths, weaknesses, and areas for improvement."},
+            {"role": "user", "content": f"Generate a thoughtful reflection on recent performance. Consider conversation quality, task success rates, and collaboration patterns. Recent conversation: {json.dumps(recent_messages[-3:])}\n\nAgent metrics: {json.dumps(agent_metrics)}"}
+        ]
+        
+        # Generate reflection
+        reflection_response = self.client.chat.completions.create(
+            model=self.model,
+            messages=reflection_prompt,
+            max_tokens=500
+        )
+        
+        reflection = reflection_response.choices[0].message.content
+        
+        return reflection
