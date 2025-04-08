@@ -2653,6 +2653,13 @@ class ToolRegistry:
     # --- Tool Implementations ---
     # Note: These methods now accept an optional 'agent' parameter
 
+    def _respond_to_user(self, response_text: str) -> Dict[str, Any]:
+        """Simple tool to respond directly to the user with text"""
+        return {
+            "success": True,
+            "response_sent": response_text
+        }
+        
     def _orchestrate_tasks(self, main_task: str, subtasks: List[str], context: Dict[str, Any] = None, agent=None) -> Dict[str, Any]:
         """Orchestrate multiple parallel tasks using scout agents"""
         try:
