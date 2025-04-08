@@ -29,6 +29,7 @@ import tempfile
 import urllib.parse
 import asyncio
 import traceback
+from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO, BytesIO
 from pathlib import Path
 from dataclasses import dataclass, field
