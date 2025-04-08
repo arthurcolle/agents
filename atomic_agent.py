@@ -440,9 +440,9 @@ class WeatherData(StructuredOutput):
     temperature_c: float
     humidity: int
     wind_speed_mph: float
-    source: str = ""
-    last_updated: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
     forecast: List[Dict[str, Any]] = field(default_factory=list)
+    last_updated: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
+    source: str = ""
     
     def __post_init__(self):
         # Ensure source is initialized properly
