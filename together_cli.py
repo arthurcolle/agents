@@ -1188,11 +1188,11 @@ class ToolRegistry:
             function=self._run_assistant
         )
         
-        # Jina web search tool
+        # Jina tools
         if self.jina_client:
             self.register_function(
                 name="web_search",
-                description="Search the web for information using Jina's search API",
+                description="Search the web using Jina's search API",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -1205,28 +1205,24 @@ class ToolRegistry:
                 },
                 function=self._web_search
             )
-            
-            # Jina web reader tool
             self.register_function(
                 name="web_read",
-                description="Read and extract content from a URL using Jina's reader API",
+                description="Read web page content using Jina's reader API",
                 parameters={
                     "type": "object",
                     "properties": {
                         "url": {
                             "type": "string",
-                            "description": "The URL to read content from"
+                            "description": "URL to read content from"
                         }
                     },
                     "required": ["url"]
                 },
                 function=self._web_read
             )
-            
-            # Jina fact check tool
             self.register_function(
                 name="fact_check",
-                description="Verify facts and ground statements using Jina's fact checking API",
+                description="Verify a statement using Jina's fact checking API",
                 parameters={
                     "type": "object",
                     "properties": {
