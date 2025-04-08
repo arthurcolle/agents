@@ -269,7 +269,7 @@ class JinaClient:
 
     async def search(self, query: str) -> dict:
         encoded_query = urllib.parse.quote(query)
-        url = f"https://s.jina.ai/YOUR_SEARCH_QUERY"
+        url = f"https://s.jina.ai/{encoded_query}"
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=self.headers) as response:
                 response_text = await response.text()
@@ -277,14 +277,14 @@ class JinaClient:
 
     async def fact_check(self, query: str) -> str:
         encoded_query = urllib.parse.quote(query)
-        url = f"https://g.jina.ai/YOUR_GROUNDING_QUERY"
+        url = f"https://g.jina.ai/{encoded_query}"
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=self.headers) as response:
                 return await response.text()
 
     async def read(self, url: str) -> dict:
         encoded_url = urllib.parse.quote(url)
-        rank_url = f"https://r.jina.ai/YOUR_URL"
+        rank_url = f"https://r.jina.ai/{encoded_url}"
         async with aiohttp.ClientSession() as session:
             async with session.get(rank_url, headers=self.headers) as response:
                 response_text = await response.text()
@@ -845,6 +845,11 @@ class ToolRegistry:
 
     def _multiply_numbers(self, a: float, b: float) -> Dict[str, Any]:
         return {"result": a * b, "success": True}
+        
+    def _divide_numbers(self, a: float, b: float) -> Dict[str, Any]:
+        if b == 0:
+            return {"error": "Division by zero", "success": False}
+        return {"result": a / b, "success": True}
 
     def _decompose_prompt(self, transcript: str) -> Dict[str, Any]:
         # Call the LLM with the JSON schema for MultiPrompt
@@ -3135,6 +3140,50 @@ def main():
             if user_input.lower() in ["exit", "quit"]:
                 console.print("[yellow]Exiting...[/yellow]")
                 break
+                
+            # Check for direct Python execution
+            if user_input.strip().startswith("execute_python(") or user_input.strip().startswith("python "):
+                try:
+                    if user_input.strip().startswith("execute_python("):
+                        # Extract the code from execute_python call by parsing parameters
+                        import re
+                        code_match = re.search(r'execute_python\(code="([^"]+)"', user_input)
+                        if code_match:
+                            code = code_match.group(1).replace("\\n", "\n")
+                            console.print("[cyan]Executing Python code:[/cyan]")
+                            console.print(f"[dim]{code}[/dim]")
+                            result = agent.tool_registry._execute_python(code)
+                            if result.get("success", False):
+                                if result.get("stdout"):
+                                    console.print("[green]Execution result:[/green]")
+                                    console.print(result["stdout"])
+                                if result.get("stderr"):
+                                    console.print("[red]Errors:[/red]")
+                                    console.print(result["stderr"])
+                            else:
+                                console.print(f"[red]Error executing code: {result.get('error', 'Unknown error')}[/red]")
+                            continue
+                    elif user_input.strip().startswith("python "):
+                        # Extract code that follows "python "
+                        code = user_input[7:].strip()
+                        console.print("[cyan]Executing Python code:[/cyan]")
+                        console.print(f"[dim]{code}[/dim]")
+                        result = agent.tool_registry._execute_python(code)
+                        if result.get("success", False):
+                            if result.get("stdout"):
+                                console.print("[green]Execution result:[/green]")
+                                console.print(result["stdout"])
+                            if result.get("stderr"):
+                                console.print("[red]Errors:[/red]")
+                                console.print(result["stderr"])
+                        else:
+                            console.print(f"[red]Error executing code: {result.get('error', 'Unknown error')}[/red]")
+                        continue
+                except Exception as e:
+                    console.print(f"[red]Error processing Python command: {str(e)}[/red]")
+                    console.print(traceback.format_exc())
+                    continue
+                
             image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', user_input)
             if image_urls:
                 multimodal = []
