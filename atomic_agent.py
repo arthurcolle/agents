@@ -2156,7 +2156,7 @@ class ToolRegistry:
                 "properties": {
                     "text": {"type": "string", "description": "Text containing code blocks to extract"},
                     "language": {"type": "string", "description": "Specific language to extract (e.g., 'python', 'javascript', 'html', 'css')", "default": ""},
-                    "execute": {"type": "boolean", "description": "Whether to automatically execute extracted Python code", "default": false}
+                    "execute": {"type": "boolean", "description": "Whether to automatically execute extracted Python code", "default": False}
                 },
                 "required": ["text"]
             },
