@@ -1676,7 +1676,8 @@ class PerceptualMemory:
             "cognitive_state_changes": 0,
             "kb_retrievals": 0,
             "kb_updates": 0,
-            "kb_evolutions": 0
+            "kb_evolutions": 0,
+            "feedback_received": 0
         }
     
     def _load_memory(self):
@@ -1816,7 +1817,34 @@ class PerceptualMemory:
             self._save_memory()
         
         return frame['id']
-    
+
+    def add_feedback_to_frame(self, frame_id: str, feedback: Dict) -> bool:
+        """Add user feedback to a specific interaction frame"""
+        # Find the frame by ID
+        frame_index = -1
+        for i, frame in enumerate(reversed(self.frames)):
+            if frame.get("id") == frame_id:
+                # Found the frame, calculate its actual index
+                frame_index = len(self.frames) - 1 - i
+                break
+        
+        if frame_index != -1:
+            # Add or update feedback field
+            if 'feedback' not in self.frames[frame_index]:
+                self.frames[frame_index]['feedback'] = []
+            self.frames[frame_index]['feedback'].append(feedback)
+            
+            # Update stats
+            self.stats["feedback_received"] += 1
+            
+            # Save memory after adding feedback
+            self._save_memory()
+            logging.info(f"Added feedback to frame {frame_id}")
+            return True
+        else:
+            logging.warning(f"Could not find frame {frame_id} to add feedback")
+            return False
+            
     def get_embedding(self, text: str, client) -> np.ndarray:
         """Get embedding vector for text using OpenAI API"""
         try:
@@ -2570,6 +2598,9 @@ class CLIAgent:
         
         # Dynamic agent contexts
         self.agent_contexts = {}
+
+        # Track the ID of the last interaction stored in memory
+        self.last_interaction_frame_id = None
         
         # Initialize dynamic agent tools
         self._init_dynamic_agent_tools()
@@ -3621,6 +3652,9 @@ class CLIAgent:
         # Store frame
         frame_id = self.perceptual_memory.add_frame(frame, embedding)
         
+        # Update the last interaction frame ID
+        self.last_interaction_frame_id = frame_id
+        
         return frame_id
     
     async def _perform_experience_replay(self, client) -> Dict:
@@ -3821,10 +3855,18 @@ class CLIAgent:
             error_msg = f"Exception during tool execution {function_name}: {e}"
             self.console.print(f"[bold red]{error_msg}[/bold red]")
             logger.exception(f"Exception details for tool {function_name}")
+            # Provide more structured error information
+            error_details = {
+                "success": False,
+                "error_type": type(e).__name__,
+                "error_message": error_msg,
+                "tool_name": function_name,
+                "arguments": arguments # Include arguments that caused the error
+            }
             return {
                 "role": "tool",
                 "tool_call_id": tool_call.id,
-                "content": json.dumps({"success": False, "message": error_msg})
+                "content": json.dumps(error_details)
             }
 
     async def _execute_parallel_tools_async(self, tool_calls):
@@ -5060,6 +5102,7 @@ def main():
         "  [bold green]/cognition[/bold green] - Show realtime cognition status\n"
         "  [bold green]/kb[/bold green] - List knowledge bases\n"
         "  [bold green]/kb-agent [name][/bold green] - Create a specialized agent from a knowledge base\n"
+        "  [bold green]/feedback [good|bad] [comment][/bold green] - Provide feedback on the last response\n"
         "  [bold green]/exit[/bold green] - Exit the program",
         title="Autonomous Agent",
         border_style="blue"
@@ -5211,7 +5254,32 @@ def main():
                 else:
                     console.print(f"[bold red]Error creating KB agent: {result['message']}[/bold red]")
                 continue
-            
+            elif user_input.lower().startswith("/feedback "):
+                parts = user_input.split(maxsplit=2)
+                if len(parts) < 2 or parts[1].lower() not in ["good", "bad"]:
+                    console.print("[bold red]Usage: /feedback [good|bad] [optional comment][/bold red]")
+                    continue
+                
+                rating = parts[1].lower()
+                comment = parts[2] if len(parts) > 2 else ""
+                
+                if agent.last_interaction_frame_id:
+                    feedback_data = {
+                        "rating": rating,
+                        "comment": comment,
+                        "timestamp": time.time()
+                    }
+                    success = agent.perceptual_memory.add_feedback_to_frame(
+                        agent.last_interaction_frame_id, feedback_data
+                    )
+                    if success:
+                        console.print("[bold green]Feedback recorded. Thank you![/bold green]")
+                    else:
+                        console.print("[bold red]Could not record feedback (frame not found).[/bold red]")
+                else:
+                    console.print("[bold yellow]No previous interaction found to provide feedback on.[/bold yellow]")
+                continue
+
             # Process the input using asyncio.run
             response = asyncio.run(agent.chat(user_input))
 
