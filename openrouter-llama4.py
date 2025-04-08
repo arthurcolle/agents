@@ -138,8 +138,8 @@ if REDIS_AVAILABLE:
                 return redis_async_client
             except Exception as e:
                 logger.error(f"Failed to initialize async Redis client: {e}")
-                # Use nonlocal to modify the outer scope variable instead of global
-                nonlocal REDIS_AVAILABLE
+                # Use global to modify the global variable
+                global REDIS_AVAILABLE
                 REDIS_AVAILABLE = False
                 return None
         
