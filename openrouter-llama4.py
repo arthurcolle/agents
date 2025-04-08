@@ -1954,15 +1954,26 @@ For computationally intensive tasks, use your parallel processing capabilities.
                     # Properly await the coroutine in the recursive call
                     continuation_coroutine = self.chat(continuation_prompt, stream=True, recursive_call=True)
                     
-                    # Use async_generator_to_list to convert the async generator to a list
-                    async def async_generator_to_list(async_gen):
+                    # Define a synchronous function to process the async generator
+                    def process_async_generator(async_gen):
                         result = []
-                        async for item in async_gen:
-                            result.append(item)
-                        return result
+                        # Create a new event loop for this context
+                        temp_loop = asyncio.new_event_loop()
+                        try:
+                            # Define an async collector function
+                            async def collector():
+                                nonlocal result
+                                async for item in async_gen:
+                                    result.append(item)
+                                return result
+                            
+                            # Run the collector in the temporary loop
+                            return temp_loop.run_until_complete(collector())
+                        finally:
+                            temp_loop.close()
                     
-                    # Run the async function to get all chunks
-                    continuation_chunks = loop.run_until_complete(async_generator_to_list(continuation_coroutine))
+                    # Process the coroutine to get all chunks
+                    continuation_chunks = process_async_generator(continuation_coroutine)
                     
                     # Pass through all continuation responses
                     for chunk in continuation_chunks:
