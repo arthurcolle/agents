@@ -113,20 +113,27 @@ if REDIS_AVAILABLE:
         # Initialize async client for async code
         async def init_async_redis():
             global redis_async_client, pubsub, pubsub_listener_task
-            redis_async_client = await redis.asyncio.from_url(
-                f"redis://{REDIS_HOST}:{REDIS_PORT}",
-                password=REDIS_PASSWORD,
-                decode_responses=True
-            )
-            pubsub = redis_async_client.pubsub()
-            
-            # Subscribe to agent events channel
-            await pubsub.subscribe("agent_events")
-            
-            # Start pubsub listener task
-            pubsub_listener_task = asyncio.create_task(listen_for_pubsub_messages())
-            
-            return redis_async_client
+            try:
+                redis_async_client = await redis.asyncio.from_url(
+                    f"redis://{REDIS_HOST}:{REDIS_PORT}",
+                    password=REDIS_PASSWORD,
+                    decode_responses=True
+                )
+                pubsub = redis_async_client.pubsub()
+                
+                # Subscribe to agent events channel
+                await pubsub.subscribe("agent_events")
+                
+                # Start pubsub listener task
+                pubsub_listener_task = asyncio.create_task(listen_for_pubsub_messages())
+                
+                logger.info("Async Redis client initialized successfully")
+                return redis_async_client
+            except Exception as e:
+                logger.error(f"Failed to initialize async Redis client: {e}")
+                global REDIS_AVAILABLE
+                REDIS_AVAILABLE = False
+                return None
         
         # Function to listen for pubsub messages
         async def listen_for_pubsub_messages():
@@ -179,12 +186,19 @@ if REDIS_AVAILABLE:
             return False
         
         # Initialize async Redis in the background
-        asyncio.create_task(init_async_redis())
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # Create a new event loop if one doesn't exist
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        loop.create_task(init_async_redis())
         
         logger.info("Redis PubSub initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Redis: {str(e)}")
         REDIS_AVAILABLE = False
+        redis_client = None
 
 # Import multiprocessing and threading
 import multiprocessing
