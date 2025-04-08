@@ -374,27 +374,25 @@ class CoALAAgent:
         action_name = action.get("action_name")
         arguments = action.get("arguments", {})
 
-        # Call tool using the registry, passing self for context if needed
-        result = self.tool_registry.call_function(action_name, arguments, agent=self)
+        # Check if the action is respond_to_user, which we'll handle directly
+        if action_name == "respond_to_user":
+            response_text = arguments.get("response_text", "I'm not sure how to respond.")
+            self.add_log({"role": "assistant", "content": response_text})
+            return response_text
+            
+        # Call tool using the registry
+        result = self.tool_registry.call_function(action_name, arguments)
 
         # Log tool call and result
-        # Check if the result indicates a direct response was intended
-        if action_name == "respond_to_user" and result.get("success"):
-            response_text = result.get("response_sent", "Action completed.")
-            self.add_log({"role": "assistant", "content": response_text})
-            # Return the text intended for the user
-            return response_text
-        else:
-            # Log non-response tool calls
-            self.add_log({
-                "role": "tool", # Use standard 'tool' role
-                "name": action_name,
-                "content": json.dumps(result, indent=2), # Log result as content
-                "tool_call_id": str(uuid.uuid4()) # Generate a dummy ID
-            })
-            # Add result as an observation in working memory
-            self.working_memory.add_observation(result, source=f"action:{action_name}")
-            return result # Return raw result for potential further processing
+        self.add_log({
+            "role": "tool", # Use standard 'tool' role
+            "name": action_name,
+            "content": json.dumps(result, indent=2), # Log result as content
+            "tool_call_id": str(uuid.uuid4()) # Generate a dummy ID
+        })
+        # Add result as an observation in working memory
+        self.working_memory.add_observation(result, source=f"action:{action_name}")
+        return result # Return raw result for potential further processing
 
     def decision_cycle(self, user_input: Optional[str] = None):
         """Runs one cycle of the CoALA Observe-Orient-Decide-Act loop with enhanced capabilities."""

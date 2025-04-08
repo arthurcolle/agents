@@ -2130,6 +2130,20 @@ class ToolRegistry:
         self.together = Together()
 
     def _register_default_tools(self):
+        # Basic response tool
+        self.register_function(
+            name="respond_to_user",
+            description="Respond directly to the user with a text message",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "response_text": {"type": "string", "description": "The text response to send to the user"}
+                },
+                "required": ["response_text"]
+            },
+            function=self._respond_to_user
+        )
+        
         # Scout Agent Orchestration tools
         self.register_function(
             name="orchestrate_tasks",
