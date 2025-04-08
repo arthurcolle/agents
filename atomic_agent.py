@@ -243,7 +243,7 @@ class JinaClient:
 
     async def search(self, query: str) -> dict:
         encoded_query = urllib.parse.quote(query)
-        url = f"https://s.jina.ai/{encoded_query}"
+        url = f"https://s.jina.ai/YOUR_SEARCH_QUERY"
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=self.headers) as response:
                 response_text = await response.text()
@@ -251,14 +251,14 @@ class JinaClient:
 
     async def fact_check(self, query: str) -> str:
         encoded_query = urllib.parse.quote(query)
-        url = f"https://g.jina.ai/{encoded_query}"
+        url = f"https://g.jina.ai/YOUR_GROUNDING_QUERY"
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=self.headers) as response:
                 return await response.text()
 
     async def read(self, url: str) -> dict:
         encoded_url = urllib.parse.quote(url)
-        rank_url = f"https://r.jina.ai/{encoded_url}"
+        rank_url = f"https://r.jina.ai/YOUR_URL"
         async with aiohttp.ClientSession() as session:
             async with session.get(rank_url, headers=self.headers) as response:
                 response_text = await response.text()
@@ -687,7 +687,7 @@ class ToolRegistry:
             }, "required": ["adaptation_strategy", "reason"]},
             function=self._adapt_to_environment
         )
-        # File operations (read, write, list_directory)
+        # File operations (read, write, list_directory, delete_file)
         self.register_function(
             name="read_file",
             description="Read file contents",
@@ -710,7 +710,12 @@ class ToolRegistry:
             parameters={"type": "object", "properties": {"path": {"type": "string", "description": "Directory path"}}, "required": ["path"]},
             function=self._list_directory
         )
-        # Command execution
+        self.register_function(
+            name="delete_file",
+            description="Delete a file",
+            parameters={"type": "object", "properties": {"path": {"type": "string", "description": "File path"}}, "required": ["path"]},
+            function=self._delete_file
+        )
         self.register_function(
             name="execute_command",
             description="Execute a shell command",
@@ -1061,7 +1066,15 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "success": False}
 
-    def _execute_command(self, command: str) -> Dict[str, Any]:
+    def _delete_file(self, path: str) -> Dict[str, Any]:
+        try:
+            path = Path(path).expanduser()
+            if not path.exists():
+                return {"error": f"File '{path}' does not exist", "success": False}
+            path.unlink()
+            return {"path": str(path), "success": True}
+        except Exception as e:
+            return {"error": str(e), "success": False}
         try:
             process = subprocess.run(command, shell=True, text=True, capture_output=True)
             return {"command": command, "stdout": process.stdout, "stderr": process.stderr, "return_code": process.returncode, "success": process.returncode == 0}
