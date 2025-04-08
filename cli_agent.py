@@ -1755,12 +1755,6 @@ class CLIAgent:
         
         # Define available tools for OpenAI API
         self.tools = self.tool_registry.get_openai_tools_format() + [
-    
-        # Register built-in tools
-        self._register_builtin_tools()
-        
-        # Define available tools for OpenAI API
-        self.tools = self.tool_registry.get_openai_tools_format() + [
             # File system tools
             {
                 "type": "function",
