@@ -1622,6 +1622,7 @@ class PerceptualMemory:
     Advanced memory system for storing and retrieving interaction frames
     Enables experience replay and semantic search across past interactions
     Features temporal snapshotting for evolutionary optimization
+    Includes realtime cognition for enhanced contextual awareness
     """
     def __init__(self, max_frames=1000, embedding_dim=1536, vector_db_path="perceptual_memory.pkl"):
         self.frames = deque(maxlen=max_frames)  # Store recent frames in memory
@@ -1634,6 +1635,12 @@ class PerceptualMemory:
         self.snapshot_metrics = {}  # Performance metrics for each snapshot
         self.evolution_history = []  # Track evolutionary improvements
         
+        # Realtime cognition components
+        self.active_context = {}  # Currently active contextual information
+        self.attention_weights = {}  # Weights for different information streams
+        self.temporal_patterns = []  # Detected patterns over time
+        self.cognitive_state = "normal"  # Current cognitive processing state
+        
         # Load existing memory if available
         self._load_memory()
         
@@ -1643,7 +1650,9 @@ class PerceptualMemory:
             "total_retrievals": 0,
             "total_replays": 0,
             "total_snapshots": 0,
-            "total_evolutions": 0
+            "total_evolutions": 0,
+            "total_realtime_inferences": 0,
+            "cognitive_state_changes": 0
         }
     
     def _load_memory(self):
@@ -1951,6 +1960,137 @@ class PerceptualMemory:
         logging.info(f"Evolved memory: best snapshot is {best_snapshot_id} with fitness {fitness_scores[best_snapshot_id]}")
         return best_snapshot_id
     
+    def update_cognitive_state(self, input_data: Dict) -> str:
+        """
+        Update the agent's cognitive state based on input data
+        
+        Args:
+            input_data: Dictionary containing input signals (user message, system state, etc.)
+            
+        Returns:
+            New cognitive state
+        """
+        # Extract relevant signals
+        user_message = input_data.get("user_message", "")
+        system_state = input_data.get("system_state", {})
+        current_time = time.time()
+        
+        # Detect urgency in user message
+        urgency_patterns = ["urgent", "emergency", "asap", "immediately", "right now", "hurry"]
+        message_urgency = any(pattern in user_message.lower() for pattern in urgency_patterns)
+        
+        # Detect complexity of the task
+        message_length = len(user_message)
+        question_marks = user_message.count("?")
+        complexity_score = min(1.0, (message_length / 500) + (question_marks * 0.2))
+        
+        # Determine appropriate cognitive state
+        if message_urgency:
+            new_state = "urgent"
+        elif complexity_score > 0.7:
+            new_state = "deep_analysis"
+        elif complexity_score < 0.3 and message_length < 50:
+            new_state = "quick_response"
+        else:
+            new_state = "normal"
+            
+        # Record state change if different
+        if new_state != self.cognitive_state:
+            self.stats["cognitive_state_changes"] += 1
+            
+        # Update current state
+        self.cognitive_state = new_state
+        
+        # Update active context
+        self.active_context = {
+            "last_update": current_time,
+            "complexity_score": complexity_score,
+            "urgency_detected": message_urgency,
+            "cognitive_state": new_state,
+            "system_state": system_state
+        }
+        
+        return new_state
+    
+    def realtime_inference(self, query: str, recent_frames: List[Dict] = None) -> Dict:
+        """
+        Perform realtime inference on current context and recent interactions
+        
+        Args:
+            query: Current query or context
+            recent_frames: Optional list of recent interaction frames
+            
+        Returns:
+            Inference results
+        """
+        if recent_frames is None:
+            # Get the 5 most recent frames
+            recent_frames = list(self.frames)[-5:] if self.frames else []
+        
+        # Extract patterns from recent interactions
+        topics = []
+        sentiment = "neutral"
+        question_types = []
+        
+        for frame in recent_frames:
+            if isinstance(frame, dict) and "interaction" in frame:
+                user_msg = frame["interaction"].get("user_message", "")
+                
+                # Simple topic extraction (could be enhanced with NLP)
+                if "weather" in user_msg.lower():
+                    topics.append("weather")
+                elif "code" in user_msg.lower() or "python" in user_msg.lower():
+                    topics.append("programming")
+                
+                # Simple sentiment analysis
+                positive_words = ["good", "great", "excellent", "thanks", "appreciate"]
+                negative_words = ["bad", "wrong", "incorrect", "error", "problem"]
+                
+                if any(word in user_msg.lower() for word in positive_words):
+                    sentiment = "positive"
+                elif any(word in user_msg.lower() for word in negative_words):
+                    sentiment = "negative"
+                
+                # Question type detection
+                if user_msg.endswith("?"):
+                    if user_msg.lower().startswith("what") or user_msg.lower().startswith("how"):
+                        question_types.append("informational")
+                    elif user_msg.lower().startswith("can") or user_msg.lower().startswith("could"):
+                        question_types.append("capability")
+        
+        # Count topic frequencies
+        topic_counts = {}
+        for topic in topics:
+            topic_counts[topic] = topic_counts.get(topic, 0) + 1
+        
+        # Determine dominant topic
+        dominant_topic = max(topic_counts.items(), key=lambda x: x[1])[0] if topic_counts else None
+        
+        # Update temporal patterns
+        self.temporal_patterns.append({
+            "timestamp": time.time(),
+            "dominant_topic": dominant_topic,
+            "sentiment": sentiment,
+            "question_types": question_types,
+            "cognitive_state": self.cognitive_state
+        })
+        
+        # Limit pattern history
+        if len(self.temporal_patterns) > 20:
+            self.temporal_patterns = self.temporal_patterns[-20:]
+        
+        # Update statistics
+        self.stats["total_realtime_inferences"] += 1
+        
+        return {
+            "dominant_topic": dominant_topic,
+            "sentiment": sentiment,
+            "question_types": question_types,
+            "cognitive_state": self.cognitive_state,
+            "temporal_patterns": self.temporal_patterns[-3:],  # Return the 3 most recent patterns
+            "active_context": self.active_context
+        }
+    
     def get_memory_stats(self) -> Dict:
         """Get memory statistics"""
         return {
@@ -1961,6 +2101,9 @@ class PerceptualMemory:
             "total_replays": self.stats["total_replays"],
             "total_snapshots": self.stats.get("total_snapshots", 0),
             "total_evolutions": self.stats.get("total_evolutions", 0),
+            "total_realtime_inferences": self.stats.get("total_realtime_inferences", 0),
+            "cognitive_state_changes": self.stats.get("cognitive_state_changes", 0),
+            "current_cognitive_state": self.cognitive_state,
             "snapshots": list(self.snapshots.keys())
         }
 
@@ -4000,9 +4143,10 @@ class CLIAgent:
     
     async def chat(self, message: str, autonomous: bool = False, context: Dict = None) -> str:
         """
-        Chat with the agent using a two-layer architecture:
-        1. Inner model generates the primary response
-        2. Outer model performs meta-reflection and improves the response
+        Chat with the agent using a two-layer architecture with realtime cognition:
+        1. Realtime cognition layer analyzes input and context
+        2. Inner model generates the primary response
+        3. Outer model performs meta-reflection and improves the response
         
         Also stores interaction frames in perceptual memory and performs
         experience replay for continuous learning.
@@ -4028,6 +4172,43 @@ class CLIAgent:
         # Create a snapshot every 5 interactions
         if self.interaction_count % 5 == 0:
             self.create_snapshot(f"interaction_{self.interaction_count}")
+        
+        # Perform realtime cognition analysis
+        cognitive_input = {
+            "user_message": message,
+            "system_state": {
+                "interaction_count": self.interaction_count,
+                "autonomous_mode": autonomous,
+                "conversation_length": len(self.conversation_history)
+            }
+        }
+        
+        # Update cognitive state based on input
+        cognitive_state = self.perceptual_memory.update_cognitive_state(cognitive_input)
+        
+        # Get realtime inference
+        inference_results = self.perceptual_memory.realtime_inference(message)
+        
+        # Adjust conversation based on cognitive state
+        if cognitive_state == "urgent":
+            # Add system message to prioritize quick response
+            self.conversation_history.append({
+                "role": "system",
+                "content": "This query requires an urgent response. Prioritize speed and directness."
+            })
+        elif cognitive_state == "deep_analysis":
+            # Add system message to encourage thorough analysis
+            self.conversation_history.append({
+                "role": "system",
+                "content": "This query requires deep analysis. Consider multiple perspectives and provide detailed reasoning."
+            })
+        
+        # Add inference results to conversation context
+        if inference_results.get("dominant_topic"):
+            self.conversation_history.append({
+                "role": "system",
+                "content": f"The conversation has been focusing on: {inference_results['dominant_topic']}. User sentiment appears to be: {inference_results['sentiment']}."
+            })
         
         # Run the primary reasoning layer (inner model)
         with self.console.status("[bold green]Thinking..."):
@@ -4503,6 +4684,25 @@ class CLIAgent:
                 "pre_evolution_snapshot": pre_evolution_snapshot
             }
     
+    def get_cognitive_state(self) -> Dict:
+        """Get the current cognitive state and realtime inference data"""
+        # Get the most recent user message
+        recent_message = ""
+        for message in reversed(self.conversation_history):
+            if message.get("role") == "user":
+                recent_message = message.get("content", "")
+                break
+        
+        # Get realtime inference
+        inference_results = self.perceptual_memory.realtime_inference(recent_message)
+        
+        return {
+            "cognitive_state": self.perceptual_memory.cognitive_state,
+            "active_context": self.perceptual_memory.active_context,
+            "inference_results": inference_results,
+            "temporal_patterns": self.perceptual_memory.temporal_patterns[-5:] if self.perceptual_memory.temporal_patterns else []
+        }
+    
     def get_memory_stats(self) -> Dict:
         """Get statistics about the perceptual memory system"""
         memory_stats = self.perceptual_memory.get_memory_stats()
@@ -4516,7 +4716,8 @@ class CLIAgent:
             "autonomous_tasks_completed": len([t for t in self.autonomous_context.values() 
                                              if t.get("status") == "completed"]),
             "snapshots": list(self.snapshots.keys()),
-            "current_snapshot": self.current_snapshot_id
+            "current_snapshot": self.current_snapshot_id,
+            "cognitive_state": self.perceptual_memory.cognitive_state
         }
         
         return {**memory_stats, **agent_stats}
@@ -4761,11 +4962,12 @@ def main():
     console.print(Panel.fit(
         "[bold blue]Welcome to the Autonomous Agent with Evolutionary Capabilities![/bold blue]\n"
         "This agent can autonomously execute tasks, evolve its memory and strategies over time, "
-        "and adapt to your needs.\n"
+        "and adapt to your needs with realtime cognition.\n"
         f"[bold cyan]Meta-cognitive reflection:[/bold cyan] {meta_status}\n"
         f"[bold cyan]Experience replay:[/bold cyan] {replay_status} (memory: {memory_size} frames)\n"
         f"[bold cyan]Evolutionary optimization:[/bold cyan] {evolution_status}\n"
         f"[bold cyan]Autonomous mode:[/bold cyan] {autonomous_status}\n"
+        f"[bold cyan]Realtime cognition:[/bold cyan] enabled\n"
         "[bold cyan]Dynamic Agents:[/bold cyan] You can create and use specialized agents for specific tasks.\n"
         "[bold cyan]Commands:[/bold cyan]\n"
         "  [bold green]/snapshot[/bold green] - Create a new snapshot of the current agent state\n"
@@ -4773,6 +4975,7 @@ def main():
         "  [bold green]/evolve[/bold green] - Manually trigger evolutionary optimization\n"
         "  [bold green]/task [description][/bold green] - Add an autonomous task\n"
         "  [bold green]/stats[/bold green] - Show agent statistics\n"
+        "  [bold green]/cognition[/bold green] - Show realtime cognition status\n"
         "  [bold green]/exit[/bold green] - Exit the program",
         title="Autonomous Agent",
         border_style="blue"
@@ -4824,10 +5027,42 @@ def main():
                     f"Autonomous tasks pending: {stats['autonomous_tasks_pending']}\n"
                     f"Autonomous tasks completed: {stats['autonomous_tasks_completed']}\n"
                     f"Current snapshot: {stats['current_snapshot'] or 'None'}\n"
-                    f"Evolutionary optimizations: {stats['total_evolutions']}",
+                    f"Evolutionary optimizations: {stats['total_evolutions']}\n"
+                    f"Cognitive state: {stats['cognitive_state']}\n"
+                    f"Realtime inferences: {stats['total_realtime_inferences']}\n"
+                    f"Cognitive state changes: {stats['cognitive_state_changes']}",
                     title="Agent Status",
                     border_style="green"
                 ))
+                continue
+            elif user_input.lower() == "/cognition":
+                cognitive_state = agent.get_cognitive_state()
+                
+                # Create a table for temporal patterns
+                patterns_table = Table(show_header=True, header_style="bold magenta")
+                patterns_table.add_column("Time")
+                patterns_table.add_column("Topic")
+                patterns_table.add_column("Sentiment")
+                patterns_table.add_column("State")
+                
+                for pattern in cognitive_state["temporal_patterns"]:
+                    timestamp = datetime.fromtimestamp(pattern["timestamp"]).strftime("%H:%M:%S")
+                    topic = pattern["dominant_topic"] or "unknown"
+                    sentiment = pattern["sentiment"]
+                    state = pattern["cognitive_state"]
+                    patterns_table.add_row(timestamp, topic, sentiment, state)
+                
+                console.print(Panel.fit(
+                    f"[bold]Realtime Cognition Status:[/bold]\n\n"
+                    f"Current cognitive state: [bold cyan]{cognitive_state['cognitive_state']}[/bold cyan]\n"
+                    f"Dominant topic: {cognitive_state['inference_results'].get('dominant_topic', 'None')}\n"
+                    f"Current sentiment: {cognitive_state['inference_results'].get('sentiment', 'neutral')}\n\n"
+                    f"[bold]Recent Temporal Patterns:[/bold]",
+                    title="Cognitive Analysis",
+                    border_style="cyan"
+                ))
+                
+                console.print(patterns_table)
                 continue
             
             # Process the input
