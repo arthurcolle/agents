@@ -2660,7 +2660,7 @@ class ToolRegistry:
             "response_sent": response_text
         }
         
-    def _orchestrate_tasks(self, main_task: str, subtasks: List[str], context: Dict[str, Any] = None, agent=None) -> Dict[str, Any]:
+    def _orchestrate_tasks(self, main_task: str, subtasks: List[str] = None, priority: int = 1, context: Dict[str, Any] = None, agent=None) -> Dict[str, Any]:
         """Orchestrate multiple parallel tasks using scout agents"""
         try:
             # Use passed agent instance if available, otherwise try inspect.stack()
@@ -2679,6 +2679,22 @@ class ToolRegistry:
             
             # Add main task to context
             context["main_task"] = main_task
+            
+            # If subtasks not provided, create a single task for the main task
+            if subtasks is None or not subtasks:
+                subtasks = [f"Get {main_task}"]
+            
+            # Convert string to list if needed
+            if isinstance(subtasks, str):
+                try:
+                    # Try to parse as JSON
+                    if subtasks.startswith('[') and subtasks.endswith(']'):
+                        subtasks = json.loads(subtasks)
+                    else:
+                        # Split by commas or create a single item list
+                        subtasks = [s.strip() for s in subtasks.split(',') if s.strip()]
+                except:
+                    subtasks = [subtasks]
             
             start_time = time.time()
             results = agent.agent_orchestrator.execute_parallel_tasks(subtasks, context)
@@ -3364,16 +3380,32 @@ class ToolRegistry:
             function=self._search_similar_images
         )
         
-        # Register a more robust weather function
+        # Register a more robust weather function with multiple parameter options
         self.register_function(
             name="get_weather",
             description="Get current weather information for a location",
             parameters={
                 "type": "object", 
                 "properties": {
-                    "location": {"type": "string", "description": "Location (e.g., city name)"}
+                    "location": {"type": "string", "description": "Location (e.g., city name)"},
+                    "city": {"type": "string", "description": "City name (alternative to location)"}
                 }, 
-                "required": ["location"]
+                "required": []
+            },
+            function=self._get_weather
+        )
+        
+        # Register a weather_api alias for compatibility
+        self.register_function(
+            name="weather_api",
+            description="Get weather information for a location (alias for get_weather)",
+            parameters={
+                "type": "object", 
+                "properties": {
+                    "location": {"type": "string", "description": "Location (e.g., city name)"},
+                    "city": {"type": "string", "description": "City name (alternative to location)"}
+                }, 
+                "required": []
             },
             function=self._get_weather
         )
@@ -4134,9 +4166,9 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
-    def _get_weather(self, location: str = "New York", city: str = None) -> Dict[str, Any]:
+    def _get_weather(self, location: str = None, city: str = None) -> Dict[str, Any]:
         # Use city parameter if provided, otherwise use location
-        location = city or location
+        location = city or location or "New York"
         try:
             import random
             conditions = ["sunny", "partly cloudy", "cloudy", "rainy", "stormy", "snowy", "windy", "foggy"]
@@ -4943,6 +4975,7 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
     4. Python code block format: <|python_start|><function=func_name>...</|python_end|>
     5. Tool calls format: {"type": "function", "function": {"name": "func_name", "arguments": "{...}"}}
     6. Multiple locations in weather queries: "weather in X and Y" -> get_multiple_weather
+    7. Direct weather queries: "weather in X" -> get_weather(location="X")
     """
     function_calls = []
     
@@ -5068,6 +5101,13 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
         function_calls.append({"name": "list_available_functions", "arguments": {}})
     elif not function_calls and "list tools" in text.lower():
         function_calls.append({"name": "list_available_functions", "arguments": {}})
+    # Special case for direct weather queries
+    elif not function_calls and "weather" in text.lower():
+        # Try to extract location from "weather in X" pattern
+        weather_match = re.search(r"weather\s+(?:in|for|at)\s+([A-Za-z\s,]+)", text.lower())
+        if weather_match:
+            location = weather_match.group(1).strip()
+            function_calls.append({"name": "get_weather", "arguments": {"location": location}})
     
     # If we found potential function calls but couldn't parse any, log a warning
     if potential_function_call_found and not function_calls:
@@ -5755,6 +5795,10 @@ print("Hello, world!")
             "datetime": "get_current_datetime",
             "search": "web_search",
             "weather": "get_weather",
+            "weather_api": "get_weather",
+            "get_weather_data": "get_weather",
+            "weather_data": "get_weather",
+            "check_weather": "get_weather",
             "execute": "execute_python",
             "run_python": "execute_python",
             "python": "execute_python",
