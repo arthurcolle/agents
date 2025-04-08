@@ -860,6 +860,42 @@ class ToolRegistry:
             function=self._monitor_task
         )
 
+    def _categorize_function(self, name: str) -> str:
+        """Categorize functions based on their names or purposes"""
+        web_tools = ["web_search", "web_read", "fact_check", "extract_urls", "process_urls"]
+        code_tools = ["execute_python", "save_module", "execute_module", "list_modules", "get_module", 
+                     "run_script", "search_code", "create_python_function"]
+        file_tools = ["read_file", "write_file", "list_directory"]
+        system_tools = ["execute_command", "update_system_prompt", "get_system_prompt", 
+                       "add_reflection_note", "get_reflection_notes"]
+        planning_tools = ["create_planning_session", "add_plan_step", "get_planning_status", 
+                         "complete_planning_session"]
+        knowledge_tools = ["get_knowledge_summary", "search_knowledge", "monitor_task"]
+        weather_tools = ["get_weather", "parse_weather_response"]
+        together_tools = ["list_together_models", "generate_completion", "create_or_update_assistant",
+                         "create_thread", "add_message_to_thread", "run_assistant"]
+        
+        if name in web_tools:
+            return "Web & Search"
+        elif name in code_tools:
+            return "Code & Development"
+        elif name in file_tools:
+            return "File Operations"
+        elif name in system_tools:
+            return "System & Configuration"
+        elif name in planning_tools:
+            return "Planning & Task Management"
+        elif name in knowledge_tools:
+            return "Knowledge Management"
+        elif name in weather_tools:
+            return "Weather"
+        elif name in together_tools:
+            return "Together API"
+        elif "analyze" in name or "adapt" in name:
+            return "Environment & Adaptation"
+        else:
+            return "Miscellaneous"
+    
     def register_function(self, name: str, description: str, parameters: Dict[str, Any], function: Callable, source_code: Optional[str] = None):
         if name in self.functions:
             console.print(f"[yellow]Warning: Overwriting existing function '{name}'[/yellow]")
@@ -963,8 +999,44 @@ class ToolRegistry:
     def _list_available_functions(self) -> Dict[str, Any]:
         function_list = []
         for name, spec in self.functions.items():
-            function_list.append({"name": name, "description": spec.description, "parameters": spec.parameters, "has_source_code": spec.source_code is not None})
-        return {"functions": function_list, "count": len(function_list), "success": True}
+            # Extract required parameters for easier reference
+            required_params = spec.parameters.get("required", [])
+            properties = spec.parameters.get("properties", {})
+            
+            # Create a simplified parameter description
+            param_desc = []
+            for param_name, param_info in properties.items():
+                is_required = param_name in required_params
+                param_type = param_info.get("type", "any")
+                description = param_info.get("description", "")
+                default = f", default: {param_info.get('default')}" if "default" in param_info else ""
+                req_marker = "*" if is_required else ""
+                param_desc.append(f"{param_name}{req_marker} ({param_type}{default}): {description}")
+            
+            # Create a simplified function description
+            simplified_desc = {
+                "name": name,
+                "description": spec.description,
+                "parameters": param_desc,
+                "has_source_code": spec.source_code is not None,
+                "category": self._categorize_function(name)
+            }
+            function_list.append(simplified_desc)
+        
+        # Group functions by category
+        categories = {}
+        for func in function_list:
+            category = func["category"]
+            if category not in categories:
+                categories[category] = []
+            categories[category].append(func)
+        
+        return {
+            "functions": function_list, 
+            "count": len(function_list), 
+            "categories": categories,
+            "success": True
+        }
 
     def _list_together_models(self, filter: str = "") -> Dict[str, Any]:
         try:
@@ -1961,6 +2033,39 @@ print("Hello, world!")
         if has_images and "multimodal" not in self.environment_state["user_behavior"]["detected_preferences"]:
             self.environment_state["user_behavior"]["detected_preferences"].append("multimodal")
 
+    def _generate_tools_list(self) -> str:
+        """Generate a nicely formatted list of available tools"""
+        tools_info = self.tool_registry._list_available_functions()
+        categories = tools_info.get("categories", {})
+        
+        response = "# Available Tools\n\n"
+        
+        for category, functions in sorted(categories.items()):
+            response += f"## {category}\n\n"
+            
+            for func in sorted(functions, key=lambda x: x["name"]):
+                name = func["name"]
+                description = func["description"]
+                params = func["parameters"]
+                
+                response += f"### {name}\n"
+                response += f"{description}\n\n"
+                
+                if params:
+                    response += "**Parameters:**\n"
+                    for param in params:
+                        response += f"- {param}\n"
+                    response += "\n"
+            
+            response += "\n"
+        
+        response += "You can use these tools by asking me to perform specific tasks. For example:\n"
+        response += "- \"Search the web for the latest news about AI\"\n"
+        response += "- \"Get the weather in New York\"\n"
+        response += "- \"Create a Python function to calculate Fibonacci numbers\"\n"
+        
+        return response
+    
     def extract_python_code(self, text: str) -> List[str]:
         return extract_python_code(text)
 
@@ -2039,6 +2144,14 @@ print("Hello, world!")
         # Store last user message and add to conversation history
         self.last_user_message = user_input
         self.add_message("user", user_input)
+        
+        # Special handling for tool listing requests
+        if isinstance(user_input, str) and user_input.lower().strip() in [
+            "list tools", "list your tools", "what tools do you have", 
+            "show tools", "show available tools", "what can you do"
+        ]:
+            return self._generate_tools_list()
+            
         tools = self.tool_registry.get_openai_tools_format()
         # Periodic environment analysis
         user_msg_count = len([msg for msg in self.conversation_history if msg.get("role") == "user"])
