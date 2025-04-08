@@ -3753,10 +3753,14 @@ class CLIAgent:
             # Check if the tool is in the registry
             if self.tool_registry.get_tool(name):
                 result = self.tool_registry.execute_tool(name, arguments)
-            # Handle dynamic agent tools - This needs to be awaited if called from async context
+            # Handle dynamic agent tools
             elif name == "execute_agent_command":
-                # We expect this to be called from an async context now
-                result = await self._execute_agent_command(**arguments)
+                # This should be handled in the async version of this method
+                result = {
+                    "success": False,
+                    "message": "execute_agent_command must be called from an async context",
+                    "data": None
+                }
             # Handle advanced editor tools
             elif name == "analyze_code_advanced" and self.editor:
                 filepath = arguments.get("filepath")
@@ -4184,6 +4188,11 @@ class CLIAgent:
                 result = await self._handle_tool_call(function_name, arguments)
             else:
                 # Run synchronous functions in an executor to avoid blocking the event loop
+                if self.executor is None:
+                    # Initialize executor if not already done
+                    import concurrent.futures
+                    self.executor = concurrent.futures.ThreadPoolExecutor()
+                    
                 loop = asyncio.get_running_loop()
                 # Use functools.partial to pass arguments to the sync function
                 sync_call = functools.partial(self._handle_tool_call, function_name, arguments)
@@ -4486,188 +4495,6 @@ class CLIAgent:
                     self.hooks.on_end(agent_name, final_response)
                     return final_response
 
-            except Exception as e:
-                logger.error(f"Error in chat: {e}")
-                self.hooks.on_error("CLI Agent", e)
-                return f"Error: {str(e)}"
-
-    def search_interaction_history(self, query: str, limit: int = 5) -> Dict:
-                        "content": assistant_message.content,
-                        "tool_calls": [
-                            {
-                                "id": tool_call.id,
-                                "type": tool_call.type,
-                                "function": {
-                                    "name": tool_call.function.name,
-                                    "arguments": tool_call.function.arguments
-                                }
-                            } for tool_call in assistant_message.tool_calls
-                        ]
-                    })
-                    
-                    # Process each tool call
-                    for tool_call in assistant_message.tool_calls:
-                        function_name = tool_call.function.name
-                        function_args = json.loads(tool_call.function.arguments)
-                        
-                        # Execute the function - don't use nested console.status
-                        self.console.print(f"[bold blue]Running tool: {function_name}...[/bold blue]")
-                        function_response = self._handle_tool_call(function_name, function_args)
-                        
-                        # Add the function response to the conversation
-                        self.conversation_history.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(function_response)
-                        })
-                    
-                    # Get the final response after tool calls
-                    self.console.print("[bold green]Processing results...[/bold green]")
-                    second_response = client.chat.completions.create(
-                        model=self.model,
-                        messages=self.conversation_history
-                    )
-                    
-                    primary_response = second_response.choices[0].message.content
-                    
-                    # Meta-cognitive reflection (outer model) if enabled
-                    final_response = primary_response
-                    meta_reflection = None
-                    
-                    if self.enable_meta:
-                        self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
-                        # Get meta-evaluation
-                        reflection = await self.meta_layer.reflect(message, primary_response, client)
-                        meta_reflection = reflection
-                        
-                        # Improve response based on meta-reflection
-                        if reflection and "evaluation" in reflection:
-                            improved_response = await self.meta_layer.improve(
-                                message, 
-                                primary_response, 
-                                reflection["evaluation"],
-                                client
-                            )
-                            final_response = improved_response
-                            
-                            # Add meta-reflection to conversation history as a system note
-                            self.conversation_history.append({
-                                "role": "system",
-                                "content": f"Meta-reflection: {reflection['evaluation']}"
-                            })
-                        
-                        # Add the final response to the conversation
-                        self.conversation_history.append({
-                            "role": "assistant",
-                            "content": final_response
-                        })
-                        
-                        # Store interaction in perceptual memory
-                        tool_calls_data = [
-                            {
-                                "name": tool_call.function.name,
-                                "arguments": json.loads(tool_call.function.arguments)
-                            } for tool_call in assistant_message.tool_calls
-                        ]
-                        
-                        self._store_interaction(
-                            message=message,
-                            response=final_response,
-                            tool_calls=tool_calls_data,
-                            meta_reflection=meta_reflection,
-                            client=client
-                        )
-                        
-                        # Perform experience replay if enabled and it's time
-                        if (self.enable_experience_replay and 
-                            self.interaction_count % self.replay_frequency == 0 and
-                            self.interaction_count > 1):
-                            self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
-                            replay_result = await self._perform_experience_replay(client)
-                            if replay_result["success"] and self.console:
-                                self.console.print(
-                                    f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
-                                    style="dim"
-                                )
-                        
-                        return final_response
-                else:
-                    # No tool calls, just get the primary response
-                    primary_response = assistant_message.content
-                    
-                    # Meta-cognitive reflection (outer model) if enabled
-                    final_response = primary_response
-                    meta_reflection = None
-                    
-                    if self.enable_meta:
-                        self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
-                        # Get meta-evaluation
-                        reflection = await self.meta_layer.reflect(message, primary_response, client)
-                        meta_reflection = reflection
-                        
-                        # Improve response based on meta-reflection
-                        if reflection and "evaluation" in reflection:
-                            improved_response = await self.meta_layer.improve(
-                                message, 
-                                primary_response, 
-                                reflection["evaluation"],
-                                client
-                            )
-                            final_response = improved_response
-                            
-                            # Add meta-reflection to conversation history as a system note
-                            self.conversation_history.append({
-                                "role": "system",
-                                "content": f"Meta-reflection: {reflection['evaluation']}"
-                            })
-                    
-                    # Add the response to the conversation history
-                    self.conversation_history.append({
-                        "role": "assistant",
-                        "content": final_response
-                    })
-                    
-                    # Store interaction in perceptual memory
-                    self._store_interaction(
-                        message=message,
-                        response=final_response,
-                        meta_reflection=meta_reflection,
-                        client=client
-                    )
-                    
-                    # Perform experience replay if enabled and it's time
-                    if (self.enable_experience_replay and 
-                        self.interaction_count % self.replay_frequency == 0 and
-                        self.interaction_count > 1):
-                        self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
-                        replay_result = await self._perform_experience_replay(client)
-                        if replay_result["success"] and self.console:
-                            self.console.print(
-                                f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
-                                style="dim"
-                            )
-                    
-                    # Perform evolutionary optimization if enabled and it's time
-                    if (self.enable_evolution and 
-                        self.interaction_count % self.evolution_frequency == 0 and
-                        self.interaction_count > 2):
-                        self.console.print("[bold magenta]Performing evolutionary optimization...[/bold magenta]")
-                        evolution_result = self.evolve_agent()
-                        if evolution_result["success"] and self.console:
-                            self.console.print(
-                                f"[dim][Evolution: optimized agent memory and strategies][/dim]",
-                                style="dim"
-                            )
-                    
-                    # Check for autonomous tasks
-                    if not autonomous:  # Don't check during autonomous execution to prevent recursion
-                        self.check_autonomous_tasks()
-                    
-                    # Notify hooks that the agent has completed
-                    agent_name = "Autonomous Agent" if autonomous else "CLI Agent"
-                    self.hooks.on_end(agent_name, final_response)
-                    return final_response
-                    
             except Exception as e:
                 logger.error(f"Error in chat: {e}")
                 self.hooks.on_error("CLI Agent", e)
