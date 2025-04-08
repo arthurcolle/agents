@@ -5291,6 +5291,213 @@ class CLIAgent:
         
         return {**memory_stats, **agent_stats}
 
+    def create_kb_agent(self, kb_name: str, agent_id: str = None) -> Dict:
+        """
+        Create a specialized agent from a knowledge base
+        
+        Args:
+            kb_name: Name of the knowledge base to use
+            agent_id: Optional ID for the new agent
+            
+        Returns:
+            Agent creation result
+        """
+        if kb_name not in self.knowledge_bases:
+            return {
+                "success": False,
+                "message": f"Knowledge base not found: {kb_name}",
+                "data": None
+            }
+            
+        # Generate agent ID if not provided
+        if agent_id is None:
+            agent_id = f"kb_{kb_name}_{uuid.uuid4().hex[:8]}"
+            
+        try:
+            # Get knowledge base data
+            kb = self.knowledge_bases[kb_name]
+            
+            # Create a specialized agent
+            from dynamic_agents import registry, AgentContext
+            
+            # Create the agent
+            agent = registry.create_agent(agent_id, "knowledge_base")
+            
+            # Create a context for the agent
+            context = AgentContext(agent_id=agent_id)
+            
+            # Add knowledge base data to the context
+            context.set_variable("kb_name", kb_name)
+            context.set_variable("kb_path", kb["path"])
+            context.set_variable("kb_type", kb["type"])
+            context.set_variable("kb_entries", kb["entries"])
+            
+            # Update KB stats
+            if kb_name in self.kb_stats:
+                self.kb_stats[kb_name]["updates"] += 1
+                self.stats["kb_updates"] += 1
+            
+            return {
+                "success": True,
+                "message": f"Created specialized agent for knowledge base: {kb_name}",
+                "data": {
+                    "agent_id": agent_id,
+                    "kb_name": kb_name,
+                    "kb_entries": kb["entries"]
+                }
+            }
+        except Exception as e:
+            logging.error(f"Error creating KB agent: {e}")
+            return {
+                "success": False,
+                "message": f"Error creating KB agent: {str(e)}",
+                "data": None
+            }
+    def _list_knowledge_bases(self) -> Dict:
+        """List all available knowledge bases"""
+        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
+            return {
+                "success": False,
+                "message": "Knowledge base functionality not available",
+                "data": None
+            }
+            
+        kb_info = []
+        for kb_name, kb in self.perceptual_memory.knowledge_bases.items():
+            # Get stats if available
+            stats = self.perceptual_memory.kb_stats.get(kb_name, {})
+            
+            kb_info.append({
+                "name": kb_name,
+                "type": kb.get("type", "unknown"),
+                "entries": kb.get("entries", 0),
+                "path": kb.get("path", ""),
+                "last_updated": kb.get("last_updated", 0),
+                "retrievals": stats.get("retrievals", 0),
+                "relevance_score": stats.get("relevance_score", 0.5)
+            })
+            
+        return {
+            "success": True,
+            "message": f"Found {len(kb_info)} knowledge bases",
+            "data": {
+                "knowledge_bases": kb_info,
+                "active_kb": list(self.active_kb),
+                "kb_agents": list(self.kb_agents.keys())
+            }
+        }
+    
+    def _search_knowledge_base(self, kb_name: str, query: str, limit: int = 3) -> Dict:
+        """Search a specific knowledge base for information"""
+        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
+            return {
+                "success": False,
+                "message": "Knowledge base functionality not available",
+                "data": None
+            }
+            
+        if kb_name not in self.perceptual_memory.knowledge_bases:
+            return {
+                "success": False,
+                "message": f"Knowledge base not found: {kb_name}",
+                "data": None
+            }
+            
+        try:
+            # Get query embedding
+            global client
+            if client is None:
+                return {
+                    "success": False,
+                    "message": "OpenAI client not available for semantic search",
+                    "data": None
+                }
+                
+            query_embedding = self.perceptual_memory.get_embedding(query, client)
+            
+            # Search the knowledge base
+            results = self.perceptual_memory.search_knowledge_bases(
+                query, query_embedding, limit
+            )
+            
+            if kb_name not in results or not results[kb_name]:
+                return {
+                    "success": True,
+                    "message": f"No relevant information found in knowledge base: {kb_name}",
+                    "data": []
+                }
+                
+            # Format results
+            formatted_results = []
+            for result in results[kb_name]:
+                content = result["content"]
+                
+                # Format based on content type
+                if isinstance(content, dict):
+                    # Extract relevant fields
+                    if "content" in content:
+                        text = content["content"]
+                    elif "text" in content:
+                        text = content["text"]
+                    else:
+                        text = str(content)
+                        
+                    # Add metadata if available
+                    metadata = {}
+                    for key, value in content.items():
+                        if key not in ["content", "text"]:
+                            metadata[key] = value
+                            
+                    formatted_results.append({
+                        "text": text,
+                        "similarity": result["similarity"],
+                        "metadata": metadata
+                    })
+                else:
+                    formatted_results.append({
+                        "text": str(content),
+                        "similarity": result["similarity"]
+                    })
+            
+            # Add this KB to active KBs
+            self.active_kb.add(kb_name)
+            
+            return {
+                "success": True,
+                "message": f"Found {len(formatted_results)} relevant entries in knowledge base: {kb_name}",
+                "data": formatted_results
+            }
+        except Exception as e:
+            logging.error(f"Error searching knowledge base: {e}")
+            return {
+                "success": False,
+                "message": f"Error searching knowledge base: {str(e)}",
+                "data": None
+            }
+    
+    def _create_kb_agent(self, kb_name: str, agent_id: str = None) -> Dict:
+        """Create a specialized agent from a knowledge base"""
+        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
+            return {
+                "success": False,
+                "message": "Knowledge base functionality not available",
+                "data": None
+            }
+            
+        result = self.perceptual_memory.create_kb_agent(kb_name, agent_id)
+        
+        if result["success"]:
+            # Track the KB agent
+            self.kb_agents[result["data"]["agent_id"]] = {
+                "kb_name": kb_name,
+                "created": time.time()
+            }
+            
+            # Add this KB to active KBs
+            self.active_kb.add(kb_name)
+            
+        return result
+
 def main():
     """Main function for the CLI agent"""
     parser = argparse.ArgumentParser(description="Autonomous CLI Agent with Evolutionary Capabilities")
@@ -5788,209 +5995,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    def create_kb_agent(self, kb_name: str, agent_id: str = None) -> Dict:
-        """
-        Create a specialized agent from a knowledge base
-        
-        Args:
-            kb_name: Name of the knowledge base to use
-            agent_id: Optional ID for the new agent
-            
-        Returns:
-            Agent creation result
-        """
-        if kb_name not in self.knowledge_bases:
-            return {
-                "success": False,
-                "message": f"Knowledge base not found: {kb_name}",
-                "data": None
-            }
-            
-        # Generate agent ID if not provided
-        if agent_id is None:
-            agent_id = f"kb_{kb_name}_{uuid.uuid4().hex[:8]}"
-            
-        try:
-            # Get knowledge base data
-            kb = self.knowledge_bases[kb_name]
-            
-            # Create a specialized agent
-            from dynamic_agents import registry, AgentContext
-            
-            # Create the agent
-            agent = registry.create_agent(agent_id, "knowledge_base")
-            
-            # Create a context for the agent
-            context = AgentContext(agent_id=agent_id)
-            
-            # Add knowledge base data to the context
-            context.set_variable("kb_name", kb_name)
-            context.set_variable("kb_path", kb["path"])
-            context.set_variable("kb_type", kb["type"])
-            context.set_variable("kb_entries", kb["entries"])
-            
-            # Update KB stats
-            if kb_name in self.kb_stats:
-                self.kb_stats[kb_name]["updates"] += 1
-                self.stats["kb_updates"] += 1
-            
-            return {
-                "success": True,
-                "message": f"Created specialized agent for knowledge base: {kb_name}",
-                "data": {
-                    "agent_id": agent_id,
-                    "kb_name": kb_name,
-                    "kb_entries": kb["entries"]
-                }
-            }
-        except Exception as e:
-            logging.error(f"Error creating KB agent: {e}")
-            return {
-                "success": False,
-                "message": f"Error creating KB agent: {str(e)}",
-                "data": None
-            }
-    def _list_knowledge_bases(self) -> Dict:
-        """List all available knowledge bases"""
-        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
-            return {
-                "success": False,
-                "message": "Knowledge base functionality not available",
-                "data": None
-            }
-            
-        kb_info = []
-        for kb_name, kb in self.perceptual_memory.knowledge_bases.items():
-            # Get stats if available
-            stats = self.perceptual_memory.kb_stats.get(kb_name, {})
-            
-            kb_info.append({
-                "name": kb_name,
-                "type": kb.get("type", "unknown"),
-                "entries": kb.get("entries", 0),
-                "path": kb.get("path", ""),
-                "last_updated": kb.get("last_updated", 0),
-                "retrievals": stats.get("retrievals", 0),
-                "relevance_score": stats.get("relevance_score", 0.5)
-            })
-            
-        return {
-            "success": True,
-            "message": f"Found {len(kb_info)} knowledge bases",
-            "data": {
-                "knowledge_bases": kb_info,
-                "active_kb": list(self.active_kb),
-                "kb_agents": list(self.kb_agents.keys())
-            }
-        }
-    
-    def _search_knowledge_base(self, kb_name: str, query: str, limit: int = 3) -> Dict:
-        """Search a specific knowledge base for information"""
-        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
-            return {
-                "success": False,
-                "message": "Knowledge base functionality not available",
-                "data": None
-            }
-            
-        if kb_name not in self.perceptual_memory.knowledge_bases:
-            return {
-                "success": False,
-                "message": f"Knowledge base not found: {kb_name}",
-                "data": None
-            }
-            
-        try:
-            # Get query embedding
-            global client
-            if client is None:
-                return {
-                    "success": False,
-                    "message": "OpenAI client not available for semantic search",
-                    "data": None
-                }
-                
-            query_embedding = self.perceptual_memory.get_embedding(query, client)
-            
-            # Search the knowledge base
-            results = self.perceptual_memory.search_knowledge_bases(
-                query, query_embedding, limit
-            )
-            
-            if kb_name not in results or not results[kb_name]:
-                return {
-                    "success": True,
-                    "message": f"No relevant information found in knowledge base: {kb_name}",
-                    "data": []
-                }
-                
-            # Format results
-            formatted_results = []
-            for result in results[kb_name]:
-                content = result["content"]
-                
-                # Format based on content type
-                if isinstance(content, dict):
-                    # Extract relevant fields
-                    if "content" in content:
-                        text = content["content"]
-                    elif "text" in content:
-                        text = content["text"]
-                    else:
-                        text = str(content)
-                        
-                    # Add metadata if available
-                    metadata = {}
-                    for key, value in content.items():
-                        if key not in ["content", "text"]:
-                            metadata[key] = value
-                            
-                    formatted_results.append({
-                        "text": text,
-                        "similarity": result["similarity"],
-                        "metadata": metadata
-                    })
-                else:
-                    formatted_results.append({
-                        "text": str(content),
-                        "similarity": result["similarity"]
-                    })
-            
-            # Add this KB to active KBs
-            self.active_kb.add(kb_name)
-            
-            return {
-                "success": True,
-                "message": f"Found {len(formatted_results)} relevant entries in knowledge base: {kb_name}",
-                "data": formatted_results
-            }
-        except Exception as e:
-            logging.error(f"Error searching knowledge base: {e}")
-            return {
-                "success": False,
-                "message": f"Error searching knowledge base: {str(e)}",
-                "data": None
-            }
-    
-    def _create_kb_agent(self, kb_name: str, agent_id: str = None) -> Dict:
-        """Create a specialized agent from a knowledge base"""
-        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
-            return {
-                "success": False,
-                "message": "Knowledge base functionality not available",
-                "data": None
-            }
-            
-        result = self.perceptual_memory.create_kb_agent(kb_name, agent_id)
-        
-        if result["success"]:
-            # Track the KB agent
-            self.kb_agents[result["data"]["agent_id"]] = {
-                "kb_name": kb_name,
-                "created": time.time()
-            }
-            
-            # Add this KB to active KBs
-            self.active_kb.add(kb_name)
-            
-        return result
