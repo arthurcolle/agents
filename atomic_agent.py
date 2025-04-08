@@ -34,6 +34,7 @@ from io import StringIO, BytesIO
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Callable, Optional, Union
+from pydantic import BaseModel
 
 try:
     import aiohttp
@@ -513,6 +514,7 @@ class ToolRegistry:
             console.print("[yellow]Warning: JINA_API_KEY not found. Jina tools will not be available.[/yellow]")
             console.print("[yellow]Set the JINA_API_KEY environment variable to enable web search functionality.[/yellow]")
         self._register_default_tools()
+        self.together = Together()
 
     def _register_default_tools(self):
         # Date and time tools
@@ -755,7 +757,7 @@ class ToolRegistry:
         )
     def _decompose_prompt(self, transcript: str) -> Dict[str, Any]:
         # Call the LLM with the JSON schema for MultiPrompt
-        extract = together.chat.completions.create(
+        extract = self.together.chat.completions.create(
             messages=[
                 {
                     "role": "system",
@@ -776,6 +778,8 @@ class ToolRegistry:
         output = json.loads(extract.choices[0].message.content)
         print(json.dumps(output, indent=2))
         return output
+
+    def _delete_file(self, path: str) -> Dict[str, Any]:
         try:
             path = Path(path).expanduser()
             if not path.exists():
