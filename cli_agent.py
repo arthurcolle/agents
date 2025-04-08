@@ -3380,8 +3380,8 @@ class CLIAgent:
                         function_name = tool_call.function.name
                         function_args = json.loads(tool_call.function.arguments)
                         
-                        # Execute the function
-                        with self.console.status(f"[bold blue]Running tool: {function_name}..."):
+                        # Execute the function - don't use nested console.status
+                        self.console.print(f"[bold blue]Running tool: {function_name}...[/bold blue]")
                             function_response = self._handle_tool_call(function_name, function_args)
                         
                         # Add the function response to the conversation
@@ -3392,7 +3392,7 @@ class CLIAgent:
                         })
                     
                     # Get the final response after tool calls
-                    with self.console.status("[bold green]Processing results..."):
+                    self.console.print("[bold green]Processing results...[/bold green]")
                         second_response = client.chat.completions.create(
                             model=self.model,
                             messages=self.conversation_history
@@ -3405,7 +3405,7 @@ class CLIAgent:
                         meta_reflection = None
                         
                         if self.enable_meta:
-                            with self.console.status("[bold cyan]Performing meta-reflection..."):
+                            self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
                                 # Get meta-evaluation
                                 reflection = await self.meta_layer.reflect(message, primary_response, client)
                                 meta_reflection = reflection
@@ -3452,7 +3452,7 @@ class CLIAgent:
                         if (self.enable_experience_replay and 
                             self.interaction_count % self.replay_frequency == 0 and
                             self.interaction_count > 1):
-                            with self.console.status("[bold magenta]Performing experience replay..."):
+                            self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
                                 replay_result = await self._perform_experience_replay(client)
                                 if replay_result["success"] and self.console:
                                     self.console.print(
@@ -3470,7 +3470,7 @@ class CLIAgent:
                     meta_reflection = None
                     
                     if self.enable_meta:
-                        with self.console.status("[bold cyan]Performing meta-reflection..."):
+                        self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
                             # Get meta-evaluation
                             reflection = await self.meta_layer.reflect(message, primary_response, client)
                             meta_reflection = reflection
@@ -3509,7 +3509,7 @@ class CLIAgent:
                     if (self.enable_experience_replay and 
                         self.interaction_count % self.replay_frequency == 0 and
                         self.interaction_count > 1):
-                        with self.console.status("[bold magenta]Performing experience replay..."):
+                        self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
                             replay_result = await self._perform_experience_replay(client)
                             if replay_result["success"] and self.console:
                                 self.console.print(
