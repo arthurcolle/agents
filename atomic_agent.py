@@ -6136,6 +6136,153 @@ print("Hello, world!")
                 fixed_blocks.append('\n'.join(fixed_lines))
             
             return fixed_blocks
+            
+    def _check_and_fix_partial_response(self, response: str) -> str:
+        """
+        Check if a response appears to be cut off or incomplete and fix it by reprompting.
+        This ensures premium users ($10,000/day) receive complete, high-quality responses.
+        
+        Args:
+            response: The original response from the model
+            
+        Returns:
+            The complete response, either original or fixed through reprompting
+        """
+        if not hasattr(self, 'reprompting') or not self.reprompting.get("enabled", False):
+            return response
+            
+        # Skip empty responses
+        if not response or len(response.strip()) < 10:
+            return response
+            
+        # Patterns that suggest a response is incomplete
+        incomplete_patterns = [
+            # Sentences that end abruptly
+            r'(?<!\.)$',                           # Doesn't end with a period
+            r'(?<=[a-zA-Z0-9])[,;:]$',             # Ends with comma, semicolon, or colon
+            r'\.\.\.$',                            # Ends with ellipsis
+            r'(?<=[a-zA-Z0-9])\s*$',               # Ends with a word without punctuation
+            
+            # Structural incompleteness
+            r'```[^`]*$',                          # Unclosed code block
+            r'\([^)]*$',                           # Unclosed parenthesis
+            r'\[[^\]]*$',                          # Unclosed bracket
+            r'"{1}[^"]*$',                         # Unclosed quote
+            
+            # Semantic incompleteness
+            r'(?i)for example[,:]?\s*$',           # "For example" without the example
+            r'(?i)such as[,:]?\s*$',               # "Such as" without examples
+            r'(?i)these (?:include|are)[,:]?\s*$', # "These include" without items
+            r'(?i)steps?[,:]?\s*$',                # "Steps:" without steps
+            r'(?i)here\'s[,:]?\s*$',               # "Here's" without what follows
+            
+            # Numbered lists that end abruptly
+            r'(?i)\d+\.\s*[^.]*$',                 # Numbered item without completion
+            r'(?i)\d+\.\s*[^.]*\n$',               # Numbered item ending with newline
+            
+            # Incomplete function calls
+            r'(?i)function[^(]*\([^)]*$',          # Function call with unclosed parenthesis
+            r'(?i)tool[^(]*\([^)]*$',              # Tool call with unclosed parenthesis
+        ]
+        
+        # Check if response matches any incomplete pattern
+        is_incomplete = False
+        for pattern in incomplete_patterns:
+            if re.search(pattern, response):
+                is_incomplete = True
+                break
+                
+        # Additional heuristics for incompleteness
+        sentence_count = len(re.split(r'[.!?]+', response))
+        word_count = len(response.split())
+        
+        # Very short responses with few sentences might be incomplete
+        if sentence_count < 2 and word_count < 30:
+            is_incomplete = True
+            
+        # Check for abrupt ending in the middle of a list
+        list_items = re.findall(r'(?:^|\n)\s*(?:\d+\.|[\*\-•])\s+[^\n]+', response)
+        if list_items and len(list_items) < 3 and list_items[-1].strip()[-1] not in '.!?':
+            is_incomplete = True
+            
+        # If response seems complete, return it as is
+        if not is_incomplete:
+            return response
+            
+        # Log the detection of an incomplete response
+        console.print("[yellow]Detected incomplete response. Reprompting for premium user experience...[/yellow]")
+        
+        # Update reprompt statistics
+        if hasattr(self, 'reprompting') and 'reprompt_stats' in self.reprompting:
+            self.reprompting['reprompt_stats']['total_reprompts'] += 1
+            self.reprompting['reprompt_stats']['last_reprompt_time'] = time.time()
+        
+        # Create a reprompt to complete the response
+        max_attempts = self.reprompting.get("max_reprompt_attempts", 2)
+        
+        for attempt in range(max_attempts):
+            try:
+                # Remove the incomplete response from conversation history
+                if self.conversation_history and self.conversation_history[-1].get("role") == "assistant":
+                    self.conversation_history.pop()
+                
+                # Create a reprompt that asks for completion
+                reprompt_message = {
+                    "role": "user", 
+                    "content": f"Your previous response was cut off. Please provide a complete response to my original question. Make sure to include all relevant details and finish your thoughts completely."
+                }
+                
+                # Add the reprompt to conversation history
+                self.conversation_history.append(reprompt_message)
+                
+                # Generate a new, complete response
+                if self.model.startswith("meta-llama/Llama-4"):
+                    new_response = self.client.completions.create(
+                        model=self.model,
+                        prompt=self.format_llama4_prompt() + "\nAssistant: ",
+                        max_tokens=4096,
+                        stop=["<|eot|>"]
+                    )
+                    new_content = new_response.choices[0].text + "<|eot|>"
+                    new_content = new_content.rstrip("<|eot|>")
+                else:
+                    new_response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=self.conversation_history,
+                        max_tokens=4096
+                    )
+                    new_content = new_response.choices[0].message.content
+                
+                # Add the new response to conversation history
+                self.add_message("assistant", new_content)
+                
+                # Check if the new response is also incomplete
+                still_incomplete = False
+                for pattern in incomplete_patterns:
+                    if re.search(pattern, new_content):
+                        still_incomplete = True
+                        break
+                
+                if not still_incomplete:
+                    # Update success statistics
+                    if hasattr(self, 'reprompting') and 'reprompt_stats' in self.reprompting:
+                        self.reprompting['reprompt_stats']['successful_fixes'] += 1
+                    
+                    console.print("[green]Successfully generated complete response after reprompting[/green]")
+                    return new_content
+                
+                # If we're on the last attempt and it's still incomplete, combine the responses
+                if attempt == max_attempts - 1:
+                    combined_response = response + "\n\n" + new_content
+                    return combined_response
+                    
+            except Exception as e:
+                console.print(f"[red]Error during reprompting (attempt {attempt+1}): {str(e)}[/red]")
+                # If reprompting fails, return the original response
+                return response
+        
+        # If all reprompt attempts fail, return the original response
+        return response
 
     def process_tool_calls(self, tool_calls):
         results = []
@@ -7105,150 +7252,3 @@ if __name__ == "__main__":
         reflection = reflection_response.choices[0].message.content
         
         return reflection
-        
-    def _check_and_fix_partial_response(self, response: str) -> str:
-        """
-        Check if a response appears to be cut off or incomplete and fix it by reprompting.
-        This ensures premium users ($10,000/day) receive complete, high-quality responses.
-        
-        Args:
-            response: The original response from the model
-            
-        Returns:
-            The complete response, either original or fixed through reprompting
-        """
-        if not hasattr(self, 'reprompting') or not self.reprompting.get("enabled", False):
-            return response
-            
-        # Skip empty responses
-        if not response or len(response.strip()) < 10:
-            return response
-            
-        # Patterns that suggest a response is incomplete
-        incomplete_patterns = [
-            # Sentences that end abruptly
-            r'(?<!\.)$',                           # Doesn't end with a period
-            r'(?<=[a-zA-Z0-9])[,;:]$',             # Ends with comma, semicolon, or colon
-            r'\.\.\.$',                            # Ends with ellipsis
-            r'(?<=[a-zA-Z0-9])\s*$',               # Ends with a word without punctuation
-            
-            # Structural incompleteness
-            r'```[^`]*$',                          # Unclosed code block
-            r'\([^)]*$',                           # Unclosed parenthesis
-            r'\[[^\]]*$',                          # Unclosed bracket
-            r'"{1}[^"]*$',                         # Unclosed quote
-            
-            # Semantic incompleteness
-            r'(?i)for example[,:]?\s*$',           # "For example" without the example
-            r'(?i)such as[,:]?\s*$',               # "Such as" without examples
-            r'(?i)these (?:include|are)[,:]?\s*$', # "These include" without items
-            r'(?i)steps?[,:]?\s*$',                # "Steps:" without steps
-            r'(?i)here\'s[,:]?\s*$',               # "Here's" without what follows
-            
-            # Numbered lists that end abruptly
-            r'(?i)\d+\.\s*[^.]*$',                 # Numbered item without completion
-            r'(?i)\d+\.\s*[^.]*\n$',               # Numbered item ending with newline
-            
-            # Incomplete function calls
-            r'(?i)function[^(]*\([^)]*$',          # Function call with unclosed parenthesis
-            r'(?i)tool[^(]*\([^)]*$',              # Tool call with unclosed parenthesis
-        ]
-        
-        # Check if response matches any incomplete pattern
-        is_incomplete = False
-        for pattern in incomplete_patterns:
-            if re.search(pattern, response):
-                is_incomplete = True
-                break
-                
-        # Additional heuristics for incompleteness
-        sentence_count = len(re.split(r'[.!?]+', response))
-        word_count = len(response.split())
-        
-        # Very short responses with few sentences might be incomplete
-        if sentence_count < 2 and word_count < 30:
-            is_incomplete = True
-            
-        # Check for abrupt ending in the middle of a list
-        list_items = re.findall(r'(?:^|\n)\s*(?:\d+\.|[\*\-•])\s+[^\n]+', response)
-        if list_items and len(list_items) < 3 and list_items[-1].strip()[-1] not in '.!?':
-            is_incomplete = True
-            
-        # If response seems complete, return it as is
-        if not is_incomplete:
-            return response
-            
-        # Log the detection of an incomplete response
-        console.print("[yellow]Detected incomplete response. Reprompting for premium user experience...[/yellow]")
-        
-        # Update reprompt statistics
-        if hasattr(self, 'reprompting') and 'reprompt_stats' in self.reprompting:
-            self.reprompting['reprompt_stats']['total_reprompts'] += 1
-            self.reprompting['reprompt_stats']['last_reprompt_time'] = time.time()
-        
-        # Create a reprompt to complete the response
-        max_attempts = self.reprompting.get("max_reprompt_attempts", 2)
-        
-        for attempt in range(max_attempts):
-            try:
-                # Remove the incomplete response from conversation history
-                if self.conversation_history and self.conversation_history[-1].get("role") == "assistant":
-                    self.conversation_history.pop()
-                
-                # Create a reprompt that asks for completion
-                reprompt_message = {
-                    "role": "user", 
-                    "content": f"Your previous response was cut off. Please provide a complete response to my original question. Make sure to include all relevant details and finish your thoughts completely."
-                }
-                
-                # Add the reprompt to conversation history
-                self.conversation_history.append(reprompt_message)
-                
-                # Generate a new, complete response
-                if self.model.startswith("meta-llama/Llama-4"):
-                    new_response = self.client.completions.create(
-                        model=self.model,
-                        prompt=self.format_llama4_prompt() + "\nAssistant: ",
-                        max_tokens=4096,
-                        stop=["<|eot|>"]
-                    )
-                    new_content = new_response.choices[0].text + "<|eot|>"
-                    new_content = new_content.rstrip("<|eot|>")
-                else:
-                    new_response = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=self.conversation_history,
-                        max_tokens=4096
-                    )
-                    new_content = new_response.choices[0].message.content
-                
-                # Add the new response to conversation history
-                self.add_message("assistant", new_content)
-                
-                # Check if the new response is also incomplete
-                still_incomplete = False
-                for pattern in incomplete_patterns:
-                    if re.search(pattern, new_content):
-                        still_incomplete = True
-                        break
-                
-                if not still_incomplete:
-                    # Update success statistics
-                    if hasattr(self, 'reprompting') and 'reprompt_stats' in self.reprompting:
-                        self.reprompting['reprompt_stats']['successful_fixes'] += 1
-                    
-                    console.print("[green]Successfully generated complete response after reprompting[/green]")
-                    return new_content
-                
-                # If we're on the last attempt and it's still incomplete, combine the responses
-                if attempt == max_attempts - 1:
-                    combined_response = response + "\n\n" + new_content
-                    return combined_response
-                    
-            except Exception as e:
-                console.print(f"[red]Error during reprompting (attempt {attempt+1}): {str(e)}[/red]")
-                # If reprompting fails, return the original response
-                return response
-        
-        # If all reprompt attempts fail, return the original response
-        return response
