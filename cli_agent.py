@@ -2143,6 +2143,15 @@ class CLIAgent:
         except Exception as e:
             self.console.print(f"[bold red]Error initializing dynamic agents: {e}[/bold red]")
     
+        # Initialize the advanced editor
+        try:
+            from editor import Editor, CodeTransformation
+            self.editor = Editor()
+            logger.info("Advanced editor initialized")
+        except ImportError:
+            self.editor = None
+            logger.warning("Advanced editor not available. Some features will be disabled.")
+        
         # Register built-in tools
         self._register_builtin_tools()
         
@@ -2151,6 +2160,7 @@ class CLIAgent:
         
         # Define available tools for OpenAI API
         self.tools = self.tool_registry.get_openai_tools_format() + [
+            # Advanced editor tools
             # File system tools
             {
                 "type": "function",
@@ -2182,6 +2192,296 @@ class CLIAgent:
                                 "enum": ["name", "size", "modified", "type"]
                             }
                         }
+                    }
+                }
+            },
+            # Advanced code editing tools
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_code_advanced",
+                    "description": "Analyze code for quality, complexity, and potential issues with advanced metrics",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to the file to analyze"
+                            },
+                            "language": {
+                                "type": "string",
+                                "description": "Programming language of the code (optional, will be auto-detected from file extension)",
+                                "enum": ["python", "javascript", "typescript", "java", "c", "cpp", "go", "rust", "html", "css", "markdown"]
+                            }
+                        },
+                        "required": ["filepath"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "format_code",
+                    "description": "Format code according to language-specific style guidelines",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to the file to format"
+                            },
+                            "language": {
+                                "type": "string",
+                                "description": "Programming language of the code (optional, will be auto-detected from file extension)",
+                                "enum": ["python", "javascript", "typescript", "java", "c", "cpp", "go", "rust", "html", "css", "markdown"]
+                            }
+                        },
+                        "required": ["filepath"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "refactor_code",
+                    "description": "Refactor code using various transformation techniques",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to the file to refactor"
+                            },
+                            "transformation": {
+                                "type": "string",
+                                "description": "Type of transformation to apply",
+                                "enum": ["extract_function", "rename_variable", "optimize", "simplify"]
+                            },
+                            "options": {
+                                "type": "object",
+                                "description": "Additional options for the transformation"
+                            }
+                        },
+                        "required": ["filepath", "transformation"]
+                    }
+                }
+            },
+            # Advanced network operations
+            {
+                "type": "function",
+                "function": {
+                    "name": "http_request",
+                    "description": "Make an HTTP request to a URL with advanced options",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "URL to request"
+                            },
+                            "method": {
+                                "type": "string",
+                                "description": "HTTP method to use",
+                                "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+                            },
+                            "headers": {
+                                "type": "object",
+                                "description": "HTTP headers to include"
+                            },
+                            "params": {
+                                "type": "object",
+                                "description": "Query parameters to include"
+                            },
+                            "data": {
+                                "type": "string",
+                                "description": "Data to send in the request body"
+                            },
+                            "json_data": {
+                                "type": "object",
+                                "description": "JSON data to send in the request body"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Request timeout in seconds"
+                            }
+                        },
+                        "required": ["url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "download_file",
+                    "description": "Download a file from a URL",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "URL to download from"
+                            },
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to save the file to"
+                            },
+                            "show_progress": {
+                                "type": "boolean",
+                                "description": "Whether to show a progress bar"
+                            }
+                        },
+                        "required": ["url", "filepath"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "ping",
+                    "description": "Ping a host to check connectivity",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "host": {
+                                "type": "string",
+                                "description": "Hostname or IP address to ping"
+                            },
+                            "count": {
+                                "type": "integer",
+                                "description": "Number of ping packets to send"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Timeout in seconds"
+                            }
+                        },
+                        "required": ["host"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "traceroute",
+                    "description": "Perform a traceroute to a host",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "host": {
+                                "type": "string",
+                                "description": "Hostname or IP address to trace"
+                            },
+                            "max_hops": {
+                                "type": "integer",
+                                "description": "Maximum number of hops"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Timeout in seconds"
+                            }
+                        },
+                        "required": ["host"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "check_port",
+                    "description": "Check if a port is open on a host",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "host": {
+                                "type": "string",
+                                "description": "Hostname or IP address to check"
+                            },
+                            "port": {
+                                "type": "integer",
+                                "description": "Port number to check"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Timeout in seconds"
+                            }
+                        },
+                        "required": ["host", "port"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "dns_lookup",
+                    "description": "Perform a DNS lookup for a hostname",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "hostname": {
+                                "type": "string",
+                                "description": "Hostname to look up"
+                            }
+                        },
+                        "required": ["hostname"]
+                    }
+                }
+            },
+            # Enhanced file system operations
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_files",
+                    "description": "Search for files by name and/or content",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "directory": {
+                                "type": "string",
+                                "description": "Directory to search in"
+                            },
+                            "pattern": {
+                                "type": "string",
+                                "description": "Glob pattern to filter files by name"
+                            },
+                            "content_pattern": {
+                                "type": "string",
+                                "description": "Regex pattern to search in file contents"
+                            },
+                            "max_size": {
+                                "type": "integer",
+                                "description": "Maximum file size to search in (bytes)"
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "Maximum number of results to return"
+                            },
+                            "case_sensitive": {
+                                "type": "boolean",
+                                "description": "Whether the content search is case-sensitive"
+                            },
+                            "recursive": {
+                                "type": "boolean",
+                                "description": "Whether to recursively search in subdirectories"
+                            }
+                        },
+                        "required": ["directory"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_file_info",
+                    "description": "Get detailed information about a file or directory",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to get information about"
+                            }
+                        },
+                        "required": ["path"]
                     }
                 }
             },
@@ -3309,6 +3609,163 @@ class CLIAgent:
             # Handle dynamic agent tools
             elif name == "execute_agent_command":
                 result = asyncio.run(self._execute_agent_command(**arguments))
+            # Handle advanced editor tools
+            elif name == "analyze_code_advanced" and self.editor:
+                filepath = arguments.get("filepath")
+                language = arguments.get("language")
+                from editor import CodeTransformation
+                success, analysis_result = self.editor.code_editor.analyze_code(filepath)
+                if success:
+                    result = {
+                        "success": True,
+                        "message": f"Successfully analyzed {filepath}",
+                        "data": {
+                            "issues": analysis_result.issues,
+                            "metrics": analysis_result.metrics,
+                            "suggestions": analysis_result.suggestions,
+                            "complexity": analysis_result.complexity
+                        }
+                    }
+                else:
+                    result = {
+                        "success": False,
+                        "message": f"Failed to analyze {filepath}: {analysis_result}",
+                        "data": None
+                    }
+            elif name == "format_code" and self.editor:
+                filepath = arguments.get("filepath")
+                language = arguments.get("language")
+                from editor import CodeTransformation
+                success, message = self.editor.code_editor.refactor_code(filepath, CodeTransformation.FORMAT)
+                result = {
+                    "success": success,
+                    "message": message if not success else f"Successfully formatted {filepath}",
+                    "data": {"filepath": filepath} if success else None
+                }
+            elif name == "refactor_code" and self.editor:
+                filepath = arguments.get("filepath")
+                transformation = arguments.get("transformation")
+                options = arguments.get("options", {})
+                from editor import CodeTransformation
+                
+                # Map transformation string to enum
+                transform_map = {
+                    "extract_function": CodeTransformation.REFACTOR,
+                    "rename_variable": CodeTransformation.REFACTOR,
+                    "optimize": CodeTransformation.OPTIMIZE,
+                    "simplify": CodeTransformation.REFACTOR
+                }
+                
+                # Set transformation type in options
+                if transformation == "extract_function" or transformation == "rename_variable":
+                    options["type"] = transformation
+                
+                transform_enum = transform_map.get(transformation, CodeTransformation.REFACTOR)
+                success, message = self.editor.code_editor.refactor_code(filepath, transform_enum, options)
+                
+                result = {
+                    "success": success,
+                    "message": message if not success else f"Successfully refactored {filepath}",
+                    "data": {"filepath": filepath} if success else None
+                }
+            # Handle network operations
+            elif name == "http_request" and self.editor:
+                url = arguments.get("url")
+                method = arguments.get("method", "GET")
+                headers = arguments.get("headers")
+                params = arguments.get("params")
+                data = arguments.get("data")
+                json_data = arguments.get("json_data")
+                timeout = arguments.get("timeout")
+                
+                from editor import HttpMethod
+                method_enum = getattr(HttpMethod, method)
+                
+                response = asyncio.run(self.editor.network.request(
+                    method_enum, url, headers=headers, params=params,
+                    data=data, json_data=json_data, timeout=timeout
+                ))
+                
+                result = {
+                    "success": response.is_success,
+                    "message": f"HTTP {response.status_code} {method} {url}",
+                    "data": {
+                        "status_code": response.status_code,
+                        "headers": response.headers,
+                        "text": response.text[:1000] + ("..." if len(response.text) > 1000 else ""),
+                        "json": response.json,
+                        "elapsed": response.elapsed,
+                        "url": response.url
+                    }
+                }
+            elif name == "download_file" and self.editor:
+                url = arguments.get("url")
+                filepath = arguments.get("filepath")
+                show_progress = arguments.get("show_progress", True)
+                
+                download_result = asyncio.run(self.editor.network.download_file(
+                    url, filepath, show_progress=show_progress
+                ))
+                
+                result = download_result
+            elif name == "ping" and self.editor:
+                host = arguments.get("host")
+                count = arguments.get("count", 4)
+                timeout = arguments.get("timeout", 5)
+                
+                ping_result = asyncio.run(self.editor.network.ping(
+                    host, count=count, timeout=timeout
+                ))
+                
+                result = ping_result
+            elif name == "traceroute" and self.editor:
+                host = arguments.get("host")
+                max_hops = arguments.get("max_hops", 30)
+                timeout = arguments.get("timeout", 5)
+                
+                traceroute_result = asyncio.run(self.editor.network.traceroute(
+                    host, max_hops=max_hops, timeout=timeout
+                ))
+                
+                result = traceroute_result
+            elif name == "check_port" and self.editor:
+                host = arguments.get("host")
+                port = arguments.get("port")
+                timeout = arguments.get("timeout", 5)
+                
+                port_result = asyncio.run(self.editor.network.check_port(
+                    host, port, timeout=timeout
+                ))
+                
+                result = port_result
+            elif name == "dns_lookup" and self.editor:
+                hostname = arguments.get("hostname")
+                
+                dns_result = asyncio.run(self.editor.network.dns_lookup(hostname))
+                
+                result = dns_result
+            # Handle enhanced file system operations
+            elif name == "search_files" and self.editor:
+                directory = arguments.get("directory", ".")
+                pattern = arguments.get("pattern", "*")
+                content_pattern = arguments.get("content_pattern")
+                max_size = arguments.get("max_size", 10 * 1024 * 1024)
+                max_results = arguments.get("max_results", 100)
+                case_sensitive = arguments.get("case_sensitive", False)
+                recursive = arguments.get("recursive", True)
+                
+                search_result = self.editor.fs.search_files(
+                    directory, pattern, content_pattern, max_size,
+                    max_results, case_sensitive, recursive
+                )
+                
+                result = search_result
+            elif name == "get_file_info" and self.editor:
+                path = arguments.get("path")
+                
+                info_result = self.editor.fs.get_file_info(path)
+                
+                result = info_result
             else:
                 result = {
                     "success": False,
