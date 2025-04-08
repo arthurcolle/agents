@@ -420,8 +420,13 @@ class PlanningSession:
 
 @dataclass
 class StructuredOutput:
-    source: str
+    source: str = ""
     timestamp: float = field(default_factory=time.time)
+    
+    def __post_init__(self):
+        # Ensure all fields are properly initialized
+        if not hasattr(self, 'timestamp'):
+            self.timestamp = time.time()
 
 @dataclass
 class URLExtraction(StructuredOutput):
@@ -438,6 +443,12 @@ class WeatherData(StructuredOutput):
     forecast: List[Dict[str, Any]] = field(default_factory=list)
     last_updated: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
     source: str = ""
+    
+    def __post_init__(self):
+        # Ensure source is initialized properly
+        super().__post_init__()
+        if not hasattr(self, 'source'):
+            self.source = ""
 
 @dataclass
 class KnowledgeItem:
