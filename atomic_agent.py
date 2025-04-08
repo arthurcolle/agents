@@ -33,7 +33,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO, BytesIO
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Callable, Optional
+from typing import Dict, List, Any, Callable, Optional, Union
 
 try:
     import aiohttp
@@ -71,6 +71,14 @@ except ImportError:
 console = Console()
 
 # =======================
+# MultiPrompt Class
+# =======================
+class MultiPrompt(BaseModel):
+    original_prompt: str
+    steps: List[str]
+    chain_of_thought: List[str]
+    reasoning: str
+    next_actions: List[str]
 # Data Classes & Helpers
 # =======================
 @dataclass
@@ -745,7 +753,29 @@ class ToolRegistry:
             parameters={"type": "object", "properties": {"path": {"type": "string", "description": "File path"}}, "required": ["path"]},
             function=self._delete_file
         )
-    def _delete_file(self, path: str) -> Dict[str, Any]:
+    def _decompose_prompt(self, transcript: str) -> Dict[str, Any]:
+        # Call the LLM with the JSON schema for MultiPrompt
+        extract = together.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You will decompose a prompt into a specific structure that will be provided. Only answer in JSON.",
+                },
+                {
+                    "role": "user",
+                    "content": transcript,
+                },
+            ],
+            model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            response_format={
+                "type": "json_object",
+                "schema": MultiPrompt.model_json_schema(),
+            },
+        )
+
+        output = json.loads(extract.choices[0].message.content)
+        print(json.dumps(output, indent=2))
+        return output
         try:
             path = Path(path).expanduser()
             if not path.exists():
