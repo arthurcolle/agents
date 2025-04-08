@@ -203,7 +203,14 @@ class AsyncTaskProcessor:
                 self.add_task(self._process_url, url)
         return len(new_urls)
 
-    async def _process_url(self, url):
+    async def _process_image(self, image_url):
+        try:
+            # Simulate image processing
+            console.print(f"[blue]Processing image: {image_url}[/blue]")
+            await asyncio.sleep(1)  # Simulate processing time
+            return {"success": True, "image_url": image_url, "processed": True}
+        except Exception as e:
+            return {"success": False, "image_url": image_url, "error": str(e)}
         try:
             jina_client = JinaClient(token=os.environ.get("JINA_API_KEY"))
             result = await jina_client.read(url)
