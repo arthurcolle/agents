@@ -72,6 +72,16 @@ except ImportError:
 # Initialize console for rich output
 console = Console()
 
+# Initialize Redis connection for pubsub
+try:
+    redis_client = redis.Redis(host='localhost', port=6379, db=0)
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe('agent_messages')
+    console.print("[green]Redis PubSub initialized successfully[/green]")
+except Exception as e:
+    console.print(f"[yellow]Warning: Redis PubSub initialization failed: {e}[/yellow]")
+    pubsub = None
+
 # =======================
 # MultiPrompt Class
 # =======================
