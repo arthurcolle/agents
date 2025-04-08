@@ -1924,9 +1924,10 @@ For computationally intensive tasks, use your parallel processing capabilities.
                         # Parse the weather data
                         weather_data = json.loads(weather_content)
                         # Yield a nicely formatted response
+                        temp_unit = 'F' if weather_data.get('units', 'imperial') == 'imperial' else 'C'
                         yield {
                             "type": "content",
-                            "content": f"\nIn {weather_data.get('location', location)}, the current temperature is {weather_data.get('temperature')}°{weather_data.get('units', 'imperial') == 'imperial' and 'F' or 'C'} with {weather_data.get('conditions', 'unknown conditions')}. The humidity is {weather_data.get('humidity', 'unknown')}%."
+                            "content": f"\nIn {weather_data.get('location', location)}, the current temperature is {weather_data.get('temperature')}°{temp_unit} with {weather_data.get('conditions', 'unknown conditions')}. The humidity is {weather_data.get('humidity', 'unknown')}%."
                         }
                     except Exception as e:
                         if self.debug:
@@ -1963,12 +1964,23 @@ For computationally intensive tasks, use your parallel processing capabilities.
                             # Define an async collector function
                             async def collector():
                                 nonlocal result
-                                async for item in async_gen:
-                                    result.append(item)
+                                # Handle both coroutines and async generators
+                                if asyncio.iscoroutine(async_gen):
+                                    # If it's a coroutine, await it to get the generator
+                                    gen = await async_gen
+                                    async for item in gen:
+                                        result.append(item)
+                                else:
+                                    # If it's already an async generator
+                                    async for item in async_gen:
+                                        result.append(item)
                                 return result
                             
                             # Run the collector in the temporary loop
                             return temp_loop.run_until_complete(collector())
+                        except Exception as e:
+                            logger.error(f"Error processing async generator: {e}")
+                            return [{"type": "error", "content": f"Error processing response: {str(e)}"}]
                         finally:
                             temp_loop.close()
                     
@@ -2620,6 +2632,12 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> Dict:
     Returns:
         Dictionary with conversion result
     """
+    # Ensure value is a float
+    try:
+        value = float(value)
+    except (ValueError, TypeError):
+        return {"error": f"Invalid value: {value}. Must be a number."}
+        
     # Define conversion factors for different unit types
     length_units = {
         "m": 1.0,
@@ -3767,6 +3785,27 @@ def register_default_apis():
     except Exception as e:
         print(f"⚠️ Error during API registration: {str(e)}")
 
+# Function to properly clean up async resources
+def cleanup_async_resources():
+    """Clean up any pending async tasks and resources"""
+    try:
+        # Get all running tasks
+        pending_tasks = asyncio.all_tasks(asyncio.get_event_loop())
+        if pending_tasks:
+            # Cancel all pending tasks
+            for task in pending_tasks:
+                task.cancel()
+            
+            # Wait for all tasks to be cancelled
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
+            
+        # Close the event loop
+        loop = asyncio.get_event_loop()
+        loop.close()
+    except Exception as e:
+        logger.error(f"Error during async cleanup: {e}")
+
 if __name__ == "__main__":
     # Parse command line arguments
     import argparse
@@ -3976,6 +4015,9 @@ if __name__ == "__main__":
     else:
         print("\n💡 Run with --interactive flag for interactive mode")
         print("👋 Exiting non-interactive mode")
+    
+    # Clean up async resources before exiting
+    cleanup_async_resources()
     async def parallel_process(self, func, data_chunks, cpu_bound=True):
         """
         Process data in parallel using multiple CPU cores
