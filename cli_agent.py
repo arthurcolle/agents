@@ -4336,8 +4336,8 @@ class CLIAgent:
             self.console.print(f"[dim]Added autonomous task: {task} (priority: {priority})[/dim]")
         
         return task_id
-    
-    def execute_next_autonomous_task(self) -> Dict:
+
+    async def execute_next_autonomous_task(self) -> Dict:
         """Execute the next task in the autonomous queue"""
         if not self.autonomous_tasks:
             return {"success": False, "message": "No autonomous tasks in queue"}
@@ -4351,8 +4351,9 @@ class CLIAgent:
         
         # Execute the task
         try:
-            response = asyncio.run(self.chat(task["task"], autonomous=True, context=task["context"]))
-            
+            # Use await instead of asyncio.run
+            response = await self.chat(task["task"], autonomous=True, context=task["context"])
+
             task["status"] = "completed"
             task["completed"] = time.time()
             task["response"] = response
@@ -4378,8 +4379,8 @@ class CLIAgent:
                 "message": f"Error executing autonomous task: {str(e)}",
                 "task": task
             }
-    
-    def check_autonomous_tasks(self) -> None:
+
+    async def check_autonomous_tasks(self) -> None:
         """Check and execute autonomous tasks if needed"""
         if not self.autonomous_mode or not self.autonomous_tasks:
             return
@@ -4393,8 +4394,8 @@ class CLIAgent:
         
         # Execute the next task
         if self.autonomous_tasks:
-            self.execute_next_autonomous_task()
-    
+            await self.execute_next_autonomous_task()
+
     def evaluate_memory_fitness(self, memory: PerceptualMemory) -> float:
         """Evaluate the fitness of a memory state for evolutionary optimization"""
         # This is a simple fitness function that can be customized
@@ -4844,8 +4845,14 @@ def main():
         if not args.list_agents and not args.list_tools and not args.list_categories and not args.list_templates and not args.list_snapshots:
             console.print("[bold cyan]Task added to queue. Agent will execute it autonomously.[/bold cyan]")
             console.print("[bold cyan]Run without --task to enter interactive mode.[/bold cyan]")
-            return
-    
+            # If only adding a task, and not listing things, exit.
+            if not any([args.list_agents, args.list_tools, args.list_categories, 
+                        args.list_templates, args.list_snapshots, args.list_kb,
+                        args.create_kb_agent, args.restore_snapshot]):
+                console.print("[bold cyan]Task added to queue. Agent will execute it autonomously if enabled.[/bold cyan]")
+                console.print("[bold cyan]Run without --task to enter interactive mode or see lists.[/bold cyan]")
+                return
+
     # If --list-snapshots flag is provided, list snapshots and exit
     if args.list_snapshots:
         snapshots = agent.snapshots
@@ -5065,10 +5072,14 @@ def main():
             console.print(f"[bold red]Error listing tool templates: {str(e)}[/bold red]")
         
         return
-    
-    # Configure OpenAI client with additional parameters
-    client.temperature = args.temperature
-    client.max_tokens = args.max_tokens
+
+    # Configure OpenAI client with additional parameters if the client object allows it
+    # (Assuming the global 'client' is the OpenAI client instance)
+    # Safety check: Only set attributes if they exist to avoid errors with different client types
+    if hasattr(client, 'temperature'):
+        client.temperature = args.temperature
+    if hasattr(client, 'max_tokens'):
+        client.max_tokens = args.max_tokens
     
     # Welcome message
     meta_status = "enabled" if not args.disable_meta else "disabled"
@@ -5280,8 +5291,8 @@ def main():
                     console.print("[bold yellow]No previous interaction found to provide feedback on.[/bold yellow]")
                 continue
 
-            # Process the input using asyncio.run
-            response = asyncio.run(agent.chat(user_input))
+            # Process the input
+            response = await agent.chat(user_input)
 
             # Display the response
             console.print("\n[bold blue]Assistant[/bold blue]")
@@ -5290,7 +5301,574 @@ def main():
             # Show debug summary if requested
             if args.debug:
                 agent.hooks.display_summary()
-            
+
+            # Check for autonomous tasks after interaction
+            await agent.check_autonomous_tasks()
+
+        except KeyboardInterrupt:
+            console.print("\n[bold blue]Goodbye![/bold blue]")
+            break
+        except Exception as e:
+            logger.error(f"Error in chat loop: {e}")
+            console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+async def main():
+    """Async main function for the CLI agent"""
+    # Lifecycle Management Hint: For production, run this script using a process manager
+    # like systemd, supervisor, or pm2 to handle restarts and monitoring.
+    # Scaling Hint: To run hundreds of agents, you'll typically run multiple instances
+    # of this script, potentially in containers (Docker), managed by an orchestrator (Kubernetes).
+
+    parser = argparse.ArgumentParser(description="Autonomous CLI Agent with Evolutionary Capabilities")
+    parser.add_argument("--config", type=str, default=None, help="Path to YAML configuration file.")
+    parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent (overridden by config file).")
+    parser.add_argument("--meta-model", default=None, help="Model to use for meta-reflection (overridden by config file).")
+    parser.add_argument("--disable-meta", action='store_true', help="Disable meta-cognitive reflection layer (overridden by config file).")
+    parser.add_argument("--disable-replay", action='store_true', help="Disable experience replay (overridden by config file).")
+    parser.add_argument("--disable-evolution", action='store_true', help="Disable evolutionary optimization (overridden by config file).")
+    parser.add_argument("--disable-autonomous", action='store_true', help="Disable autonomous mode (overridden by config file).")
+    parser.add_argument("--memory-size", type=int, default=1000, help="Maximum memory frames (overridden by config file).")
+    parser.add_argument("--trace", action='store_true', help="Enable OpenAI tracing for debugging.")
+    parser.add_argument("--debug", action='store_true', help="Show debug information including agent hooks.")
+    parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
+    parser.add_argument("--temperature", type=float, default=0.7, help="Model temperature (0.0-2.0) (overridden by config file).")
+    parser.add_argument("--max-tokens", type=int, default=4096, help="Model max tokens (overridden by config file).")
+    parser.add_argument("--list-agents", action='store_true', help="List available dynamic agents and exit.")
+    parser.add_argument("--list-tools", action='store_true', help="List available tools and exit.")
+    parser.add_argument("--list-categories", action='store_true', help="List available tool categories and exit.")
+    parser.add_argument("--list-templates", action='store_true', help="List available tool templates and exit.")
+    parser.add_argument("--list-snapshots", action='store_true', help="List available agent snapshots and exit.")
+    parser.add_argument("--list-kb", action='store_true', help="List available knowledge bases and exit.")
+    parser.add_argument("--kb-dir", type=str, default="knowledge_bases_async_advanced",
+                       help="Knowledge base directory (overridden by config file).")
+    parser.add_argument("--create-kb-agent", type=str, help="Create a specialized agent from a knowledge base.")
+    parser.add_argument("--restore-snapshot", type=str, help="Restore agent from a snapshot ID.")
+    parser.add_argument("--task", type=str, help="Add an autonomous task to execute.")
+    parser.add_argument("--task-priority", type=int, default=1, help="Priority for the autonomous task.")
+    args = parser.parse_args()
+
+    # --- Configuration Loading ---
+    config = {}
+    if args.config:
+        config = load_config(args.config)
+
+    # Override args with config file values if present
+    args.model = config.get('model', args.model)
+    args.meta_model = config.get('meta_model', args.meta_model)
+    args.disable_meta = config.get('disable_meta', args.disable_meta)
+    args.disable_replay = config.get('disable_replay', args.disable_replay)
+    args.disable_evolution = config.get('disable_evolution', args.disable_evolution)
+    args.disable_autonomous = config.get('disable_autonomous', args.disable_autonomous)
+    args.memory_size = config.get('memory_size', args.memory_size)
+    args.temperature = config.get('temperature', args.temperature)
+    args.max_tokens = config.get('max_tokens', args.max_tokens)
+    args.kb_dir = config.get('kb_dir', args.kb_dir)
+    args.log_level = config.get('log_level', args.log_level).upper()
+    # Note: trace, debug, list_*, create_*, restore_*, task* args are command-line actions, not typically in config.
+
+    # --- Logging Setup ---
+    log_level = getattr(logging, args.log_level, logging.INFO)
+    # Logging Hint: For production/scaling, consider structured logging (JSON)
+    # and sending logs to a centralized system (e.g., ELK, Splunk, Datadog).
+    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger.info(f"Logging level set to {args.log_level}")
+
+    # Enable tracing if requested
+    if args.trace:
+        openai.debug.trace.enable()
+
+    # Create console
+    console = Console()
+
+    # Create the agent with meta-cognitive layer, perceptual memory, and evolutionary capabilities
+    agent = CLIAgent(
+        model=args.model,
+        meta_model=args.meta_model,
+        console=console,
+        enable_meta=not args.disable_meta,
+        max_memory_frames=args.memory_size,
+        enable_experience_replay=not args.disable_replay,
+        enable_evolution=not args.disable_evolution,
+        autonomous_mode=not args.disable_autonomous,
+        knowledge_base_dir=args.kb_dir
+    )
+
+
+    # If --restore-snapshot flag is provided, restore from snapshot
+    if args.restore_snapshot:
+        success = agent.restore_snapshot(args.restore_snapshot)
+        if success:
+            console.print(f"[bold green]Successfully restored agent from snapshot: {args.restore_snapshot}[/bold green]")
+        else:
+            console.print(f"[bold red]Failed to restore agent from snapshot: {args.restore_snapshot}[/bold red]")
+            return
+
+    # If --task flag is provided, add an autonomous task
+    if args.task:
+        task_id = agent.add_autonomous_task(args.task, priority=args.task_priority)
+        console.print(f"[bold green]Added autonomous task with ID: {task_id}[/bold green]")
+
+        # If only adding a task, and not listing things, exit.
+        if not any([args.list_agents, args.list_tools, args.list_categories,
+                    args.list_templates, args.list_snapshots, args.list_kb,
+                    args.create_kb_agent, args.restore_snapshot]):
+            console.print("[bold cyan]Task added to queue. Agent will execute it autonomously if enabled.[/bold cyan]")
+            console.print("[bold cyan]Run without --task to enter interactive mode or see lists.[/bold cyan]")
+            return
+
+    # If --list-snapshots flag is provided, list snapshots and exit
+    if args.list_snapshots:
+        snapshots = agent.snapshots
+
+        console.print(Panel.fit(
+            f"[bold]Available Agent Snapshots:[/bold] {len(snapshots)} snapshots\n",
+            title="Agent Snapshots",
+            border_style="green"
+        ))
+
+        if snapshots:
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Snapshot ID")
+            table.add_column("Timestamp")
+            table.add_column("Memory Size")
+            table.add_column("Current")
+
+            for snapshot_id, snapshot in snapshots.items():
+                timestamp = datetime.fromtimestamp(snapshot["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                # Estimate memory size based on conversation history length
+                memory_size = len(snapshot.get("conversation_history", []))
+                is_current = "✓" if snapshot_id == agent.current_snapshot_id else ""
+
+                table.add_row(snapshot_id, timestamp, str(memory_size), is_current)
+
+            console.print(table)
+        else:
+            console.print("[yellow]No snapshots available yet.[/yellow]")
+
+        return
+
+    # If --list-kb flag is provided, list knowledge bases and exit
+    if args.list_kb:
+        kb_result = agent._list_knowledge_bases()
+
+        if kb_result["success"]:
+            kb_info = kb_result["data"]["knowledge_bases"]
+            active_kb = kb_result["data"]["active_kb"]
+            kb_agents = kb_result["data"]["kb_agents"]
+
+            console.print(Panel.fit(
+                f"[bold]Available Knowledge Bases:[/bold] {len(kb_info)} knowledge bases\n"
+                f"[bold]Active Knowledge Bases:[/bold] {len(active_kb)}\n"
+                f"[bold]Knowledge Base Agents:[/bold] {len(kb_agents)}\n",
+                title="Knowledge Bases",
+                border_style="green"
+            ))
+
+            if kb_info:
+                table = Table(show_header=True, header_style="bold magenta")
+                table.add_column("Name")
+                table.add_column("Type")
+                table.add_column("Entries")
+                table.add_column("Retrievals")
+                table.add_column("Relevance")
+                table.add_column("Active")
+
+                for kb in kb_info:
+                    name = kb["name"]
+                    kb_type = kb["type"]
+                    entries = str(kb["entries"])
+                    retrievals = str(kb["retrievals"])
+                    relevance = f"{kb['relevance_score']:.2f}"
+                    is_active = "✓" if name in active_kb else ""
+
+                    table.add_row(name, kb_type, entries, retrievals, relevance, is_active)
+
+                console.print(table)
+            else:
+                console.print("[yellow]No knowledge bases available.[/yellow]")
+        else:
+            console.print(f"[bold red]Error listing knowledge bases: {kb_result['message']}[/bold red]")
+
+        return
+
+    # If --create-kb-agent flag is provided, create a KB agent and exit
+    if args.create_kb_agent:
+        kb_name = args.create_kb_agent
+        result = agent._create_kb_agent(kb_name)
+
+        if result["success"]:
+            console.print(f"[bold green]Successfully created KB agent: {result['data']['agent_id']}[/bold green]")
+            console.print(f"Knowledge base: {result['data']['kb_name']}")
+            console.print(f"Entries: {result['data']['kb_entries']}")
+        else:
+            console.print(f"[bold red]Error creating KB agent: {result['message']}[/bold red]")
+
+        return
+
+    # If --list-agents flag is provided, list agents and exit
+    if args.list_agents:
+        agents = registry.list_agents()
+        agent_types = registry.list_agent_types()
+
+        console.print(Panel.fit(
+            f"[bold]Available Agent Types:[/bold] {', '.join(agent_types)}\n\n"
+            f"[bold]Registered Agents:[/bold]",
+            title="Dynamic Agents",
+            border_style="green"
+        ))
+
+        if agents:
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Agent ID")
+            table.add_column("Type")
+
+            for agent_info in agents:
+                table.add_row(agent_info["id"], agent_info["type"])
+
+            console.print(table)
+        else:
+            console.print("[yellow]No agents registered yet.[/yellow]")
+
+        return
+
+    # If --list-tools flag is provided, list tools and exit
+    if args.list_tools:
+        tools_result = agent._list_tools()
+
+        if tools_result["success"]:
+            tools = tools_result["data"]["tools"]
+            categories = tools_result["data"]["categories"]
+
+            console.print(Panel.fit(
+                f"[bold]Available Tool Categories:[/bold] {', '.join(categories)}\n\n"
+                f"[bold]Registered Tools:[/bold] {len(tools)} total",
+                title="Available Tools",
+                border_style="green"
+            ))
+
+            # Group tools by category
+            tools_by_category = {}
+            for category in categories:
+                tools_by_category[category] = agent.tool_registry.list_tools(category)
+
+            # Display tools by category
+            for category, category_tools in tools_by_category.items():
+                if category_tools:
+                    console.print(f"\n[bold cyan]{category.upper()}[/bold cyan] ({len(category_tools)} tools)")
+
+                    table = Table(show_header=True, header_style="bold magenta", box=None)
+                    table.add_column("Tool Name")
+                    table.add_column("Description")
+
+                    for tool_name in category_tools:
+                        description = agent.tool_registry.get_tool_description(tool_name) or ""
+                        # Truncate description if too long
+                        if len(description) > 60:
+                            description = description[:57] + "..."
+                        table.add_row(tool_name, description)
+
+                    console.print(table)
+        else:
+            console.print(f"[bold red]Error listing tools: {tools_result['message']}[/bold red]")
+
+        return
+
+    # If --list-categories flag is provided, list categories and exit
+    if args.list_categories:
+        categories = agent.tool_registry.list_categories()
+
+        console.print(Panel.fit(
+            f"[bold]Available Tool Categories:[/bold]\n",
+            title="Tool Categories",
+            border_style="green"
+        ))
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Category")
+        table.add_column("Tool Count")
+
+        for category in categories:
+            tool_count = len(agent.tool_registry.list_tools(category))
+            table.add_row(category, str(tool_count))
+
+        console.print(table)
+        return
+
+    # If --list-templates flag is provided, list tool templates and exit
+    if args.list_templates:
+        try:
+            from tool_templates import get_all_tool_templates
+            templates = get_all_tool_templates()
+
+            console.print(Panel.fit(
+                f"[bold]Available Tool Templates:[/bold] {len(templates)} templates\n",
+                title="Tool Templates",
+                border_style="green"
+            ))
+
+            # Group templates by category
+            templates_by_category = {}
+            for template in templates:
+                category = template.get("category", "misc")
+                if category not in templates_by_category:
+                    templates_by_category[category] = []
+                templates_by_category[category].append(template)
+
+            # Display templates by category
+            for category, category_templates in templates_by_category.items():
+                console.print(f"\n[bold cyan]{category.upper()}[/bold cyan] ({len(category_templates)} templates)")
+
+                table = Table(show_header=True, header_style="bold magenta", box=None)
+                table.add_column("Name")
+                table.add_column("Description")
+
+                for template in category_templates:
+                    description = template.get("description", "")
+                    # Truncate description if too long
+                    if len(description) > 60:
+                        description = description[:57] + "..."
+                    table.add_row(template["name"], description)
+
+                console.print(table)
+        except ImportError:
+            console.print("[bold red]Tool templates module not found.[/bold red]")
+        except Exception as e:
+            console.print(f"[bold red]Error listing tool templates: {str(e)}[/bold red]")
+
+        return
+
+    # Configure OpenAI client with additional parameters if the client object allows it
+    # (Assuming the global 'client' is the OpenAI client instance)
+    # Safety check: Only set attributes if they exist to avoid errors with different client types
+    if hasattr(client, 'temperature'):
+        client.temperature = args.temperature
+    if hasattr(client, 'max_tokens'):
+        client.max_tokens = args.max_tokens
+
+    # Welcome message
+    meta_status = "enabled" if not args.disable_meta else "disabled"
+    replay_status = "enabled" if not args.disable_replay else "disabled"
+    evolution_status = "enabled" if not args.disable_evolution else "disabled"
+    autonomous_status = "enabled" if not args.disable_autonomous else "disabled"
+    memory_size = args.memory_size
+
+    # Get knowledge base count
+    kb_count = 0
+    if hasattr(agent.perceptual_memory, 'knowledge_bases'):
+        kb_count = len(agent.perceptual_memory.knowledge_bases)
+
+    console.print(Panel.fit(
+        "[bold blue]Welcome to the Autonomous Agent with Evolutionary Capabilities![/bold blue]\n"
+        "This agent can autonomously execute tasks, evolve its memory and strategies over time, "
+        "and adapt to your needs with realtime cognition.\n"
+        f"[bold cyan]Meta-cognitive reflection:[/bold cyan] {meta_status}\n"
+        f"[bold cyan]Experience replay:[/bold cyan] {replay_status} (memory: {memory_size} frames)\n"
+        f"[bold cyan]Evolutionary optimization:[/bold cyan] {evolution_status}\n"
+        f"[bold cyan]Autonomous mode:[/bold cyan] {autonomous_status}\n"
+        f"[bold cyan]Realtime cognition:[/bold cyan] enabled\n"
+        f"[bold cyan]Knowledge bases:[/bold cyan] {kb_count} available\n"
+        "[bold cyan]Dynamic Agents:[/bold cyan] You can create and use specialized agents for specific tasks.\n"
+        "[bold cyan]Commands:[/bold cyan]\n"
+        "  [bold green]/snapshot[/bold green] - Create a new snapshot of the current agent state\n"
+        "  [bold green]/restore [ID][/bold green] - Restore agent from a snapshot\n"
+        "  [bold green]/evolve[/bold green] - Manually trigger evolutionary optimization\n"
+        "  [bold green]/task [description][/bold green] - Add an autonomous task\n"
+        "  [bold green]/stats[/bold green] - Show agent statistics\n"
+        "  [bold green]/cognition[/bold green] - Show realtime cognition status\n"
+        "  [bold green]/kb[/bold green] - List knowledge bases\n"
+        "  [bold green]/kb-agent [name][/bold green] - Create a specialized agent from a knowledge base\n"
+        "  [bold green]/feedback [good|bad] [comment][/bold green] - Provide feedback on the last response\n"
+        "  [bold green]/exit[/bold green] - Exit the program",
+        title="Autonomous Agent",
+        border_style="blue"
+    ))
+
+    # Main chat loop
+    while True:
+        try:
+            # Get user input
+            user_input = Prompt.ask("\n[bold green]You")
+
+            # Check for special commands
+            if user_input.lower() in ["exit", "quit", "bye", "/exit"]:
+                console.print("[bold blue]Goodbye![/bold blue]")
+                break
+            elif user_input.lower() == "/snapshot":
+                snapshot_id = agent.create_snapshot()
+                console.print(f"[bold green]Created snapshot: {snapshot_id}[/bold green]")
+                continue
+            elif user_input.lower().startswith("/restore "):
+                snapshot_id = user_input[9:].strip()
+                success = agent.restore_snapshot(snapshot_id)
+                if success:
+                    console.print(f"[bold green]Restored from snapshot: {snapshot_id}[/bold green]")
+                else:
+                    console.print(f"[bold red]Failed to restore from snapshot: {snapshot_id}[/bold red]")
+                continue
+            elif user_input.lower() == "/evolve":
+                console.print("[bold cyan]Triggering evolutionary optimization...[/bold cyan]")
+                result = agent.evolve_agent()
+                if result["success"]:
+                    console.print("[bold green]Successfully evolved agent[/bold green]")
+                else:
+                    console.print(f"[bold red]Evolution failed: {result['message']}[/bold red]")
+                continue
+            elif user_input.lower().startswith("/task "):
+                task = user_input[6:].strip()
+                task_id = agent.add_autonomous_task(task)
+                console.print(f"[bold green]Added autonomous task: {task_id}[/bold green]")
+                continue
+            elif user_input.lower() == "/stats":
+                stats = agent.get_memory_stats()
+
+                # Format KB stats if available
+                kb_stats_text = ""
+                if "knowledge_bases" in stats and stats["knowledge_bases"]:
+                    kb_stats_text = f"\nKnowledge bases: {len(stats['knowledge_bases'])}\n"
+                    kb_stats_text += f"Active knowledge bases: {len(stats.get('kb_stats', {}))}\n"
+                    kb_stats_text += f"KB retrievals: {stats.get('kb_retrievals', 0)}\n"
+                    kb_stats_text += f"KB evolutions: {stats.get('kb_evolutions', 0)}\n"
+
+                console.print(Panel.fit(
+                    f"[bold]Agent Statistics:[/bold]\n\n"
+                    f"Memory: {stats['current_size']}/{stats['max_size']} frames\n"
+                    f"Interactions: {stats['interaction_count']}\n"
+                    f"Snapshots: {len(stats['snapshots'])}\n"
+                    f"Autonomous tasks pending: {stats['autonomous_tasks_pending']}\n"
+                    f"Autonomous tasks completed: {stats['autonomous_tasks_completed']}\n"
+                    f"Current snapshot: {stats['current_snapshot'] or 'None'}\n"
+                    f"Evolutionary optimizations: {stats['total_evolutions']}\n"
+                    f"Cognitive state: {stats['cognitive_state']}\n"
+                    f"Realtime inferences: {stats['total_realtime_inferences']}\n"
+                    f"Cognitive state changes: {stats['cognitive_state_changes']}"
+                    f"{kb_stats_text}",
+                    title="Agent Status",
+                    border_style="green"
+                ))
+                continue
+            elif user_input.lower() == "/cognition":
+                cognitive_state = agent.get_cognitive_state()
+
+                # Create a table for temporal patterns
+                patterns_table = Table(show_header=True, header_style="bold magenta")
+                patterns_table.add_column("Time")
+                patterns_table.add_column("Topic")
+                patterns_table.add_column("Sentiment")
+                patterns_table.add_column("State")
+
+                for pattern in cognitive_state["temporal_patterns"]:
+                    timestamp = datetime.fromtimestamp(pattern["timestamp"]).strftime("%H:%M:%S")
+                    topic = pattern["dominant_topic"] or "unknown"
+                    sentiment = pattern["sentiment"]
+                    state = pattern["cognitive_state"]
+                    patterns_table.add_row(timestamp, topic, sentiment, state)
+
+                console.print(Panel.fit(
+                    f"[bold]Realtime Cognition Status:[/bold]\n\n"
+                    f"Current cognitive state: [bold cyan]{cognitive_state['cognitive_state']}[/bold cyan]\n"
+                    f"Dominant topic: {cognitive_state['inference_results'].get('dominant_topic', 'None')}\n"
+                    f"Current sentiment: {cognitive_state['inference_results'].get('sentiment', 'neutral')}\n\n"
+                    f"[bold]Recent Temporal Patterns:[/bold]",
+                    title="Cognitive Analysis",
+                    border_style="cyan"
+                ))
+
+                console.print(patterns_table)
+                continue
+            elif user_input.lower() == "/kb":
+                # List knowledge bases
+                kb_result = agent._list_knowledge_bases()
+
+                if kb_result["success"]:
+                    kb_info = kb_result["data"]["knowledge_bases"]
+                    active_kb = kb_result["data"]["active_kb"]
+                    kb_agents = kb_result["data"]["kb_agents"]
+
+                    console.print(Panel.fit(
+                        f"[bold]Available Knowledge Bases:[/bold] {len(kb_info)} knowledge bases\n"
+                        f"[bold]Active Knowledge Bases:[/bold] {len(active_kb)}\n"
+                        f"[bold]Knowledge Base Agents:[/bold] {len(kb_agents)}\n",
+                        title="Knowledge Bases",
+                        border_style="green"
+                    ))
+
+                    if kb_info:
+                        table = Table(show_header=True, header_style="bold magenta")
+                        table.add_column("Name")
+                        table.add_column("Type")
+                        table.add_column("Entries")
+                        table.add_column("Retrievals")
+                        table.add_column("Relevance")
+                        table.add_column("Active")
+
+                        for kb in kb_info:
+                            name = kb["name"]
+                            kb_type = kb["type"]
+                            entries = str(kb["entries"])
+                            retrievals = str(kb["retrievals"])
+                            relevance = f"{kb['relevance_score']:.2f}"
+                            is_active = "✓" if name in active_kb else ""
+
+                            table.add_row(name, kb_type, entries, retrievals, relevance, is_active)
+
+                        console.print(table)
+                    else:
+                        console.print("[yellow]No knowledge bases available.[/yellow]")
+                else:
+                    console.print(f"[bold red]Error listing knowledge bases: {kb_result['message']}[/bold red]")
+                continue
+            elif user_input.lower().startswith("/kb-agent "):
+                # Create a KB agent
+                kb_name = user_input[10:].strip()
+                result = agent._create_kb_agent(kb_name)
+
+                if result["success"]:
+                    console.print(f"[bold green]Successfully created KB agent: {result['data']['agent_id']}[/bold green]")
+                    console.print(f"Knowledge base: {result['data']['kb_name']}")
+                    console.print(f"Entries: {result['data']['kb_entries']}")
+                else:
+                    console.print(f"[bold red]Error creating KB agent: {result['message']}[/bold red]")
+                continue
+            elif user_input.lower().startswith("/feedback "):
+                parts = user_input.split(maxsplit=2)
+                if len(parts) < 2 or parts[1].lower() not in ["good", "bad"]:
+                    console.print("[bold red]Usage: /feedback [good|bad] [optional comment][/bold red]")
+                    continue
+
+                rating = parts[1].lower()
+                comment = parts[2] if len(parts) > 2 else ""
+
+                if agent.last_interaction_frame_id:
+                    feedback_data = {
+                        "rating": rating,
+                        "comment": comment,
+                        "timestamp": time.time()
+                    }
+                    success = agent.perceptual_memory.add_feedback_to_frame(
+                        agent.last_interaction_frame_id, feedback_data
+                    )
+                    if success:
+                        console.print("[bold green]Feedback recorded. Thank you![/bold green]")
+                    else:
+                        console.print("[bold red]Could not record feedback (frame not found).[/bold red]")
+                else:
+                    console.print("[bold yellow]No previous interaction found to provide feedback on.[/bold yellow]")
+                continue
+
+            # Process the input
+            response = await agent.chat(user_input)
+
+            # Display the response
+            console.print("\n[bold blue]Assistant[/bold blue]")
+            console.print(Markdown(response))
+
+            # Show debug summary if requested
+            if args.debug:
+                agent.hooks.display_summary()
+
+            # Check for autonomous tasks after interaction
+            await agent.check_autonomous_tasks()
+
         except KeyboardInterrupt:
             console.print("\n[bold blue]Goodbye![/bold blue]")
             break
@@ -5299,4 +5877,4 @@ def main():
             console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
