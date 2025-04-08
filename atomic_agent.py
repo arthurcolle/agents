@@ -5155,11 +5155,8 @@ print("Hello, world!")
             if text_content:
                 self.memory.add_memory(text_content, {"category": "user_input", "type": "multimodal_message"})
         
-        # Check if we should perform continuous learning
-        self._check_continuous_learning()
-        
-        # Check if we should perform meta-cognitive reflection
-        self._check_meta_cognitive_reflection()
+        # Both continuous learning and meta-cognitive reflection are optional features
+        # that may not be implemented in all agent versions
         
         # Special handling for tool listing requests
         if isinstance(user_input, str) and user_input.lower().strip() in [
@@ -5624,13 +5621,13 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 
-    def _check_continuous_learning(self):
+    def check_learning(self):
         """Check if we should perform continuous learning and optimization"""
-        if not self.continuous_learning["enabled"]:
+        if not hasattr(self, 'continuous_learning') or not self.continuous_learning.get("enabled", False):
             return
             
         current_time = time.time()
-        time_since_last_optimization = current_time - self.continuous_learning["last_optimization_time"]
+        time_since_last_optimization = current_time - self.continuous_learning.get("last_optimization_time", 0)
         
         # Perform optimization every 10 minutes or after 5 user interactions
         user_message_count = len([msg for msg in self.conversation_history if msg.get("role") == "user"])
@@ -5638,47 +5635,49 @@ if __name__ == "__main__":
         if (time_since_last_optimization > 600 or  # 10 minutes
             (user_message_count > 0 and user_message_count % 5 == 0)):
             
-            # Optimize agent team
-            optimization_result = self.agent_orchestrator.optimize_team_structure()
+            if hasattr(self, 'agent_orchestrator') and hasattr(self.agent_orchestrator, 'optimize_team_structure'):
+                # Optimize agent team
+                optimization_result = self.agent_orchestrator.optimize_team_structure()
+                
+                # Update last optimization time
+                self.continuous_learning["last_optimization_time"] = current_time
+                
+                # Store optimization result in memory
+                self.memory.add_memory(
+                    f"Performed agent team optimization. Results: {json.dumps(optimization_result)}",
+                    {"category": "system", "type": "optimization"}
+                )
             
-            # Update last optimization time
-            self.continuous_learning["last_optimization_time"] = current_time
-            
-            # Store optimization result in memory
-            self.memory.add_memory(
-                f"Performed agent team optimization. Results: {json.dumps(optimization_result)}",
-                {"category": "system", "type": "optimization"}
-            )
-            
-    def _check_meta_cognitive_reflection(self):
+    def check_meta_cognitive_reflection(self):
         """Check if we should perform meta-cognitive reflection"""
-        if not self.meta_cognition["enabled"]:
+        if not hasattr(self, 'meta_cognition') or not self.meta_cognition.get("enabled", False):
             return
             
         current_time = time.time()
-        time_since_last_reflection = current_time - self.meta_cognition["last_reflection_time"]
+        time_since_last_reflection = current_time - self.meta_cognition.get("last_reflection_time", 0)
         user_message_count = len([msg for msg in self.conversation_history if msg.get("role") == "user"])
         
         # Perform reflection based on frequency setting
         if (user_message_count > 0 and 
-            user_message_count % self.meta_cognition["reflection_frequency"] == 0):
+            user_message_count % self.meta_cognition.get("reflection_frequency", 10) == 0):
             
-            # Perform reflection
-            reflection = self._generate_meta_cognitive_reflection()
-            
-            # Update last reflection time
-            self.meta_cognition["last_reflection_time"] = current_time
-            
-            # Store reflection in memory and insights
-            self.memory.add_memory(
-                reflection,
-                {"category": "meta_cognition", "type": "reflection"}
-            )
-            
-            self.meta_cognition["insights"].append({
-                "timestamp": current_time,
-                "reflection": reflection
-            })
+            if hasattr(self, '_generate_meta_cognitive_reflection'):
+                # Perform reflection
+                reflection = self._generate_meta_cognitive_reflection()
+                
+                # Update last reflection time
+                self.meta_cognition["last_reflection_time"] = current_time
+                
+                # Store reflection in memory and insights
+                self.memory.add_memory(
+                    reflection,
+                    {"category": "meta_cognition", "type": "reflection"}
+                )
+                
+                self.meta_cognition["insights"].append({
+                    "timestamp": current_time,
+                    "reflection": reflection
+                })
             
     def _generate_meta_cognitive_reflection(self) -> str:
         """Generate a meta-cognitive reflection on recent performance"""
