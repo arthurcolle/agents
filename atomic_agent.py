@@ -4657,23 +4657,94 @@ class ToolRegistry:
             if not agent:
                 return {"error": "Could not access TogetherAgent instance", "success": False}
             
+            # Try to import the image processor
+            try:
+                from image_processor import ImageProcessor
+                image_processor = ImageProcessor()
+            except ImportError:
+                # Fall back to the old method if image_processor.py is not available
+                results = agent.search_similar_images(image_url, limit)
+                
+                formatted_results = []
+                for result in results:
+                    formatted_results.append({
+                        "content": result["content"],
+                        "type": result.get("metadata", {}).get("type", "unknown"),
+                        "relevance_score": result.get("relevance_score", 0),
+                        "timestamp": result.get("created_at", "unknown")
+                    })
+                
+                return {
+                    "success": True,
+                    "query_image": image_url,
+                    "results_count": len(formatted_results),
+                    "results": formatted_results
+                }
+            
+            # Use the new image processor for more advanced image comparison
             results = agent.search_similar_images(image_url, limit)
             
-            formatted_results = []
-            for result in results:
-                formatted_results.append({
-                    "content": result["content"],
-                    "type": result.get("metadata", {}).get("type", "unknown"),
-                    "relevance_score": result.get("relevance_score", 0),
-                    "timestamp": result.get("created_at", "unknown")
-                })
+            # Process the query image
+            try:
+                query_image_features = image_processor.extract_image_features(
+                    image_processor.process_image(image_url)
+                )
+                
+                # Enhanced results with similarity scores
+                enhanced_results = []
+                for result in results:
+                    try:
+                        # Only process image results
+                        if result.get("metadata", {}).get("type") == "image":
+                            result_image_url = result["content"]
+                            similarity = image_processor.compare_images(image_url, result_image_url)
+                            
+                            enhanced_results.append({
+                                "content": result["content"],
+                                "type": "image",
+                                "relevance_score": float(similarity),
+                                "timestamp": result.get("created_at", "unknown")
+                            })
+                    except Exception as img_err:
+                        # If processing a specific image fails, still include it but with original score
+                        enhanced_results.append({
+                            "content": result["content"],
+                            "type": result.get("metadata", {}).get("type", "unknown"),
+                            "relevance_score": result.get("relevance_score", 0),
+                            "timestamp": result.get("created_at", "unknown"),
+                            "processing_error": str(img_err)
+                        })
+                
+                # Sort by relevance score
+                enhanced_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+                
+                return {
+                    "success": True,
+                    "query_image": image_url,
+                    "results_count": len(enhanced_results),
+                    "results": enhanced_results[:limit],
+                    "using_advanced_processor": True
+                }
             
-            return {
-                "success": True,
-                "query_image": image_url,
-                "results_count": len(formatted_results),
-                "results": formatted_results
-            }
+            except Exception as proc_err:
+                # Fall back to basic results if advanced processing fails
+                formatted_results = []
+                for result in results:
+                    formatted_results.append({
+                        "content": result["content"],
+                        "type": result.get("metadata", {}).get("type", "unknown"),
+                        "relevance_score": result.get("relevance_score", 0),
+                        "timestamp": result.get("created_at", "unknown")
+                    })
+                
+                return {
+                    "success": True,
+                    "query_image": image_url,
+                    "results_count": len(formatted_results),
+                    "results": formatted_results,
+                    "processing_error": str(proc_err)
+                }
+                
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
     
@@ -5874,8 +5945,70 @@ print("Hello, world!")
         """Search for similar images in the conversation history"""
         if not hasattr(self, 'memory') or not self.memory.available:
             return []
+        
+        # Try to use the image processor for enhanced image similarity search
+        try:
+            from image_processor import ImageProcessor
+            image_processor = ImageProcessor()
             
-        return self.memory.search_memory(image_url, limit=limit, include_images=True)
+            # Get all image memories
+            all_images = [item for item in self.memory.memory_items 
+                         if item.get("metadata", {}).get("type") == "image"]
+            
+            if not all_images:
+                return []
+            
+            # Process the query image
+            try:
+                query_image_features = image_processor.extract_image_features(
+                    image_processor.process_image(image_url)
+                )
+                
+                # Calculate similarity for each image in memory
+                similarities = []
+                for img_item in all_images:
+                    try:
+                        # If we already have features stored, use them
+                        if "features" in img_item.get("metadata", {}):
+                            stored_features = img_item["metadata"]["features"]
+                            # Convert to numpy array if needed
+                            if isinstance(stored_features, list):
+                                stored_features = np.array(stored_features)
+                            
+                            # Calculate similarity
+                            similarity = np.dot(query_image_features, stored_features)
+                            
+                        # Otherwise, process the image and calculate similarity
+                        else:
+                            img_content = img_item["content"]
+                            similarity = image_processor.compare_images(image_url, img_content)
+                            
+                        similarities.append((similarity, img_item))
+                    except Exception:
+                        # Skip images that can't be processed
+                        continue
+                
+                # Sort by similarity (highest first)
+                similarities.sort(reverse=True, key=lambda x: x[0])
+                
+                # Return top matches with similarity scores
+                results = []
+                for similarity, item in similarities[:limit]:
+                    result = item.copy()
+                    result["relevance_score"] = float(similarity)
+                    result["access_count"] = result.get("access_count", 0) + 1
+                    results.append(result)
+                
+                return results
+                
+            except Exception as e:
+                console.print(f"[yellow]Advanced image similarity failed: {e}. Using basic search.[/yellow]")
+                # Fall back to basic search
+                return self.memory.search_memory(image_url, limit=limit, include_images=True)
+                
+        except ImportError:
+            # Fall back to the original method if image_processor.py is not available
+            return self.memory.search_memory(image_url, limit=limit, include_images=True)
     
     def _get_function_suggestion(self, function_name: str, arguments: Dict[str, Any], result: Dict[str, Any]) -> str:
         """Generate a helpful suggestion for fixing a function call error."""
@@ -6039,54 +6172,127 @@ print("Hello, world!")
     def _paste_from_clipboard(self):
         """Paste image from clipboard and convert to base64 for the model"""
         try:
-            # Try to get image from clipboard
-            image = ImageGrab.grabclipboard()
-            
-            if image is None:
-                # If no image, try to get text
-                text = pyperclip.paste()
-                if text:
-                    return text
-                else:
-                    return "No image or text found in clipboard."
-            
-            # Process the image
-            console.print("[cyan]Image found in clipboard[/cyan]")
-            
-            # Save image to a temporary file with a unique name
-            temp_dir = Path(tempfile.gettempdir())
-            timestamp = int(time.time())
-            img_path = temp_dir / f"clipboard_image_{timestamp}.png"
-            image.save(img_path)
-            
-            console.print(f"[green]Image saved to {img_path}[/green]")
-            
-            # Convert to base64 for the model
-            buffered = BytesIO()
-            image.save(buffered, format="PNG")
-            img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            
-            # Create multimodal message
-            multimodal = [
-                {"type": "text", "text": "Image pasted from clipboard:"},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
-            ]
-            
-            # Add to memory
-            if hasattr(self, 'memory'):
-                self.memory.add_memory(
-                    f"data:image/png;base64,{img_base64[:20]}...", 
-                    {"type": "image", "source": "clipboard", "local_path": str(img_path)}
-                )
-            
-            self.interaction_memory.append({
-                "type": "image", 
-                "source": "clipboard", 
-                "timestamp": time.time(),
-                "local_path": str(img_path)
-            })
-            
-            return multimodal
+            # Try to use the image processor for enhanced clipboard handling
+            try:
+                from image_processor import ImageProcessor
+                image_processor = ImageProcessor()
+                
+                # Use the image processor to save the clipboard image
+                img_path, img_base64 = image_processor.save_image_from_clipboard()
+                
+                console.print(f"[green]Image saved to {img_path}[/green]")
+                
+                # Process the image to extract features
+                try:
+                    # Process image and store features in memory
+                    image_tensor = image_processor.process_image(img_base64)
+                    features = image_processor.extract_image_features(image_tensor)
+                    
+                    # Create multimodal message
+                    multimodal = [
+                        {"type": "text", "text": "Image pasted from clipboard:"},
+                        {"type": "image_url", "image_url": {"url": img_base64}}
+                    ]
+                    
+                    # Add to memory with enhanced metadata
+                    if hasattr(self, 'memory'):
+                        self.memory.add_memory(
+                            f"{img_base64[:30]}...", 
+                            {
+                                "type": "image", 
+                                "source": "clipboard", 
+                                "local_path": str(img_path),
+                                "features": features.tolist() if hasattr(features, "tolist") else features,
+                                "processed_with": "ImageProcessor"
+                            }
+                        )
+                    
+                    self.interaction_memory.append({
+                        "type": "image", 
+                        "source": "clipboard", 
+                        "timestamp": time.time(),
+                        "local_path": str(img_path),
+                        "features": features.tolist() if hasattr(features, "tolist") else features,
+                        "processed": True
+                    })
+                    
+                    return multimodal
+                    
+                except Exception as proc_err:
+                    console.print(f"[yellow]Warning: Advanced image processing failed: {proc_err}. Using basic processing.[/yellow]")
+                    # Fall back to basic processing if feature extraction fails
+                    multimodal = [
+                        {"type": "text", "text": "Image pasted from clipboard:"},
+                        {"type": "image_url", "image_url": {"url": img_base64}}
+                    ]
+                    
+                    # Add to memory
+                    if hasattr(self, 'memory'):
+                        self.memory.add_memory(
+                            f"{img_base64[:30]}...", 
+                            {"type": "image", "source": "clipboard", "local_path": str(img_path)}
+                        )
+                    
+                    self.interaction_memory.append({
+                        "type": "image", 
+                        "source": "clipboard", 
+                        "timestamp": time.time(),
+                        "local_path": str(img_path)
+                    })
+                    
+                    return multimodal
+                
+            except ImportError:
+                # Fall back to the original method if image_processor.py is not available
+                # Try to get image from clipboard
+                image = ImageGrab.grabclipboard()
+                
+                if image is None:
+                    # If no image, try to get text
+                    text = pyperclip.paste()
+                    if text:
+                        return text
+                    else:
+                        return "No image or text found in clipboard."
+                
+                # Process the image
+                console.print("[cyan]Image found in clipboard[/cyan]")
+                
+                # Save image to a temporary file with a unique name
+                temp_dir = Path(tempfile.gettempdir())
+                timestamp = int(time.time())
+                img_path = temp_dir / f"clipboard_image_{timestamp}.png"
+                image.save(img_path)
+                
+                console.print(f"[green]Image saved to {img_path}[/green]")
+                
+                # Convert to base64 for the model
+                buffered = BytesIO()
+                image.save(buffered, format="PNG")
+                img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                
+                # Create multimodal message
+                multimodal = [
+                    {"type": "text", "text": "Image pasted from clipboard:"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+                ]
+                
+                # Add to memory
+                if hasattr(self, 'memory'):
+                    self.memory.add_memory(
+                        f"data:image/png;base64,{img_base64[:20]}...", 
+                        {"type": "image", "source": "clipboard", "local_path": str(img_path)}
+                    )
+                
+                self.interaction_memory.append({
+                    "type": "image", 
+                    "source": "clipboard", 
+                    "timestamp": time.time(),
+                    "local_path": str(img_path)
+                })
+                
+                return multimodal
+                
         except Exception as e:
             console.print(f"[red]Error pasting from clipboard: {str(e)}[/red]")
             return f"Error pasting from clipboard: {str(e)}"
