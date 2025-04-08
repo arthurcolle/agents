@@ -21,6 +21,7 @@ import pickle
 import copy
 from collections import deque
 from datetime import datetime
+import yaml  # Added for config file loading
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple, Callable, Deque, Union
 from rich.console import Console
@@ -42,8 +43,7 @@ from dynamic_agents import registry, AgentContext, execute_agent_command
 # Load environment variables
 load_dotenv()
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Set up logging (will be configured in main based on args)
 logger = logging.getLogger("cli-agent")
 
 # Rich console for better formatting
@@ -763,11 +763,13 @@ class CodingTools:
         self.execution_history = []
         
         # Restricted commands that won't be allowed in shell execution
+        # Security Hint: Regularly review and update restricted commands and allowed imports.
+        # Consider finer-grained controls based on agent tasks or user roles.
         self.restricted_commands = [
             "rm -rf", "mkfs", "dd if=/dev/zero", ":(){ :|:& };:",  # Fork bomb
             "> /dev/sda", "chmod -R 777 /", "mv /* /dev/null"
         ]
-        
+
         # Default allowed imports for Python code
         self.allowed_imports = {
             "safe": ["math", "random", "datetime", "collections", "itertools", 
@@ -907,10 +909,12 @@ class CodingTools:
                     f.write(f"# Execution ID: {exec_id}\n")
                     f.write(f"# Timestamp: {time.ctime()}\n")
                     f.write(f"# Security level: {self.security_level}\n")
-                    f.write(f"# Safety check: {safety_message}\n\n")
+                    f.write(f"# Safety check: {safety_message}\n")
+                    f.write(f"# Sandbox: {sandbox}\n\n")
                     f.write(code)
-            
+
             # Write code to temporary file
+            # Resource Management Hint: Ensure sufficient disk space and permissions for temp/sandbox dirs.
             with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(code)
             
@@ -930,9 +934,10 @@ class CodingTools:
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=exec_dir,
-                    env=env
+                    env=env,
+                    # Resource Management Hint: Consider resource limits (e.g., ulimit) if running untrusted code.
                 )
-                
+
                 try:
                     stdout, stderr = process.communicate(input=input_text, timeout=timeout)
                     return_code = process.returncode
@@ -957,9 +962,10 @@ class CodingTools:
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=exec_dir,
-                    env=env
+                    env=env,
+                    # Resource Management Hint: Consider resource limits (e.g., ulimit) if running untrusted code.
                 )
-                
+
                 try:
                     stdout, stderr = process.communicate(timeout=timeout)
                     return_code = process.returncode
@@ -1074,9 +1080,10 @@ class CodingTools:
                     f.write(f"# Timestamp: {time.ctime()}\n")
                     f.write(f"# Security level: {self.security_level}\n")
                     f.write(f"# Safety check: {safety_message}\n")
-                    f.write(f"# Working directory: {exec_dir}\n\n")
+                    f.write(f"# Working directory: {exec_dir}\n")
+                    f.write(f"# Sandbox: {sandbox}\n\n")
                     f.write(command)
-            
+
             # Prepare environment
             env = os.environ.copy()
             if environment:
@@ -1090,9 +1097,11 @@ class CodingTools:
                 stderr=subprocess.PIPE,
                 text=True,
                 cwd=exec_dir,
-                env=env
+                env=env,
+                # Resource Management Hint: Monitor resource usage (CPU, memory) of shell commands.
+                # Consider using tools like `timeout` or `nice` within the command itself if needed.
             )
-            
+
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
                 return_code = process.returncode
@@ -2571,6 +2580,14 @@ class CLIAgent:
         # Executor for running synchronous blocking code in async context
         self.executor = None # Initialize later if needed
 
+        # Initialize dynamic agent tools and register tools
+        self._init_dynamic_agent_tools()
+        self._register_builtin_tools()
+        self._register_tool_templates()
+
+        # Create initial memory snapshot
+        self.create_snapshot("initial_state")
+
     def _init_dynamic_agent_tools(self):
         """Initialize tools for dynamic agent management"""
         # Create default agents
@@ -2597,16 +2614,13 @@ class CLIAgent:
             self.editor = None
             logger.warning("Advanced editor not available. Some features will be disabled.")
         
-        # Register built-in tools
-        self._register_builtin_tools()
-        
-        # Register tool templates
-        self._register_tool_templates()
-        
         # Define available tools for OpenAI API
+        # Combine tools from registry and manually defined ones
         self.tools = self.tool_registry.get_openai_tools_format() + [
-            # Advanced editor tools
-            # File system tools
+            # NOTE: Some tools below might duplicate those registered via _register_builtin_tools.
+            # Consider refactoring to register all tools via the registry for consistency.
+
+            # File system tools (Example - ensure these match registry or remove if duplicated)
             {
                 "type": "function",
                 "function": {
@@ -3054,7 +3068,7 @@ class CLIAgent:
                     }
                 }
             },
-            # Coding tools
+            # Coding tools (Example - ensure these match registry or remove if duplicated)
             {
                 "type": "function",
                 "function": {
@@ -5498,34 +5512,84 @@ class CLIAgent:
             
         return result
 
+def load_config(config_path):
+    """Load configuration from a YAML file."""
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        logger.info(f"Loaded configuration from {config_path}")
+        return config
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {config_path}")
+        return {}
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing configuration file {config_path}: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"Unexpected error loading configuration from {config_path}: {e}")
+        return {}
+
 def main():
     """Main function for the CLI agent"""
+    # Lifecycle Management Hint: For production, run this script using a process manager
+    # like systemd, supervisor, or pm2 to handle restarts and monitoring.
+    # Scaling Hint: To run hundreds of agents, you'll typically run multiple instances
+    # of this script, potentially in containers (Docker), managed by an orchestrator (Kubernetes).
+
     parser = argparse.ArgumentParser(description="Autonomous CLI Agent with Evolutionary Capabilities")
-    parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent")
-    parser.add_argument("--meta-model", default=None, help="Model to use for meta-reflection (defaults to same as primary model)")
-    parser.add_argument("--disable-meta", action="store_true", help="Disable meta-cognitive reflection layer")
-    parser.add_argument("--disable-replay", action="store_true", help="Disable experience replay")
-    parser.add_argument("--disable-evolution", action="store_true", help="Disable evolutionary optimization")
-    parser.add_argument("--disable-autonomous", action="store_true", help="Disable autonomous mode")
-    parser.add_argument("--memory-size", type=int, default=1000, help="Maximum number of interaction frames to store in memory")
-    parser.add_argument("--trace", action="store_true", help="Enable tracing for debugging")
-    parser.add_argument("--debug", action="store_true", help="Show debug information including agent hooks")
-    parser.add_argument("--temperature", type=float, default=0.7, help="Temperature for model generation (0.0-2.0)")
-    parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum tokens for model response")
-    parser.add_argument("--list-agents", action="store_true", help="List available dynamic agents and exit")
-    parser.add_argument("--list-tools", action="store_true", help="List available tools and exit")
-    parser.add_argument("--list-categories", action="store_true", help="List available tool categories and exit")
-    parser.add_argument("--list-templates", action="store_true", help="List available tool templates and exit")
-    parser.add_argument("--list-snapshots", action="store_true", help="List available agent snapshots and exit")
-    parser.add_argument("--list-kb", action="store_true", help="List available knowledge bases and exit")
-    parser.add_argument("--kb-dir", type=str, default="knowledge_bases_async_advanced", 
-                       help="Directory containing knowledge bases")
-    parser.add_argument("--create-kb-agent", type=str, help="Create a specialized agent from a knowledge base")
-    parser.add_argument("--restore-snapshot", type=str, help="Restore agent from a snapshot ID")
-    parser.add_argument("--task", type=str, help="Add an autonomous task to execute")
-    parser.add_argument("--task-priority", type=int, default=1, help="Priority for the autonomous task (higher is more important)")
+    parser.add_argument("--config", type=str, default=None, help="Path to YAML configuration file.")
+    parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent (overridden by config file).")
+    parser.add_argument("--meta-model", default=None, help="Model to use for meta-reflection (overridden by config file).")
+    parser.add_argument("--disable-meta", action='store_true', help="Disable meta-cognitive reflection layer (overridden by config file).")
+    parser.add_argument("--disable-replay", action='store_true', help="Disable experience replay (overridden by config file).")
+    parser.add_argument("--disable-evolution", action='store_true', help="Disable evolutionary optimization (overridden by config file).")
+    parser.add_argument("--disable-autonomous", action='store_true', help="Disable autonomous mode (overridden by config file).")
+    parser.add_argument("--memory-size", type=int, default=1000, help="Maximum memory frames (overridden by config file).")
+    parser.add_argument("--trace", action='store_true', help="Enable OpenAI tracing for debugging.")
+    parser.add_argument("--debug", action='store_true', help="Show debug information including agent hooks.")
+    parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
+    parser.add_argument("--temperature", type=float, default=0.7, help="Model temperature (0.0-2.0) (overridden by config file).")
+    parser.add_argument("--max-tokens", type=int, default=4096, help="Model max tokens (overridden by config file).")
+    parser.add_argument("--list-agents", action='store_true', help="List available dynamic agents and exit.")
+    parser.add_argument("--list-tools", action='store_true', help="List available tools and exit.")
+    parser.add_argument("--list-categories", action='store_true', help="List available tool categories and exit.")
+    parser.add_argument("--list-templates", action='store_true', help="List available tool templates and exit.")
+    parser.add_argument("--list-snapshots", action='store_true', help="List available agent snapshots and exit.")
+    parser.add_argument("--list-kb", action='store_true', help="List available knowledge bases and exit.")
+    parser.add_argument("--kb-dir", type=str, default="knowledge_bases_async_advanced",
+                       help="Knowledge base directory (overridden by config file).")
+    parser.add_argument("--create-kb-agent", type=str, help="Create a specialized agent from a knowledge base.")
+    parser.add_argument("--restore-snapshot", type=str, help="Restore agent from a snapshot ID.")
+    parser.add_argument("--task", type=str, help="Add an autonomous task to execute.")
+    parser.add_argument("--task-priority", type=int, default=1, help="Priority for the autonomous task.")
     args = parser.parse_args()
-    
+
+    # --- Configuration Loading ---
+    config = {}
+    if args.config:
+        config = load_config(args.config)
+
+    # Override args with config file values if present
+    args.model = config.get('model', args.model)
+    args.meta_model = config.get('meta_model', args.meta_model)
+    args.disable_meta = config.get('disable_meta', args.disable_meta)
+    args.disable_replay = config.get('disable_replay', args.disable_replay)
+    args.disable_evolution = config.get('disable_evolution', args.disable_evolution)
+    args.disable_autonomous = config.get('disable_autonomous', args.disable_autonomous)
+    args.memory_size = config.get('memory_size', args.memory_size)
+    args.temperature = config.get('temperature', args.temperature)
+    args.max_tokens = config.get('max_tokens', args.max_tokens)
+    args.kb_dir = config.get('kb_dir', args.kb_dir)
+    args.log_level = config.get('log_level', args.log_level).upper()
+    # Note: trace, debug, list_*, create_*, restore_*, task* args are command-line actions, not typically in config.
+
+    # --- Logging Setup ---
+    log_level = getattr(logging, args.log_level, logging.INFO)
+    # Logging Hint: For production/scaling, consider structured logging (JSON)
+    # and sending logs to a centralized system (e.g., ELK, Splunk, Datadog).
+    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger.info(f"Logging level set to {args.log_level}")
+
     # Enable tracing if requested
     if args.trace:
         openai.debug.trace.enable()
