@@ -494,11 +494,27 @@ class ToolRegistry:
         self.jina_client = None
         try:
             self.jina_client = JinaClient()
+            console.print("[green]Jina client initialized successfully[/green]")
         except ValueError:
             console.print("[yellow]Warning: JINA_API_KEY not found. Jina tools will not be available.[/yellow]")
+            console.print("[yellow]Set the JINA_API_KEY environment variable to enable web search functionality.[/yellow]")
         self._register_default_tools()
 
     def _register_default_tools(self):
+        # Web search tools
+        self.register_function(
+            name="web_search",
+            description="Search the web for information",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"}
+                },
+                "required": ["query"]
+            },
+            function=self._web_search
+        )
+        
         # Python code execution
         self.register_function(
             name="execute_python",
@@ -1479,9 +1495,20 @@ class ToolRegistry:
 
     def _web_search(self, query: str) -> Dict[str, Any]:
         if not self.jina_client:
-            return {"error": "Jina client not initialized. Please set JINA_API_KEY environment variable.", "success": False}
+            try:
+                self.jina_client = JinaClient()
+                console.print("[green]Successfully initialized Jina client[/green]")
+            except ValueError:
+                return {"error": "Jina client not initialized. Please set JINA_API_KEY environment variable.", "success": False}
+        
         try:
-            loop = asyncio.get_event_loop()
+            # Create a new event loop for this thread if needed
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
             result = loop.run_until_complete(self.jina_client.search(query))
             return {"success": True, "query": query, "results": result["results"]}
         except Exception as e:
