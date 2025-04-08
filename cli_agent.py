@@ -1604,6 +1604,195 @@ class DynamicToolRegistry:
                 "data": None
             }
 
+class PerceptualMemory:
+    """
+    Advanced memory system for storing and retrieving interaction frames
+    Enables experience replay and semantic search across past interactions
+    """
+    def __init__(self, max_frames=1000, embedding_dim=1536, vector_db_path="perceptual_memory.pkl"):
+        self.frames = deque(maxlen=max_frames)  # Store recent frames in memory
+        self.frame_embeddings = deque(maxlen=max_frames)  # Store embeddings for semantic search
+        self.vector_db_path = vector_db_path
+        self.embedding_dim = embedding_dim
+        
+        # Load existing memory if available
+        self._load_memory()
+        
+        # Track statistics
+        self.stats = {
+            "total_frames_added": 0,
+            "total_retrievals": 0,
+            "total_replays": 0
+        }
+    
+    def _load_memory(self):
+        """Load memory from disk if available"""
+        try:
+            if os.path.exists(self.vector_db_path):
+                with open(self.vector_db_path, 'rb') as f:
+                    saved_data = pickle.load(f)
+                    self.frames = saved_data.get('frames', deque(maxlen=self.frames.maxlen))
+                    self.frame_embeddings = saved_data.get('embeddings', deque(maxlen=self.frames.maxlen))
+                    self.stats = saved_data.get('stats', self.stats)
+                    logging.info(f"Loaded {len(self.frames)} perceptual frames from disk")
+        except Exception as e:
+            logging.error(f"Error loading perceptual memory: {e}")
+    
+    def _save_memory(self):
+        """Save memory to disk"""
+        try:
+            with open(self.vector_db_path, 'wb') as f:
+                pickle.dump({
+                    'frames': self.frames,
+                    'embeddings': self.frame_embeddings,
+                    'stats': self.stats
+                }, f)
+            logging.info(f"Saved {len(self.frames)} perceptual frames to disk")
+        except Exception as e:
+            logging.error(f"Error saving perceptual memory: {e}")
+    
+    def add_frame(self, frame: Dict, embedding: Optional[np.ndarray] = None) -> str:
+        """
+        Add a perceptual frame to memory
+        
+        Args:
+            frame: Dictionary containing interaction data
+            embedding: Optional pre-computed embedding vector
+            
+        Returns:
+            frame_id: Unique identifier for the stored frame
+        """
+        # Ensure frame has required fields
+        if 'timestamp' not in frame:
+            frame['timestamp'] = time.time()
+        
+        if 'id' not in frame:
+            frame['id'] = str(uuid.uuid4())
+        
+        # Add frame to memory
+        self.frames.append(frame)
+        
+        # Add embedding if provided, otherwise use zeros
+        if embedding is not None:
+            self.frame_embeddings.append(embedding)
+        else:
+            # Placeholder embedding (will be updated when get_embedding is called)
+            self.frame_embeddings.append(np.zeros(self.embedding_dim))
+        
+        # Update stats
+        self.stats["total_frames_added"] += 1
+        
+        # Periodically save memory
+        if self.stats["total_frames_added"] % 10 == 0:
+            self._save_memory()
+        
+        return frame['id']
+    
+    def get_embedding(self, text: str, client) -> np.ndarray:
+        """Get embedding vector for text using OpenAI API"""
+        try:
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text
+            )
+            return np.array(response.data[0].embedding)
+        except Exception as e:
+            logging.error(f"Error getting embedding: {e}")
+            return np.zeros(self.embedding_dim)
+    
+    def search_memory(self, query: str, limit: int = 5, client=None) -> List[Dict]:
+        """
+        Search memory for relevant frames using semantic similarity
+        
+        Args:
+            query: Search query
+            limit: Maximum number of results to return
+            client: OpenAI client for computing embeddings
+            
+        Returns:
+            List of relevant frames
+        """
+        if not self.frames:
+            return []
+        
+        if client is None:
+            # Return most recent frames if no client is provided
+            return list(self.frames)[-limit:]
+        
+        # Get query embedding
+        query_embedding = self.get_embedding(query, client)
+        
+        # Calculate similarity scores
+        similarities = []
+        for i, embedding in enumerate(self.frame_embeddings):
+            # Cosine similarity
+            similarity = np.dot(query_embedding, embedding) / (
+                np.linalg.norm(query_embedding) * np.linalg.norm(embedding) + 1e-10
+            )
+            similarities.append((i, similarity))
+        
+        # Sort by similarity (descending)
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        
+        # Get top results
+        results = []
+        for i, _ in similarities[:limit]:
+            if i < len(self.frames):
+                results.append(self.frames[i])
+        
+        # Update stats
+        self.stats["total_retrievals"] += 1
+        
+        return results
+    
+    def sample_for_replay(self, batch_size: int = 3, strategy: str = "random") -> List[Dict]:
+        """
+        Sample frames for experience replay
+        
+        Args:
+            batch_size: Number of frames to sample
+            strategy: Sampling strategy (random, recent, prioritized)
+            
+        Returns:
+            List of sampled frames
+        """
+        if not self.frames:
+            return []
+        
+        frames_list = list(self.frames)
+        
+        if strategy == "recent":
+            # Sample most recent frames
+            samples = frames_list[-batch_size:]
+        elif strategy == "prioritized":
+            # Prioritize frames with higher importance (if available)
+            frames_with_priority = [(i, f.get('importance', 0.5)) for i, f in enumerate(frames_list)]
+            frames_with_priority.sort(key=lambda x: x[1], reverse=True)
+            sample_indices = [x[0] for x in frames_with_priority[:batch_size]]
+            samples = [frames_list[i] for i in sample_indices]
+        else:
+            # Random sampling
+            if len(frames_list) <= batch_size:
+                samples = frames_list
+            else:
+                sample_indices = random.sample(range(len(frames_list)), batch_size)
+                samples = [frames_list[i] for i in sample_indices]
+        
+        # Update stats
+        self.stats["total_replays"] += 1
+        
+        return samples
+    
+    def get_memory_stats(self) -> Dict:
+        """Get memory statistics"""
+        return {
+            "current_size": len(self.frames),
+            "max_size": self.frames.maxlen,
+            "total_frames_added": self.stats["total_frames_added"],
+            "total_retrievals": self.stats["total_retrievals"],
+            "total_replays": self.stats["total_replays"]
+        }
+
 class MetaReflectionLayer:
     """
     Meta-cognitive layer for agent self-reflection and oversight
@@ -2051,6 +2240,38 @@ class CLIAgent:
                             }
                         },
                         "required": ["level"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_interaction_history",
+                    "description": "Search through past interactions using semantic search",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results to return (default: 5)"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_memory_stats",
+                    "description": "Get statistics about the perceptual memory system",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
                     }
                 }
             },
@@ -2945,17 +3166,158 @@ class CLIAgent:
                 "data": None
             }
     
+    def _create_interaction_frame(self, message: str, response: str, 
+                                tool_calls: List = None, meta_reflection: Dict = None) -> Dict:
+        """
+        Create a perceptual frame from an interaction
+        
+        Args:
+            message: User message
+            response: Agent response
+            tool_calls: List of tool calls made during the interaction
+            meta_reflection: Meta-reflection data if available
+            
+        Returns:
+            Frame dictionary
+        """
+        frame = {
+            "id": str(uuid.uuid4()),
+            "timestamp": time.time(),
+            "datetime": datetime.now().isoformat(),
+            "interaction": {
+                "user_message": message,
+                "agent_response": response
+            },
+            "context": {
+                "conversation_length": len(self.conversation_history) // 2,  # Approximate turn count
+                "model": self.model
+            }
+        }
+        
+        # Add tool calls if available
+        if tool_calls:
+            frame["tool_calls"] = tool_calls
+        
+        # Add meta-reflection if available
+        if meta_reflection:
+            frame["meta_reflection"] = meta_reflection
+        
+        return frame
+    
+    def _store_interaction(self, message: str, response: str, 
+                         tool_calls: List = None, meta_reflection: Dict = None, client=None) -> str:
+        """
+        Store an interaction in perceptual memory
+        
+        Args:
+            message: User message
+            response: Agent response
+            tool_calls: List of tool calls made
+            meta_reflection: Meta-reflection data
+            client: OpenAI client for computing embeddings
+            
+        Returns:
+            Frame ID
+        """
+        # Create frame
+        frame = self._create_interaction_frame(message, response, tool_calls, meta_reflection)
+        
+        # Compute embedding if client is available
+        embedding = None
+        if client:
+            # Create a combined text representation for embedding
+            text_for_embedding = f"User: {message}\nAgent: {response}"
+            embedding = self.perceptual_memory.get_embedding(text_for_embedding, client)
+        
+        # Store frame
+        frame_id = self.perceptual_memory.add_frame(frame, embedding)
+        
+        return frame_id
+    
+    async def _perform_experience_replay(self, client) -> Dict:
+        """
+        Perform experience replay to learn from past interactions
+        
+        Args:
+            client: OpenAI client
+            
+        Returns:
+            Results of the replay
+        """
+        # Sample frames for replay
+        frames = self.perceptual_memory.sample_for_replay(batch_size=self.replay_batch_size)
+        
+        if not frames:
+            return {"success": False, "message": "No frames available for replay"}
+        
+        # Format frames for reflection
+        replay_prompt = "Review these past interactions and provide insights on how to improve:\n\n"
+        
+        for i, frame in enumerate(frames):
+            interaction = frame.get("interaction", {})
+            user_msg = interaction.get("user_message", "")
+            agent_resp = interaction.get("agent_response", "")
+            
+            replay_prompt += f"Interaction {i+1}:\n"
+            replay_prompt += f"User: {user_msg}\n"
+            replay_prompt += f"Agent: {agent_resp}\n\n"
+        
+        replay_prompt += "Based on these interactions, what patterns do you notice? How could responses be improved? What strategies worked well?"
+        
+        try:
+            # Get insights from model
+            replay_response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are analyzing past interactions to improve future responses."},
+                    {"role": "user", "content": replay_prompt}
+                ]
+            )
+            
+            insights = replay_response.choices[0].message.content
+            
+            # Store the insights in a special frame
+            replay_frame = {
+                "id": str(uuid.uuid4()),
+                "timestamp": time.time(),
+                "datetime": datetime.now().isoformat(),
+                "type": "experience_replay",
+                "sampled_frames": [frame["id"] for frame in frames],
+                "insights": insights
+            }
+            
+            self.perceptual_memory.add_frame(replay_frame)
+            
+            return {
+                "success": True,
+                "message": "Experience replay completed successfully",
+                "insights": insights,
+                "frames_analyzed": len(frames)
+            }
+        except Exception as e:
+            logging.error(f"Error in experience replay: {e}")
+            return {
+                "success": False,
+                "message": f"Error in experience replay: {str(e)}"
+            }
+    
     async def chat(self, message: str) -> str:
         """
         Chat with the agent using a two-layer architecture:
         1. Inner model generates the primary response
         2. Outer model performs meta-reflection and improves the response
+        
+        Also stores interaction frames in perceptual memory and performs
+        experience replay for continuous learning.
         """
         # Add user message to conversation history
         self.conversation_history.append({"role": "user", "content": message})
         
         # Notify hooks that the agent is starting
         self.hooks.on_start("CLI Agent")
+        
+        # Increment interaction counter
+        self.interaction_count += 1
         
         # Run the primary reasoning layer (inner model)
         with self.console.status("[bold green]Thinking..."):
@@ -3023,10 +3385,13 @@ class CLIAgent:
                         
                         # Meta-cognitive reflection (outer model) if enabled
                         final_response = primary_response
+                        meta_reflection = None
+                        
                         if self.enable_meta:
                             with self.console.status("[bold cyan]Performing meta-reflection..."):
                                 # Get meta-evaluation
                                 reflection = await self.meta_layer.reflect(message, primary_response, client)
+                                meta_reflection = reflection
                                 
                                 # Improve response based on meta-reflection
                                 if reflection and "evaluation" in reflection:
@@ -3050,6 +3415,34 @@ class CLIAgent:
                             "content": final_response
                         })
                         
+                        # Store interaction in perceptual memory
+                        tool_calls_data = [
+                            {
+                                "name": tool_call.function.name,
+                                "arguments": json.loads(tool_call.function.arguments)
+                            } for tool_call in assistant_message.tool_calls
+                        ]
+                        
+                        self._store_interaction(
+                            message=message,
+                            response=final_response,
+                            tool_calls=tool_calls_data,
+                            meta_reflection=meta_reflection,
+                            client=client
+                        )
+                        
+                        # Perform experience replay if enabled and it's time
+                        if (self.enable_experience_replay and 
+                            self.interaction_count % self.replay_frequency == 0 and
+                            self.interaction_count > 1):
+                            with self.console.status("[bold magenta]Performing experience replay..."):
+                                replay_result = await self._perform_experience_replay(client)
+                                if replay_result["success"] and self.console:
+                                    self.console.print(
+                                        f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
+                                        style="dim"
+                                    )
+                        
                         return final_response
                 else:
                     # No tool calls, just get the primary response
@@ -3057,10 +3450,13 @@ class CLIAgent:
                     
                     # Meta-cognitive reflection (outer model) if enabled
                     final_response = primary_response
+                    meta_reflection = None
+                    
                     if self.enable_meta:
                         with self.console.status("[bold cyan]Performing meta-reflection..."):
                             # Get meta-evaluation
                             reflection = await self.meta_layer.reflect(message, primary_response, client)
+                            meta_reflection = reflection
                             
                             # Improve response based on meta-reflection
                             if reflection and "evaluation" in reflection:
@@ -3084,6 +3480,26 @@ class CLIAgent:
                         "content": final_response
                     })
                     
+                    # Store interaction in perceptual memory
+                    self._store_interaction(
+                        message=message,
+                        response=final_response,
+                        meta_reflection=meta_reflection,
+                        client=client
+                    )
+                    
+                    # Perform experience replay if enabled and it's time
+                    if (self.enable_experience_replay and 
+                        self.interaction_count % self.replay_frequency == 0 and
+                        self.interaction_count > 1):
+                        with self.console.status("[bold magenta]Performing experience replay..."):
+                            replay_result = await self._perform_experience_replay(client)
+                            if replay_result["success"] and self.console:
+                                self.console.print(
+                                    f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
+                                    style="dim"
+                                )
+                    
                     # Notify hooks that the agent has completed
                     self.hooks.on_end("CLI Agent", final_response)
                     return final_response
@@ -3093,12 +3509,57 @@ class CLIAgent:
                 self.hooks.on_error("CLI Agent", e)
                 return f"Error: {str(e)}"
 
+    def search_interaction_history(self, query: str, limit: int = 5) -> Dict:
+        """
+        Search through past interactions using semantic search
+        
+        Args:
+            query: Search query
+            limit: Maximum number of results to return
+            
+        Returns:
+            Dictionary with search results
+        """
+        try:
+            # Search memory
+            results = self.perceptual_memory.search_memory(query, limit, client)
+            
+            # Format results for display
+            formatted_results = []
+            for frame in results:
+                interaction = frame.get("interaction", {})
+                formatted_results.append({
+                    "id": frame.get("id", "unknown"),
+                    "timestamp": frame.get("datetime", "unknown"),
+                    "user_message": interaction.get("user_message", ""),
+                    "agent_response": interaction.get("agent_response", "")
+                })
+            
+            return {
+                "success": True,
+                "message": f"Found {len(formatted_results)} relevant interactions",
+                "data": formatted_results
+            }
+        except Exception as e:
+            logging.error(f"Error searching interaction history: {e}")
+            return {
+                "success": False,
+                "message": f"Error searching interaction history: {str(e)}",
+                "data": []
+            }
+    
+    def get_memory_stats(self) -> Dict:
+        """Get statistics about the perceptual memory system"""
+        return self.perceptual_memory.get_memory_stats()
+
 def main():
     """Main function for the CLI agent"""
     parser = argparse.ArgumentParser(description="CLI Agent for Data Analysis")
     parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent")
     parser.add_argument("--meta-model", default=None, help="Model to use for meta-reflection (defaults to same as primary model)")
     parser.add_argument("--disable-meta", action="store_true", help="Disable meta-cognitive reflection layer")
+    parser.add_argument("--disable-replay", action="store_true", help="Disable experience replay")
+    parser.add_argument("--memory-size", type=int, default=1000, help="Maximum number of interaction frames to store in memory")
     parser.add_argument("--trace", action="store_true", help="Enable tracing for debugging")
     parser.add_argument("--debug", action="store_true", help="Show debug information including agent hooks")
     parser.add_argument("--temperature", type=float, default=0.7, help="Temperature for model generation (0.0-2.0)")
@@ -3115,12 +3576,14 @@ def main():
     # Create console
     console = Console()
     
-    # Create the agent with meta-cognitive layer
+    # Create the agent with meta-cognitive layer and perceptual memory
     agent = CLIAgent(
         model=args.model, 
         meta_model=args.meta_model,
         console=console,
-        enable_meta=not args.disable_meta
+        enable_meta=not args.disable_meta,
+        max_memory_frames=args.memory_size,
+        enable_experience_replay=not args.disable_replay
     )
     
     
@@ -3219,11 +3682,15 @@ def main():
     
     # Welcome message
     meta_status = "enabled" if not args.disable_meta else "disabled"
+    replay_status = "enabled" if not args.disable_replay else "disabled"
+    memory_size = args.memory_size
+    
     console.print(Panel.fit(
         "[bold blue]Welcome to the Data Analysis CLI Agent![/bold blue]\n"
         "You can chat with me about data analysis tasks, and I'll help you analyze data, "
         "create visualizations, and more.\n"
         f"[bold cyan]Meta-cognitive reflection:[/bold cyan] {meta_status}\n"
+        f"[bold cyan]Experience replay:[/bold cyan] {replay_status} (memory: {memory_size} frames)\n"
         "[bold cyan]Dynamic Agents:[/bold cyan] You can create and use specialized agents for specific tasks.\n"
         "Type [bold green]'exit'[/bold green] to quit.",
         title="Data Analysis Assistant",
