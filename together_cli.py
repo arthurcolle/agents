@@ -3314,9 +3314,9 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
             List of dictionaries with function name and arguments
         """
     function_calls = []
-        
-        # Look for the standard format: [func_name(param1="value1", param2=value2)]
-        import re
+
+    # Look for the standard format: [func_name(param1="value1", param2=value2)]
+    import re
         pattern = r'\[(\w+)\((.*?)\)\]'
         matches = re.findall(pattern, text)
         
