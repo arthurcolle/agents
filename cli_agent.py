@@ -14,7 +14,9 @@ import glob
 import fnmatch
 import subprocess
 import re
-from typing import Dict, List, Any, Optional, Tuple
+import inspect
+import importlib
+from typing import Dict, List, Any, Optional, Tuple, Callable
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -1511,9 +1513,11 @@ class CLIAgent:
         except Exception as e:
             self.console.print(f"[bold red]Error initializing dynamic agents: {e}[/bold red]")
     
-        # Define available tools
-        # Add advanced visualization tool
-        self.tools = [
+        # Register built-in tools
+        self._register_builtin_tools()
+        
+        # Define available tools for OpenAI API
+        self.tools = self.tool_registry.get_openai_tools_format() + [
             # File system tools
             {
                 "type": "function",
@@ -2028,6 +2032,570 @@ class CLIAgent:
         
         logger.info(f"CLI agent initialized with model {self.model}")
     
+    def _register_builtin_tools(self):
+        """Register built-in tools with the tool registry"""
+        # Register data analysis tools
+        self.tool_registry.register_tool(
+            "load_csv", 
+            self.data_tools.load_csv,
+            "Load a CSV file and return basic statistics",
+            {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Path to the CSV file"
+                    }
+                },
+                "required": ["filepath"]
+            },
+            "data_analysis"
+        )
+        
+        self.tool_registry.register_tool(
+            "plot_data", 
+            self.data_tools.plot_data,
+            "Generate a plot from data and save it to a file",
+            {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "object",
+                        "description": "Data to plot"
+                    },
+                    "plot_type": {
+                        "type": "string",
+                        "description": "Type of plot (histogram, scatter, bar, line, heatmap)",
+                        "enum": ["histogram", "scatter", "bar", "line", "heatmap"]
+                    },
+                    "x_column": {
+                        "type": "string",
+                        "description": "Column to use for x-axis"
+                    },
+                    "y_column": {
+                        "type": "string",
+                        "description": "Column to use for y-axis (for scatter, bar, line plots)"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Title for the plot"
+                    }
+                },
+                "required": ["data", "plot_type"]
+            },
+            "data_analysis"
+        )
+        
+        self.tool_registry.register_tool(
+            "analyze_text", 
+            self.data_tools.analyze_text,
+            "Perform basic text analysis",
+            {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to analyze"
+                    }
+                },
+                "required": ["text"]
+            },
+            "data_analysis"
+        )
+        
+        # Register Modal tools
+        self.tool_registry.register_tool(
+            "list_modal_functions", 
+            self.modal.list_functions,
+            "List available functions in Modal",
+            {
+                "type": "object",
+                "properties": {}
+            },
+            "modal"
+        )
+        
+        self.tool_registry.register_tool(
+            "call_modal_function", 
+            self.modal.call_function,
+            "Call a function in Modal",
+            {
+                "type": "object",
+                "properties": {
+                    "function_name": {
+                        "type": "string",
+                        "description": "Name of the function to call"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Parameters for the function"
+                    }
+                },
+                "required": ["function_name", "params"]
+            },
+            "modal"
+        )
+        
+        # Register visualization tools
+        self.tool_registry.register_tool(
+            "create_advanced_visualization", 
+            self.data_tools.visualizer.create_visualization,
+            "Create advanced data visualizations including correlation matrices, pairplots, and more",
+            {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "object",
+                        "description": "Data to visualize"
+                    },
+                    "viz_type": {
+                        "type": "string",
+                        "description": "Type of visualization to create",
+                        "enum": ["correlation_matrix", "pairplot", "distribution", "boxplot", "timeseries", "3d_scatter"]
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Title for the visualization"
+                    },
+                    "columns": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Specific columns to include in the visualization"
+                    }
+                },
+                "required": ["data", "viz_type"]
+            },
+            "visualization"
+        )
+        
+        # Register file system tools
+        self.tool_registry.register_tool(
+            "list_files", 
+            self.file_tools.list_files,
+            "List files in a directory with advanced filtering and sorting options",
+            {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory path to list files from (default: current directory)"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern to filter files (default: *)"
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "Whether to recursively list files in subdirectories (default: false)"
+                    },
+                    "include_hidden": {
+                        "type": "boolean",
+                        "description": "Whether to include hidden files (starting with .) (default: false)"
+                    },
+                    "sort_by": {
+                        "type": "string",
+                        "description": "How to sort results (name, size, modified, type) (default: name)",
+                        "enum": ["name", "size", "modified", "type"]
+                    }
+                }
+            },
+            "file_system"
+        )
+        
+        self.tool_registry.register_tool(
+            "read_file", 
+            self.file_tools.read_file,
+            "Read the contents of a file with advanced options",
+            {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Path to the file to read"
+                    },
+                    "max_size": {
+                        "type": "integer",
+                        "description": "Maximum file size in bytes (default: 1MB)"
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "description": "File encoding to use (default: utf-8)"
+                    },
+                    "chunk_size": {
+                        "type": "integer",
+                        "description": "If set, read only this many bytes"
+                    },
+                    "line_numbers": {
+                        "type": "boolean",
+                        "description": "Whether to include line numbers (default: false)"
+                    },
+                    "syntax_highlight": {
+                        "type": "boolean",
+                        "description": "Whether to detect and include syntax highlighting info (default: false)"
+                    }
+                },
+                "required": ["filepath"]
+            },
+            "file_system"
+        )
+        
+        self.tool_registry.register_tool(
+            "write_file", 
+            self.file_tools.write_file,
+            "Write content to a file with advanced options",
+            {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Path to the file to write"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Whether to overwrite the file if it exists (default: false)"
+                    },
+                    "append": {
+                        "type": "boolean",
+                        "description": "Whether to append to existing files (default: false)"
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "description": "File encoding to use (default: utf-8)"
+                    },
+                    "create_backup": {
+                        "type": "boolean",
+                        "description": "Whether to create a backup of existing file (default: false)"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "File permissions mode (e.g., '644')"
+                    }
+                },
+                "required": ["filepath", "content"]
+            },
+            "file_system"
+        )
+        
+        self.tool_registry.register_tool(
+            "copy_file", 
+            self.file_tools.copy_file,
+            "Copy a file from source to destination",
+            {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Path to the source file"
+                    },
+                    "destination": {
+                        "type": "string",
+                        "description": "Path to the destination file"
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Whether to overwrite the destination file if it exists (default: false)"
+                    }
+                },
+                "required": ["source", "destination"]
+            },
+            "file_system"
+        )
+        
+        self.tool_registry.register_tool(
+            "delete_file", 
+            self.file_tools.delete_file,
+            "Delete a file or directory",
+            {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Path to the file or directory to delete"
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "Whether to recursively delete directories (default: false)"
+                    }
+                },
+                "required": ["filepath"]
+            },
+            "file_system"
+        )
+        
+        # Register coding tools
+        self.tool_registry.register_tool(
+            "execute_python", 
+            self.code_tools.execute_python,
+            "Execute Python code in a controlled environment with advanced options",
+            {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Python code to execute"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 10)"
+                    },
+                    "save_history": {
+                        "type": "boolean",
+                        "description": "Whether to save execution history (default: true)"
+                    },
+                    "sandbox": {
+                        "type": "boolean",
+                        "description": "Whether to run in a sandbox directory (default: true)"
+                    },
+                    "allow_imports": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Additional imports to allow for this execution"
+                    },
+                    "provide_inputs": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of inputs to provide to the program"
+                    },
+                    "environment": {
+                        "type": "object",
+                        "description": "Environment variables to set"
+                    }
+                },
+                "required": ["code"]
+            },
+            "coding"
+        )
+        
+        self.tool_registry.register_tool(
+            "execute_shell", 
+            self.code_tools.execute_shell,
+            "Execute a shell command with advanced options",
+            {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 10)"
+                    },
+                    "save_history": {
+                        "type": "boolean",
+                        "description": "Whether to save execution history (default: true)"
+                    },
+                    "sandbox": {
+                        "type": "boolean",
+                        "description": "Whether to run in a sandbox directory (default: true)"
+                    },
+                    "environment": {
+                        "type": "object",
+                        "description": "Environment variables to set"
+                    },
+                    "working_dir": {
+                        "type": "string",
+                        "description": "Working directory for command execution"
+                    }
+                },
+                "required": ["command"]
+            },
+            "coding"
+        )
+        
+        self.tool_registry.register_tool(
+            "analyze_code", 
+            self.code_tools.analyze_code,
+            "Analyze Python code for quality, complexity, and potential issues",
+            {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Python code to analyze"
+                    }
+                },
+                "required": ["code"]
+            },
+            "coding"
+        )
+        
+        self.tool_registry.register_tool(
+            "get_execution_history", 
+            self.code_tools.get_execution_history,
+            "Get the execution history of code and commands",
+            {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of history items to return (default: 10)"
+                    },
+                    "execution_type": {
+                        "type": "string",
+                        "description": "Filter by execution type (python or shell)",
+                        "enum": ["python", "shell"]
+                    }
+                }
+            },
+            "coding"
+        )
+        
+        self.tool_registry.register_tool(
+            "set_security_level", 
+            self.code_tools.set_security_level,
+            "Set the security level for code execution",
+            {
+                "type": "object",
+                "properties": {
+                    "level": {
+                        "type": "string",
+                        "description": "Security level to set",
+                        "enum": ["safe", "data_science", "standard_library", "web", "all"]
+                    }
+                },
+                "required": ["level"]
+            },
+            "coding"
+        )
+        
+        # Register dynamic agent tools
+        self.tool_registry.register_tool(
+            "create_agent", 
+            self._create_agent,
+            "Create a new specialized agent for a specific task",
+            {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Unique identifier for the agent"
+                    },
+                    "agent_type": {
+                        "type": "string",
+                        "description": "Type of agent to create",
+                        "enum": ["file", "data_analysis"]
+                    }
+                },
+                "required": ["agent_id", "agent_type"]
+            },
+            "agents"
+        )
+        
+        self.tool_registry.register_tool(
+            "list_agents", 
+            self._list_agents,
+            "List all available agents",
+            {
+                "type": "object",
+                "properties": {}
+            },
+            "agents"
+        )
+        
+        # Register tool management tools
+        self.tool_registry.register_tool(
+            "register_tool", 
+            self._register_new_tool,
+            "Register a new tool that the agent can use",
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the tool"
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "Python code defining the function"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of what the tool does"
+                    },
+                    "parameters": {
+                        "type": "object",
+                        "description": "OpenAI-compatible parameters schema"
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Category for organizing tools (default: custom)"
+                    }
+                },
+                "required": ["name", "code", "description", "parameters"]
+            },
+            "tool_management"
+        )
+        
+        self.tool_registry.register_tool(
+            "unregister_tool", 
+            self._unregister_tool,
+            "Remove a tool from the registry",
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the tool to remove"
+                    }
+                },
+                "required": ["name"]
+            },
+            "tool_management"
+        )
+        
+        self.tool_registry.register_tool(
+            "list_tools", 
+            self._list_tools,
+            "List all available tools or tools in a specific category",
+            {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Category to filter tools (optional)"
+                    }
+                }
+            },
+            "tool_management"
+        )
+    
+    def _register_new_tool(self, name: str, code: str, description: str, 
+                          parameters: Dict[str, Any], category: str = "custom") -> Dict:
+        """Register a new tool from code"""
+        return self.tool_registry.load_tool_from_code(
+            name, code, description, parameters, category
+        )
+    
+    def _unregister_tool(self, name: str) -> Dict:
+        """Remove a tool from the registry"""
+        return self.tool_registry.unregister_tool(name)
+    
+    def _list_tools(self, category: str = None) -> Dict:
+        """List all available tools or tools in a specific category"""
+        tools = self.tool_registry.list_tools(category)
+        categories = self.tool_registry.list_categories()
+        
+        return {
+            "success": True,
+            "message": f"Found {len(tools)} tools" + (f" in category '{category}'" if category else ""),
+            "data": {
+                "tools": tools,
+                "categories": categories,
+                "tool_count": len(tools)
+            }
+        }
+    
     def _handle_tool_call(self, name: str, arguments: Dict) -> Dict:
         """Handle tool calls from the agent"""
         logger.info(f"Handling tool call: {name} with arguments {arguments}")
@@ -2037,45 +2605,10 @@ class CLIAgent:
         
         result = None
         try:
-            if name == "load_csv":
-                result = self.data_tools.load_csv(**arguments)
-            elif name == "plot_data":
-                result = self.data_tools.plot_data(**arguments)
-            elif name == "analyze_text":
-                result = self.data_tools.analyze_text(**arguments)
-            elif name == "list_modal_functions":
-                result = self.modal.list_functions()
-            elif name == "call_modal_function":
-                result = self.modal.call_function(**arguments)
-            elif name == "create_advanced_visualization":
-                result = self.data_tools.visualizer.create_visualization(**arguments)
-            # File system tools
-            elif name == "list_files":
-                result = self.file_tools.list_files(**arguments)
-            elif name == "read_file":
-                result = self.file_tools.read_file(**arguments)
-            elif name == "write_file":
-                result = self.file_tools.write_file(**arguments)
-            elif name == "copy_file":
-                result = self.file_tools.copy_file(**arguments)
-            elif name == "delete_file":
-                result = self.file_tools.delete_file(**arguments)
-            # Coding tools
-            elif name == "execute_python":
-                result = self.code_tools.execute_python(**arguments)
-            elif name == "execute_shell":
-                result = self.code_tools.execute_shell(**arguments)
-            elif name == "analyze_code":
-                result = self.code_tools.analyze_code(**arguments)
-            elif name == "get_execution_history":
-                result = self.code_tools.get_execution_history(**arguments)
-            elif name == "set_security_level":
-                result = self.code_tools.set_security_level(**arguments)
-            # Dynamic agent tools
-            elif name == "create_agent":
-                result = self._create_agent(**arguments)
-            elif name == "list_agents":
-                result = self._list_agents()
+            # Check if the tool is in the registry
+            if self.tool_registry.get_tool(name):
+                result = self.tool_registry.execute_tool(name, arguments)
+            # Handle dynamic agent tools
             elif name == "execute_agent_command":
                 result = asyncio.run(self._execute_agent_command(**arguments))
             else:
@@ -2348,6 +2881,7 @@ def main():
         enable_meta=not args.disable_meta
     )
     
+    
     # If --list-agents flag is provided, list agents and exit
     if args.list_agents:
         agents = registry.list_agents()
@@ -2372,6 +2906,69 @@ def main():
         else:
             console.print("[yellow]No agents registered yet.[/yellow]")
         
+        return
+    
+    # If --list-tools flag is provided, list tools and exit
+    if args.list_tools:
+        tools_result = agent._list_tools()
+        
+        if tools_result["success"]:
+            tools = tools_result["data"]["tools"]
+            categories = tools_result["data"]["categories"]
+            
+            console.print(Panel.fit(
+                f"[bold]Available Tool Categories:[/bold] {', '.join(categories)}\n\n"
+                f"[bold]Registered Tools:[/bold] {len(tools)} total",
+                title="Available Tools",
+                border_style="green"
+            ))
+            
+            # Group tools by category
+            tools_by_category = {}
+            for category in categories:
+                tools_by_category[category] = agent.tool_registry.list_tools(category)
+            
+            # Display tools by category
+            for category, category_tools in tools_by_category.items():
+                if category_tools:
+                    console.print(f"\n[bold cyan]{category.upper()}[/bold cyan] ({len(category_tools)} tools)")
+                    
+                    table = Table(show_header=True, header_style="bold magenta", box=None)
+                    table.add_column("Tool Name")
+                    table.add_column("Description")
+                    
+                    for tool_name in category_tools:
+                        description = agent.tool_registry.get_tool_description(tool_name) or ""
+                        # Truncate description if too long
+                        if len(description) > 60:
+                            description = description[:57] + "..."
+                        table.add_row(tool_name, description)
+                    
+                    console.print(table)
+        else:
+            console.print(f"[bold red]Error listing tools: {tools_result['message']}[/bold red]")
+        
+        return
+    
+    # If --list-categories flag is provided, list categories and exit
+    if args.list_categories:
+        categories = agent.tool_registry.list_categories()
+        
+        console.print(Panel.fit(
+            f"[bold]Available Tool Categories:[/bold]\n",
+            title="Tool Categories",
+            border_style="green"
+        ))
+        
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Category")
+        table.add_column("Tool Count")
+        
+        for category in categories:
+            tool_count = len(agent.tool_registry.list_tools(category))
+            table.add_row(category, str(tool_count))
+        
+        console.print(table)
         return
     
     # Configure OpenAI client with additional parameters
