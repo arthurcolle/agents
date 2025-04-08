@@ -3011,7 +3011,7 @@ class ToolRegistry:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
 class TogetherAgent:
-    def __init__(self, model: str = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"):
+    def __init__(self, model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"):
         """Initialize the agent with the Together API."""
         self.api_key = os.environ.get("TOGETHER_API_KEY")
         if not self.api_key:
@@ -3164,6 +3164,56 @@ print("Hello, world!")
         else:
             self.max_context_length = 8192  # Default for other models
         
+    def generate_response(self, user_input):
+        """Generate a response to the user input."""
+        if isinstance(user_input, list):
+            # Handle multimodal content
+            self.update_environment_user_behavior(user_input)
+            
+            # Add user message to conversation history
+            user_message = {"role": "user", "content": user_input}
+            self.conversation_history.append(user_message)
+            
+            # Get model response
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=self.conversation_history
+            )
+            
+            # Extract assistant message
+            assistant_message = response.choices[0].message.content
+            
+            # Add assistant message to conversation history
+            self.conversation_history.append({"role": "assistant", "content": assistant_message})
+            
+            return assistant_message
+        else:
+            # Handle text-only content
+            self.update_environment_user_behavior(user_input)
+            
+            # Add user message to conversation history
+            user_message = {"role": "user", "content": user_input}
+            self.conversation_history.append(user_message)
+            
+            # Get model response
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=self.conversation_history
+            )
+            
+            # Extract assistant message
+            assistant_message = response.choices[0].message.content
+            
+            # Add assistant message to conversation history
+            self.conversation_history.append({"role": "assistant", "content": assistant_message})
+            
+            return assistant_message
+            
+    # Alias for generate_response
+    def chat(self, user_input):
+        """Alias for generate_response method."""
+        return self.generate_response(user_input)
+        
         # Define system prompt with Llama 4 format
         if self.is_llama4:
             # Use Llama 4 recommended system prompt
@@ -3301,11 +3351,12 @@ def extract_python_code(text: str) -> list:
     return [match.strip() for match in matches]
 
 def parse_function_calls(text: str) -> List[Dict[str, Any]]:
-    """Parse function calls from text in various Llama 4 supported formats.
+    """Parse function calls from text in various Llama formats.
         
-        Supports two formats:
+        Supports three formats:
         1. [func_name(param1=value1, param2=value2)]
         2. <function=func_name>{"param1": "value1", "param2": "value2"}</function>
+        3. JSON structured output: {"name": "func_name", "arguments": {"param1": "value1"}}
         
         Args:
             text: The text containing potential function calls
@@ -3315,138 +3366,429 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
         """
     function_calls = []
 
-    # Look for the standard format: [func_name(param1="value1", param2=value2)]
-    import re
+    # First try to find JSON function calls (preferred method)
+    json_pattern = r'\{(?:[^{}]|(?:\{[^{}]*\}))*\}'
+    potential_matches = re.findall(json_pattern, text)
+    
+    for potential_json in potential_matches:
+        try:
+            data = json.loads(potential_json)
+            
+            # Check if this looks like a function call
+            if isinstance(data, dict) and "name" in data and "arguments" in data:
+                function_calls.append({
+                    "name": data["name"],
+                    "arguments": data["arguments"]
+                })
+        except json.JSONDecodeError:
+            continue
+            
+    # If we found structured function calls, return them
+    if function_calls:
+        return function_calls
+
+    # Fall back to the standard format: [func_name(param1="value1", param2=value2)]
     pattern = r'\[(\w+)\((.*?)\)\]'
-        matches = re.findall(pattern, text)
+    matches = re.findall(pattern, text)
+    
+    for match in matches:
+        func_name = match[0]
+        args_str = match[1]
         
-        for match in matches:
-            func_name = match[0]
-            args_str = match[1]
-            
-            # Parse arguments
-            args = {}
-            try:
-                # First try to parse as JSON if arguments look like a JSON object
-                args_str = args_str.strip()
-                if args_str.startswith("{") and args_str.endswith("}"):
-                    args = json.loads(args_str)
-                else:
-                    # Fall back to regex for param=value format
-                    # Split by commas, but not those inside quotes
-                    arg_pairs = re.findall(r'(\w+)=("[^"]*"|\'[^\']*\'|\S+)', args_str)
-                    
-                    for arg_name, arg_value in arg_pairs:
-                        # Remove quotes if present
-                        if (arg_value.startswith('"') and arg_value.endswith('"')) or \
-                           (arg_value.startswith("'") and arg_value.endswith("'")):
-                            arg_value = arg_value[1:-1]
-                        args[arg_name] = arg_value
-            except json.JSONDecodeError:
-                console.print(f"[red]Error parsing arguments for {func_name}: {args_str}[/red]")
-            
+        # Parse arguments
+        args = {}
+        try:
+            # First try to parse as JSON if arguments look like a JSON object
+            args_str = args_str.strip()
+            if args_str.startswith("{") and args_str.endswith("}"):
+                args = json.loads(args_str)
+            else:
+                # Fall back to regex for param=value format
+                # Split by commas, but not those inside quotes
+                arg_pairs = re.findall(r'(\w+)=("[^"]*"|\'[^\']*\'|\S+)', args_str)
+                
+                for arg_name, arg_value in arg_pairs:
+                    # Remove quotes if present
+                    if (arg_value.startswith('"') and arg_value.endswith('"')) or \
+                       (arg_value.startswith("'") and arg_value.endswith("'")):
+                        arg_value = arg_value[1:-1]
+                    args[arg_name] = arg_value
+        except json.JSONDecodeError:
+            console.print(f"[red]Error parsing arguments for {func_name}: {args_str}[/red]")
+            continue
+        
+        function_calls.append({
+            "name": func_name,
+            "arguments": args
+        })
+    
+    # Also check for the custom format <function=func_name>{"param": "value"}</function>
+    function_pattern = r'<function=(\w+)>(.*?)</function>'
+    function_matches = re.findall(function_pattern, text)
+    
+    for match in function_matches:
+        func_name = match[0]
+        try:
+            args = json.loads(match[1])
             function_calls.append({
                 "name": func_name,
                 "arguments": args
             })
-        
-        # Also check for the custom format <function=func_name>{"param": "value"}</function>
-        function_pattern = r'<function=(\w+)>(.*?)</function>'
-        function_matches = re.findall(function_pattern, text)
-        
-        for match in function_matches:
-            func_name = match[0]
-            try:
-                args = json.loads(match[1])
-                function_calls.append({
-                    "name": func_name,
-                    "arguments": args
-                })
-            except json.JSONDecodeError:
-                console.print(f"[red]Error parsing arguments for {func_name}: {match[1]}[/red]")
-        
-        return function_calls
-
-    def format_llama4_prompt(self) -> str:
-        """Format messages according to Llama 4 prompt format.
-        
-        Returns:
-            A properly formatted Llama 4 prompt string
-        """
-        # Start with begin_of_text token
-        formatted_prompt = "<|begin_of_text|>"
-        
-        # Add all messages with proper header tags
-        for msg in self.conversation_history:
-            role = msg.get("role")
-            content = msg.get("content", "")
-            
-            # Skip 'tool' type messages for now - they don't fit directly in the Llama 4 format
-            if role == "tool":
-                continue
-                
-            # Add header and content
-            formatted_prompt += f"<|header_start|>{role}<|header_end|>\n\n{content}"
-            
-            # Make sure each message (except system) ends with <|eot|>
-            if role != "system" and not content.endswith("<|eot|>"):
-                formatted_prompt += "<|eot|>"
-        
-        # Add the final assistant header
-        formatted_prompt += f"<|header_start|>assistant<|header_end|>"
-        
-        return formatted_prompt
+        except json.JSONDecodeError:
+            console.print(f"[red]Error parsing arguments for {func_name}: {match[1]}[/red]")
     
-    def process_image_in_message(self, message):
-        """Process and extract image references from message.
+    return function_calls
+
+def get_structured_function_call(messages: List[Dict[str, str]], tools: List[Dict[str, Any]], model: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo") -> List[Dict[str, Any]]:
+    """Get function calls using JSON structured output.
+    
+    Uses Together API's JSON mode to guarantee structured output for function calls
+    without needing to parse with regex.
+    
+    Args:
+        messages: List of message dictionaries (role, content)
+        tools: List of tool definitions
+        model: Model identifier to use
         
-        For Llama 4, handles multi-modal messages with multiple images.
+    Returns:
+        List of function calls in standard format
+    """
+    from pydantic import BaseModel, Field
+    from typing import Dict, List, Any, Optional
+    
+    # Define the schema for function calls
+    class FunctionArguments(BaseModel):
+        arguments: Dict[str, Any] = Field(description="Arguments for the function call")
+
+    class FunctionCall(BaseModel):
+        name: str = Field(description="Name of the function to call")
+        arguments: Dict[str, Any] = Field(description="Arguments for the function call")
+
+    # Prepare system message instructing the model to use JSON for function calls
+    system_prefix = "You must respond with a valid JSON function call. "
+    system_found = False
+    
+    # Check if there's already a system message and append to it
+    for msg in messages:
+        if msg["role"] == "system":
+            msg["content"] = system_prefix + msg["content"]
+            system_found = True
+            break
+    
+    # If no system message, add one
+    if not system_found:
+        messages.insert(0, {
+            "role": "system",
+            "content": system_prefix + "Use the available tools to respond to the user's request."
+        })
         
-        Args:
-            message: The user message (string or list of content objects)
-            
-        Returns:
-            Processed message suitable for the Llama 4 API
-        """
-        # Check if this is a multi-modal message (list of content objects)
-        if isinstance(message, list):
-            # This is already a structured multi-modal message
-            return message
+    # Initialize Together client
+    from together import Together
+    together = Together()
+    
+    # Make the request with JSON mode enabled
+    response = together.chat.completions.create(
+        messages=messages,
+        model=model,
+        response_format={
+            "type": "json_object",
+            "schema": FunctionCall.model_json_schema()
+        },
+        tools=tools
+    )
+    
+    # Parse the JSON response
+    content = response.choices[0].message.content
+    try:
+        data = json.loads(content)
+        # Ensure the response matches our expected format
+        if "name" in data and "arguments" in data:
+            return [{
+                "name": data["name"],
+                "arguments": data["arguments"]
+            }]
+        return []
+    except json.JSONDecodeError:
+        # Fall back to regex parsing if JSON parsing fails
+        console.print("[yellow]Warning: JSON parsing failed, falling back to regex[/yellow]")
+        return parse_function_calls(content)
+
+
+def get_parallel_function_calls(messages: List[Dict[str, str]], tools: List[Dict[str, Any]], model: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo") -> List[Dict[str, Any]]:
+    """Get multiple function calls to execute in parallel using JSON structured output.
+    
+    Uses Together API's JSON mode to get a list of function calls to execute
+    in parallel, guaranteeing structured output without regex parsing.
+    
+    Args:
+        messages: List of message dictionaries (role, content)
+        tools: List of tool definitions
+        model: Model identifier to use
         
-        # Check if the message contains image URLs in standard format
-        import re
-        image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', message)
+    Returns:
+        List of function calls in standard format
+    """
+    from pydantic import BaseModel, Field
+    from typing import Dict, List, Any, Optional
+    
+    # Define the schema for parallel function calls
+    class FunctionCall(BaseModel):
+        name: str = Field(description="Name of the function to call")
+        arguments: Dict[str, Any] = Field(description="Arguments for the function call")
+    
+    class ParallelFunctionCalls(BaseModel):
+        calls: List[FunctionCall] = Field(description="List of function calls to execute in parallel")
+
+    # Prepare system message instructing the model to return multiple function calls
+    system_prefix = "You must respond with a valid JSON object containing multiple function calls to execute in parallel. "
+    system_found = False
+    
+    # Check if there's already a system message and append to it
+    for msg in messages:
+        if msg["role"] == "system":
+            msg["content"] = system_prefix + msg["content"]
+            system_found = True
+            break
+    
+    # If no system message, add one
+    if not system_found:
+        messages.insert(0, {
+            "role": "system",
+            "content": system_prefix + "Identify all operations that can be executed in parallel and return them as a list of function calls."
+        })
         
-        if not image_urls:
-            # No images detected, return the original message
-            return message
+    # Initialize Together client
+    from together import Together
+    together = Together()
+    
+    # Make the request with JSON mode enabled
+    response = together.chat.completions.create(
+        messages=messages,
+        model=model,
+        response_format={
+            "type": "json_object",
+            "schema": ParallelFunctionCalls.model_json_schema()
+        },
+        tools=tools
+    )
+    
+    # Parse the JSON response
+    content = response.choices[0].message.content
+    try:
+        data = json.loads(content)
+        # Ensure the response matches our expected format
+        if "calls" in data and isinstance(data["calls"], list):
+            return [
+                {"name": call["name"], "arguments": call["arguments"]} 
+                for call in data["calls"] if "name" in call and "arguments" in call
+            ]
+        return []
+    except json.JSONDecodeError:
+        # Fall back to regex parsing if JSON parsing fails
+        console.print("[yellow]Warning: JSON parsing for parallel calls failed, falling back to regex[/yellow]")
+        return parse_function_calls(content)
+
+
+def execute_parallel_functions(function_calls: List[Dict[str, Any]], tool_registry):
+    """Execute multiple function calls in parallel using AsyncTaskProcessor.
+    
+    Args:
+        function_calls: List of function call dictionaries with name and arguments
+        tool_registry: Registry containing the available tools
         
-        # Convert to multi-modal format
-        multimodal_content = []
+    Returns:
+        List of results from all function executions
+    """
+    task_processor = AsyncTaskProcessor()
+    tasks = []
+    
+    for func_call in function_calls:
+        function_name = func_call.get("name")
+        arguments = func_call.get("arguments", {})
         
-        # Add the text content first, removing the image URLs
-        text_content = message
-        for url in image_urls:
-            text_content = text_content.replace(url, '')
+        # Check if the function exists in the tool registry
+        if tool_registry.has_tool(function_name):
+            func = tool_registry.get_tool(function_name)
+            # Add task to the processor
+            task_id = task_processor.add_task(func, **arguments)
+            tasks.append((task_id, function_name, arguments))
+        else:
+            console.print(f"[red]Function {function_name} not found in tool registry[/red]")
+    
+    # Wait for all tasks to complete
+    results = []
+    for task_id, function_name, arguments in tasks:
+        # Poll until task is complete
+        while True:
+            task_result = task_processor.get_result(task_id)
+            if task_result["status"] in ["completed", "failed"]:
+                results.append({
+                    "function_name": function_name,
+                    "arguments": arguments,
+                    "status": task_result["status"],
+                    "result": task_result.get("result") if task_result["status"] == "completed" else task_result.get("error")
+                })
+                break
+            time.sleep(0.1)
+    
+    # Stop the task processor
+    task_processor.stop()
+    
+    return results
+
+
+def batch_process_function_calls(agent, user_message, max_batch_size=5):
+    """Process multiple function calls in batches for efficiency.
+    
+    Args:
+        agent: The TogetherAgent instance
+        user_message: The original user message
+        max_batch_size: Maximum number of operations to process in parallel
         
-        text_content = text_content.strip()
+    Returns:
+        Final response after all batches completed
+    """
+    # First, get all potential function calls
+    all_function_calls = get_parallel_function_calls(
+        messages=[
+            {"role": "system", "content": "Identify all operations needed to complete this task. Return them as JSON."},
+            {"role": "user", "content": user_message}
+        ],
+        tools=agent.tool_registry.get_openai_tools_format(),
+        model=agent.model
+    )
+    
+    if not all_function_calls:
+        # Fall back to normal processing if no parallel functions identified
+        return agent.chat(user_message)
+    
+    console.print(f"[cyan]Identified {len(all_function_calls)} operations to process in batches[/cyan]")
+    
+    # Process functions in batches
+    all_results = []
+    for i in range(0, len(all_function_calls), max_batch_size):
+        batch = all_function_calls[i:i+max_batch_size]
+        console.print(f"[cyan]Processing batch {i//max_batch_size + 1} with {len(batch)} operations[/cyan]")
         
-        if text_content:
-            multimodal_content.append({
-                "type": "text",
-                "text": text_content
-            })
+        # Execute the batch in parallel
+        batch_results = execute_parallel_functions(batch, agent.tool_registry)
+        all_results.extend(batch_results)
         
-        # Add each image URL as a separate content object
-        for url in image_urls:
-            multimodal_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": url
-                }
-            })
+        # Add the batch results to conversation history
+        result_message = {
+            "role": "function",
+            "content": json.dumps(batch_results, indent=2)
+        }
+        agent.conversation_history.append(result_message)
+    
+    # Get final summary from the agent
+    final_prompt = f"""I've completed all the operations you requested. Here's a summary of the results:
+    
+{json.dumps(all_results, indent=2)}
+
+Please provide a final summary of all the work completed."""
+    
+    # Add the summary request as a user message
+    agent.last_user_message = final_prompt
+    agent.add_message("user", final_prompt)
+    
+    # Get final response with no function calling
+    from together import Together
+    together = Together()
+    
+    response = together.chat.completions.create(
+        messages=agent.conversation_history,
+        model=agent.model,
+        tool_choice="none"  # Force text response after tool use
+    )
+    
+    final_message = response.choices[0].message
+    agent.conversation_history.append(final_message.model_dump())
+    return final_message.content
+
+
+# Second TogetherAgent class definition removed to fix duplicate class error
+# class TogetherAgent:
+#     def format_llama4_prompt(self) -> str:
+#         """Format messages according to Llama 4 prompt format.
+#         
+#         Returns:
+#             A properly formatted Llama 4 prompt string
+#         """
+#         # Start with begin_of_text token
+#         formatted_prompt = "<|begin_of_text|>"
         
-        return multimodal_content
+#         # Add all messages with proper header tags
+#         for msg in self.conversation_history:
+#             role = msg.get("role")
+#             content = msg.get("content", "")
+#             
+#             # Skip 'tool' type messages for now - they don't fit directly in the Llama 4 format
+#             if role == "tool":
+#                 continue
+#                 
+#             # Add header and content
+#             formatted_prompt += f"<|header_start|>{role}<|header_end|>\n\n{content}"
+#             
+#             # Make sure each message (except system) ends with <|eot|>
+#             if role != "system" and not content.endswith("<|eot|>"):
+#                 formatted_prompt += "<|eot|>"
+#         
+#         # Add the final assistant header
+#         formatted_prompt += f"<|header_start|>assistant<|header_end|>"
+#         
+#         return formatted_prompt
+    
+#     def process_image_in_message(self, message):
+#         """Process and extract image references from message.
+#         
+#         For Llama 4, handles multi-modal messages with multiple images.
+        
+#         Args:
+#             message: The user message (string or list of content objects)
+#             
+#         Returns:
+#             Processed message suitable for the Llama 4 API
+#         """
+#         # Check if this is a multi-modal message (list of content objects)
+#         if isinstance(message, list):
+#             # This is already a structured multi-modal message
+#             return message
+#         
+#         # Check if the message contains image URLs in standard format
+#         import re
+#         image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', message)
+        
+#        if not image_urls:
+#            # No images detected, return the original message
+#            return message
+#        
+#        # Convert to multi-modal format
+#        multimodal_content = []
+        
+#        # Add the text content first, removing the image URLs
+#        text_content = message
+#        for url in image_urls:
+#            text_content = text_content.replace(url, '')
+#        
+#        text_content = text_content.strip()
+#        
+#        if text_content:
+#            multimodal_content.append({
+#                "type": "text",
+#                "text": text_content
+#            })
+#        
+#        # Add each image URL as a separate content object
+#        for url in image_urls:
+#            multimodal_content.append({
+#                "type": "image_url",
+#                "image_url": {
+#                    "url": url
+#                }
+#            })
+#        
+#        return multimodal_content
     
     def add_message(self, role: str, content):
         """Add a message to the conversation history.
@@ -3690,7 +4032,10 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
                             code_blocks = self.extract_python_code(response_content)
                             if code_blocks:
                                 for code_block in code_blocks:
-                                    if "Run the code" in message or "run the code" in message:
+                                    if hasattr(self, 'last_user_message') and (
+                                      "Run the code" in self.last_user_message or 
+                                      "run the code" in self.last_user_message
+                                    ):
                                         console.print("[cyan]Executing Python code:[/cyan]")
                                         
                                         # Direct execution using our own _execute_python method
@@ -3780,6 +4125,8 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
                 console.print(f"[red]Error: {str(e)}[/red]")
                 console.print(traceback.format_exc())
                 return f"Error: {str(e)}"
+                
+    def process_tool_calls(self, tool_calls):
         """Process tool calls from the agent's response."""
         results = []
         
@@ -3812,6 +4159,7 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
         
         return results
     
+    def chat(self, message):
         """Send a message to the agent and get a response.
         
         Args:
@@ -3820,6 +4168,9 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
         Returns:
             The agent's response as a string
         """
+        # Store the last user message for reference
+        self.last_user_message = message
+        
         # Add the user message to the conversation
         self.add_message("user", message)
         
@@ -4006,7 +4357,10 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
                             code_blocks = self.extract_python_code(response_content)
                             if code_blocks:
                                 for code_block in code_blocks:
-                                    if "Run the code" in message or "run the code" in message:
+                                    if hasattr(self, 'last_user_message') and (
+                                      "Run the code" in self.last_user_message or 
+                                      "run the code" in self.last_user_message
+                                    ):
                                         console.print("[cyan]Executing Python code:[/cyan]")
                                         
                                         # Direct execution using our own _execute_python method
@@ -4183,12 +4537,12 @@ def main():
                 
                 # Start a spinner while waiting for the response
                 with console.status("[bold blue]Thinking about your images...[/bold blue]", spinner="dots"):
-                    response = agent.chat(multimodal_content)
+                    response = agent.generate_response(multimodal_content)
             else:
                 # Standard text message
                 # Start a spinner while waiting for the response
                 with console.status("[bold blue]Thinking...[/bold blue]", spinner="dots"):
-                    response = agent.chat(user_input)
+                    response = agent.generate_response(user_input)
             
             # Check if we have logprobs to analyze model confidence
             if any('logprobs' in msg for msg in agent.conversation_history[-2:] if isinstance(msg, dict)):
