@@ -2195,7 +2195,6 @@ class ToolRegistry:
             },
             function=self._respond_to_user
         )
-        
         # Weather function for direct location queries
         self.register_function(
             name="weather_for_location",
@@ -2256,7 +2255,6 @@ class ToolRegistry:
             },
             function=self._extract_and_execute_code
         )
-        
         self.register_function(
             name="generate_solution_rollouts",
             description="Generate multiple solution approaches (rollouts) for a given task",
@@ -2722,10 +2720,8 @@ class ToolRegistry:
     def _respond_to_user(self, message: str) -> Dict[str, Any]:
         """Simple tool to respond directly to the user with text"""
         return {
-            "success": True,
-            "response_sent": message
+            "response_sent": text_to_send
         }
-        
     def _orchestrate_tasks(self, main_task: str, subtasks: List[str] = None, priority: int = 1, context: Dict[str, Any] = None, agent=None) -> Dict[str, Any]:
         """Orchestrate multiple parallel tasks using scout agents"""
         try:
@@ -2947,7 +2943,7 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
-    def _extract_code(self, text: str, language: str = "", agent=None) -> Dict[str, Any]:
+    def _extract_code(self, text: str, language: str = "", execute: bool = False, agent=None) -> Dict[str, Any]:
         """Extract code blocks from text using structured output parsing"""
         try:
             # Import the CodeExtractor class
@@ -2980,16 +2976,47 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
-    def _extract_and_execute_code(self, text: str, agent=None) -> Dict[str, Any]:
-        """Extract code blocks from text and execute them"""
+    def _extract_and_execute_code(self, text: str = None, code: str = None, agent=None) -> Dict[str, Any]:
+        """Extract code blocks from text/code and execute them. Accepts 'text' or 'code'."""
+        input_text = text if text is not None else code
+        if input_text is None:
+            return {"error": "No text or code provided to extract and execute", "success": False}
+            
         try:
             # Import the CodeExtractor class
-            from code_extractor import CodeExtractor
+            from code_extractor import CodeExtractor, CodeBlock
             
             extractor = CodeExtractor()
-            result = extractor.extract_and_execute(text)
             
-            return result
+            # Try extracting using the standard method
+            extracted_blocks = extractor.extract_python_code(input_text)
+            
+            if not extracted_blocks:
+                # Fallback: If no blocks found with tags, check if the input itself is Python code
+                if any(kw in input_text for kw in ["import ", "def ", "class ", "print("]):
+                    console.print("[yellow]No code blocks found with tags, attempting to execute raw input as Python.[/yellow]")
+                    # Wrap the raw input as if it were a code block
+                    extracted_blocks = [input_text]
+                else:
+                    return {"error": "No Python code blocks found to execute", "success": False}
+
+            # Execute the first valid Python block found
+            execution_results = []
+            for code_to_run in extracted_blocks:
+                try:
+                    exec_result = self._execute_python(code=code_to_run)
+                    execution_results.append(exec_result)
+                    # Stop after the first successful execution if multiple blocks were found
+                    if exec_result.get("success"):
+                        break
+                except Exception as exec_err:
+                    error_res = {"success": False, "error": str(exec_err), "traceback": traceback.format_exc()}
+                    execution_results.append(error_res)
+                    # Stop if execution fails
+                    break
+            
+            # Return the result of the first execution attempt
+            return execution_results[0] if execution_results else {"error": "No code executed", "success": False}
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
@@ -5232,10 +5259,36 @@ class ToolRegistry:
 # Helper Functions
 # =======================
 def extract_python_code(text: str) -> list:
-    """Extract Python code blocks with better handling of formatting issues"""
-    pattern = r'<\|python_start\|>(.*?)(?:<\|python_end\|>|<\|python_end)'
-    code_blocks = [match.strip() for match in re.findall(pattern, text, re.DOTALL)]
+    """Extract Python code blocks with better handling of formatting issues and fallbacks"""
+    # Pattern for <|python_start|> ... <|python_end|> or incomplete end tag or end of string
+    pattern_tags = r'<\|python_start\|>([\s\S]*?)(?:<\|python_end\|>|<\|python_end|$)'
+    # Pattern for markdown blocks ```python ... ```
+    pattern_md = r'```python\n([\s\S]*?)\n```'
     
+    code_blocks = []
+    
+    # Find blocks with tags first
+    tag_matches = re.findall(pattern_tags, text, re.DOTALL)
+    if tag_matches:
+        code_blocks.extend([match.strip() for match in tag_matches])
+        
+    # Find markdown blocks if no tag blocks found or to supplement
+    md_matches = re.findall(pattern_md, text, re.DOTALL)
+    if md_matches:
+        # Add only if not already captured by tags (simple check)
+        for match in md_matches:
+            match_stripped = match.strip()
+            is_duplicate = any(match_stripped in block for block in code_blocks)
+            if not is_duplicate:
+                code_blocks.append(match_stripped)
+
+    # If still no blocks found, check if the entire text might be Python
+    if not code_blocks and any(kw in text for kw in ["import ", "def ", "class ", "print("]):
+         # Basic check if it looks like Python code
+         # Avoid adding if it contains typical natural language indicators like "Here is the code:"
+        if not any(phrase in text for phrase in ["Here is the code:", "```", "<|"]):
+            code_blocks.append(text.strip())
+
     # Process each code block to fix common formatting issues
     fixed_blocks = []
     for block in code_blocks:
