@@ -1212,7 +1212,9 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
-    def _get_weather(self, location: str) -> Dict[str, Any]:
+    def _get_weather(self, location: str, city: str = None) -> Dict[str, Any]:
+        # Use city parameter if provided, otherwise use location
+        location = city or location
         try:
             import random
             conditions = ["sunny", "partly cloudy", "cloudy", "rainy", "stormy", "snowy", "windy", "foggy"]
