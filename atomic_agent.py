@@ -3378,6 +3378,24 @@ class ToolRegistry:
             function=self._get_weather
         )
         
+        # Register a function for getting weather in multiple locations
+        self.register_function(
+            name="get_multiple_weather",
+            description="Get current weather information for multiple locations",
+            parameters={
+                "type": "object", 
+                "properties": {
+                    "locations": {
+                        "type": "array", 
+                        "items": {"type": "string"},
+                        "description": "List of locations (e.g., city names)"
+                    }
+                }, 
+                "required": ["locations"]
+            },
+            function=self._get_multiple_weather
+        )
+        
         self.register_function(
             name="read",
             description="Read and extract content from a web page",
@@ -4334,6 +4352,42 @@ class ToolRegistry:
         except Exception as e:
             return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
+    def _get_multiple_weather(self, locations: List[str]) -> Dict[str, Any]:
+        """Get weather information for multiple locations in parallel"""
+        try:
+            # Create a task processor for parallel execution
+            task_processor = AsyncTaskProcessor()
+            tasks = []
+            
+            # Add tasks for each location
+            for location in locations:
+                task_id = task_processor.add_task(self._get_weather, location)
+                tasks.append((task_id, location))
+            
+            # Wait for all tasks to complete
+            results = {}
+            for task_id, location in tasks:
+                while True:
+                    task_result = task_processor.get_result(task_id)
+                    if task_result["status"] in ["completed", "failed"]:
+                        if task_result["status"] == "completed":
+                            results[location] = task_result["result"]
+                        else:
+                            results[location] = {"error": task_result.get("error", "Unknown error"), "success": False}
+                        break
+                    time.sleep(0.1)
+            
+            # Clean up
+            task_processor.stop()
+            
+            return {
+                "success": True,
+                "locations_count": len(locations),
+                "results": results
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
     def _parse_weather_response(self, response: str) -> Dict[str, Any]:
         try:
             if isinstance(response, dict):
@@ -4551,6 +4605,61 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
     
+    def _check_multi_location_weather_query(self, query: str) -> Optional[str]:
+        """Check if the query is asking for weather in multiple locations"""
+        # Common patterns for multi-location weather queries
+        patterns = [
+            r"weather\s+in\s+([A-Za-z\s,]+)\s+and\s+([A-Za-z\s,]+)",
+            r"weather\s+for\s+([A-Za-z\s,]+)\s+and\s+([A-Za-z\s,]+)",
+            r"weather\s+(?:in|for|at)\s+([A-Za-z\s,]+)(?:\s*,\s*|\s+and\s+)([A-Za-z\s,]+)"
+        ]
+        
+        locations = []
+        
+        # Try each pattern
+        for pattern in patterns:
+            matches = re.findall(pattern, query, re.IGNORECASE)
+            if matches:
+                for match in matches:
+                    locations.extend([loc.strip() for loc in match if loc.strip()])
+                break
+        
+        # If we found multiple locations, process them
+        if len(locations) > 1:
+            console.print(f"[cyan]Detected weather query for multiple locations: {locations}[/cyan]")
+            
+            # Call the multiple weather function
+            result = self._get_multiple_weather(locations)
+            
+            if result.get("success", False):
+                # Format the results into a nice response
+                response = f"Here's the current weather for the locations you asked about:\n\n"
+                
+                for location, weather_data in result.get("results", {}).items():
+                    if weather_data.get("success", False):
+                        response += f"**{location}**: {weather_data.get('current_condition', 'Unknown').capitalize()}, " \
+                                   f"{weather_data.get('temperature_f', 'N/A')}°F ({weather_data.get('temperature_c', 'N/A')}°C), " \
+                                   f"humidity {weather_data.get('humidity', 'N/A')}%, " \
+                                   f"wind speed {weather_data.get('wind_speed_mph', 'N/A')} mph.\n\n"
+                        
+                        # Add tomorrow's forecast
+                        forecast = weather_data.get("forecast", [])
+                        if forecast and len(forecast) > 0:
+                            tomorrow = forecast[0]
+                            response += f"Tomorrow in {location}: {tomorrow.get('condition', 'unknown').capitalize()}, " \
+                                       f"high of {tomorrow.get('high_f', 'N/A')}°F, " \
+                                       f"low of {tomorrow.get('low_f', 'N/A')}°F, " \
+                                       f"{tomorrow.get('precipitation_chance', 'N/A')}% chance of precipitation.\n\n"
+                    else:
+                        response += f"**{location}**: Could not retrieve weather data. Error: {weather_data.get('error', 'Unknown error')}\n\n"
+                
+                # Add the response to conversation history
+                self.add_message("assistant", response)
+                
+                return response
+        
+        return None
+        
     def _fact_check(self, query: str) -> Dict[str, Any]:
         """Legacy wrapper for the fact_check function"""
         return self.fact_check(query)
@@ -4833,6 +4942,7 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
     3. Function tag format: <function=func_name>{"arg1": "val1"}</function>
     4. Python code block format: <|python_start|><function=func_name>...</|python_end|>
     5. Tool calls format: {"type": "function", "function": {"name": "func_name", "arguments": "{...}"}}
+    6. Multiple locations in weather queries: "weather in X and Y" -> get_multiple_weather
     """
     function_calls = []
     
@@ -5932,6 +6042,12 @@ print("Hello, world!")
                     self.interaction_memory.append({"type": "image", "url": item["image_url"]["url"], "timestamp": time.time()})
         self.last_user_message = user_input
         self.add_message("user", user_input)
+        
+        # Check for multi-location weather queries
+        if isinstance(user_input, str) and "weather" in user_input.lower():
+            multi_location_result = self._check_multi_location_weather_query(user_input)
+            if multi_location_result:
+                return multi_location_result
         
         # Note: We don't need to explicitly store in memory here anymore since add_message now handles it
         
