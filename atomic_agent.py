@@ -678,7 +678,7 @@ class ScoutAgent:
         cot_response = together.chat.completions.create(
             model=self.model,
             messages=self.conversation_history + [cot_prompt],
-            max_tokens=1024
+            max_tokens=4096
         )
         
         # Extract and store the chain of thought
@@ -703,7 +703,7 @@ class ScoutAgent:
             rollout_response = together.chat.completions.create(
                 model=self.model,
                 messages=self.conversation_history + [rollout_prompt],
-                max_tokens=1024,
+                max_tokens=4096,
                 temperature=0.7 + (i * 0.1)  # Increase temperature for more diversity in later rollouts
             )
             
@@ -5776,7 +5776,7 @@ print("Hello, world!")
                             messages=self.conversation_history,
                             tools=tools,
                             tool_choice="auto",
-                            max_tokens=1024
+                            max_tokens=4096
                         )
                         assistant_message = response.choices[0].message
                         self.conversation_history.append(assistant_message.model_dump())
@@ -5789,7 +5789,8 @@ print("Hello, world!")
                                 model=self.model,
                                 messages=self.conversation_history,
                                 tools=tools,
-                                tool_choice="none"
+                                tool_choice="none",
+                                max_tokens=4096
                             )
                             final_message = final_response.choices[0].message
                             self.conversation_history.append(final_message.model_dump())
@@ -5797,7 +5798,7 @@ print("Hello, world!")
                         return assistant_message.content
                     else:
                         formatted_prompt = self.format_llama4_prompt()
-                        params = {"model": self.model, "prompt": formatted_prompt, "max_tokens": 1024, "stop": ["<|eot|>"]}
+                        params = {"model": self.model, "prompt": formatted_prompt, "max_tokens": 4096, "stop": ["<|eot|>"]}
                         if self.is_llama4 and self.enable_logprobs:
                             params["logprobs"] = 1
                         response = self.client.completions.create(**params)
@@ -5964,7 +5965,7 @@ print("Hello, world!")
                                 final_response = self.client.completions.create(
                                     model=self.model,
                                     prompt=self.format_llama4_prompt() + "\n\nUser: " + final_prompt + "<|eot|>\nAssistant: ",
-                                    max_tokens=1024,
+                                    max_tokens=4096,
                                     stop=["<|eot|>"]
                                 )
                                 final_content = final_response.choices[0].text + "<|eot|>"
@@ -6049,7 +6050,8 @@ print("Hello, world!")
                             model=self.model,
                             messages=self.conversation_history,
                             tools=tools,
-                            tool_choice="none"
+                            tool_choice="none",
+                            max_tokens=4096
                         )
                         final_message = final_response.choices[0].message
                         self.conversation_history.append(final_message.model_dump())
@@ -6288,7 +6290,7 @@ if __name__ == "__main__":
         reflection_response = self.client.chat.completions.create(
             model=self.model,
             messages=reflection_prompt,
-            max_tokens=500
+            max_tokens=4096
         )
         
         reflection = reflection_response.choices[0].message.content
