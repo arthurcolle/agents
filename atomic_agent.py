@@ -745,6 +745,15 @@ class ToolRegistry:
             parameters={"type": "object", "properties": {"path": {"type": "string", "description": "File path"}}, "required": ["path"]},
             function=self._delete_file
         )
+    def _delete_file(self, path: str) -> Dict[str, Any]:
+        try:
+            path = Path(path).expanduser()
+            if not path.exists():
+                return {"error": f"File '{path}' does not exist", "success": False}
+            path.unlink()
+            return {"success": True, "message": f"File '{path}' deleted successfully"}
+        except Exception as e:
+            return {"error": str(e), "success": False}
         self.register_function(
             name="execute_command",
             description="Execute a shell command",
