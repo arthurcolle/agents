@@ -129,6 +129,290 @@ class KnowledgeItem:
     confidence: float = 1.0
 
 # ================================
+# Scout Agent
+# ================================
+class ScoutAgent:
+    """Scout agent that can autonomously perform specialized tasks."""
+    def __init__(self, agent_id, specialization, model="meta-llama/Llama-4-Turbo-17B-Instruct-FP8"):
+        self.agent_id = agent_id
+        self.specialization = specialization
+        self.model = model
+        self.conversation_history = []
+        self.task_queue = queue.Queue()
+        self.results = {}
+        self.stop_event = threading.Event()
+        self.worker_thread = threading.Thread(target=self._worker, daemon=True)
+        self.knowledge_base = []
+        self.processed_urls = set()
+        self.url_pattern = re.compile(r'https?://[^\s<>"\']+|www\.[^\s<>"\']+')
+        self.image_processing_limit = 5
+        self.status = "idle"  # idle, working, completed, error
+        self.chains_of_thought = []
+        self.is_available = threading.Event()
+        self.is_available.set()  # Initially available
+        self.worker_thread.start()
+        
+        # Initialize system prompt based on specialization
+        specialization_prompts = {
+            "research": "You are a research-focused scout agent. Focus on finding, analyzing, and summarizing information from various sources. Be thorough and analytical.",
+            "code": "You are a code-focused scout agent. Your primary role is to write, optimize, and debug code. Focus on technical excellence and clean, efficient solutions.",
+            "planning": "You are a planning-focused scout agent. Your role is to break down complex tasks, create step-by-step approaches, and identify potential issues.",
+            "creative": "You are a creative-focused scout agent. Your role is to generate innovative ideas, create original content, and think outside the box.",
+            "critical": "You are a critical-focused scout agent. Your role is to analyze proposals, identify weak points, and suggest improvements."
+        }
+        
+        self.system_message = {"role": "system", "content": specialization_prompts.get(
+            specialization, "You are a specialized scout agent working under a central orchestrating agent.")}
+        self.conversation_history.append(self.system_message)
+        
+    def _worker(self):
+        while not self.stop_event.is_set():
+            try:
+                task_id, task_func, args, kwargs = self.task_queue.get(timeout=1)
+                try:
+                    self.status = "working"
+                    self.is_available.clear()  # Mark as unavailable while working
+                    if asyncio.iscoroutinefunction(task_func):
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        result = loop.run_until_complete(task_func(*args, **kwargs))
+                    else:
+                        result = task_func(*args, **kwargs)
+                    self.results[task_id] = {"status": "completed", "result": result}
+                    self.status = "completed"
+                except Exception as e:
+                    self.results[task_id] = {
+                        "status": "failed",
+                        "error": str(e),
+                        "traceback": traceback.format_exc()
+                    }
+                    self.status = "error"
+                finally:
+                    self.task_queue.task_done()
+                    self.is_available.set()  # Mark as available again
+            except queue.Empty:
+                continue
+                
+    def add_task(self, task_func, *args, **kwargs):
+        task_id = str(uuid.uuid4())
+        self.results[task_id] = {"status": "pending"}
+        self.task_queue.put((task_id, task_func, args, kwargs))
+        return task_id
+        
+    def get_result(self, task_id):
+        return self.results.get(task_id, {"status": "not_found"})
+        
+    def add_chain_of_thought(self, thought):
+        timestamp = time.time()
+        self.chains_of_thought.append({
+            "timestamp": timestamp,
+            "thought": thought,
+            "agent_id": self.agent_id,
+            "specialization": self.specialization
+        })
+        
+    def perform_task(self, task, context=None):
+        """Main method to process a task with chain-of-thought reasoning"""
+        # Add the task to the conversation history
+        if context:
+            task_with_context = f"Task: {task}\n\nContext: {context}"
+        else:
+            task_with_context = f"Task: {task}"
+            
+        self.conversation_history.append({"role": "user", "content": task_with_context})
+        
+        # Prompt the agent to think through the task step by step
+        cot_prompt = {
+            "role": "user", 
+            "content": f"For this task: '{task}', please use chain-of-thought reasoning. First, break down the task into steps. Then think through each step carefully before providing your final answer or solution."
+        }
+        
+        from together import Together
+        together = Together()
+        
+        # Generate the chain of thought
+        cot_response = together.chat.completions.create(
+            model=self.model,
+            messages=self.conversation_history + [cot_prompt],
+            max_tokens=1024
+        )
+        
+        # Extract and store the chain of thought
+        cot_content = cot_response.choices[0].message.content
+        self.add_chain_of_thought(cot_content)
+        
+        # Now generate the actual solution
+        self.conversation_history.append({"role": "assistant", "content": cot_content})
+        self.conversation_history.append({
+            "role": "user", 
+            "content": "Based on your thinking above, what is your final answer or solution?"
+        })
+        
+        final_response = together.chat.completions.create(
+            model=self.model,
+            messages=self.conversation_history,
+            max_tokens=1024
+        )
+        
+        final_content = final_response.choices[0].message.content
+        self.conversation_history.append({"role": "assistant", "content": final_content})
+        
+        return {
+            "task": task,
+            "chain_of_thought": cot_content,
+            "solution": final_content,
+            "agent_id": self.agent_id,
+            "specialization": self.specialization
+        }
+    
+    def stop(self):
+        self.stop_event.set()
+        self.worker_thread.join(timeout=2)
+        
+# ================================
+# Central Agent Orchestrator
+# ================================
+class AgentOrchestrator:
+    """Orchestrates multiple scout agents to perform tasks in parallel."""
+    def __init__(self, num_scouts=3, model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"):
+        self.model = model
+        self.scouts = {}
+        self.task_queue = queue.Queue()
+        self.results = {}
+        self.stop_event = threading.Event()
+        self.orchestrator_thread = threading.Thread(target=self._orchestrator, daemon=True)
+        self.knowledge_base = []
+        self.processed_urls = set()
+        self.url_pattern = re.compile(r'https?://[^\s<>"\']+|www\.[^\s<>"\']+')
+        self.image_processing_limit = 5
+        
+        # Create scouts with different specializations
+        specializations = ["research", "code", "planning", "creative", "critical"]
+        for i in range(min(num_scouts, len(specializations))):
+            agent_id = f"scout_{i+1}"
+            specialization = specializations[i]
+            self.scouts[agent_id] = ScoutAgent(agent_id, specialization, model)
+            
+        # Initialize additional scouts if needed
+        for i in range(len(specializations), num_scouts):
+            agent_id = f"scout_{i+1}"
+            specialization = "general"
+            self.scouts[agent_id] = ScoutAgent(agent_id, specialization, model)
+            
+        self.orchestrator_thread.start()
+        
+    def _orchestrator(self):
+        """Main orchestrator loop that distributes tasks to scouts"""
+        while not self.stop_event.is_set():
+            try:
+                task_id, task, priority, context = self.task_queue.get(timeout=1)
+                
+                # Find an available scout with the right specialization
+                assigned = False
+                
+                # First try to match by specialization
+                if "specialization" in context:
+                    target_specialization = context["specialization"]
+                    for agent_id, scout in self.scouts.items():
+                        if scout.specialization == target_specialization and scout.is_available.is_set():
+                            scout_task_id = scout.add_task(scout.perform_task, task, context)
+                            self.results[task_id] = {
+                                "status": "assigned", 
+                                "scout_id": agent_id,
+                                "scout_task_id": scout_task_id
+                            }
+                            assigned = True
+                            break
+                
+                # If no scout with matching specialization is available, use any available scout
+                if not assigned:
+                    for agent_id, scout in self.scouts.items():
+                        if scout.is_available.is_set():
+                            scout_task_id = scout.add_task(scout.perform_task, task, context)
+                            self.results[task_id] = {
+                                "status": "assigned", 
+                                "scout_id": agent_id,
+                                "scout_task_id": scout_task_id
+                            }
+                            assigned = True
+                            break
+                            
+                # If all scouts are busy, wait and retry
+                if not assigned:
+                    # Put the task back in the queue with its original priority
+                    self.task_queue.put((task_id, task, priority, context))
+                    time.sleep(0.5)  # Wait a bit before retrying
+                    
+            except queue.Empty:
+                continue
+                
+    def add_task(self, task, priority=1, context=None):
+        """Add a task to be processed by a scout agent"""
+        if context is None:
+            context = {}
+        task_id = str(uuid.uuid4())
+        self.results[task_id] = {"status": "pending"}
+        self.task_queue.put((task_id, task, priority, context))
+        return task_id
+        
+    def get_task_result(self, task_id):
+        """Get the result of a task by its ID"""
+        task_info = self.results.get(task_id)
+        if not task_info:
+            return {"status": "not_found"}
+            
+        # If the task has been assigned to a scout, get the result from the scout
+        if task_info["status"] == "assigned":
+            scout_id = task_info["scout_id"]
+            scout_task_id = task_info["scout_task_id"]
+            scout_result = self.scouts[scout_id].get_result(scout_task_id)
+            
+            # If the scout has completed the task, update our records
+            if scout_result["status"] in ["completed", "failed"]:
+                self.results[task_id] = {
+                    "status": scout_result["status"],
+                    "result": scout_result.get("result"),
+                    "scout_id": scout_id
+                }
+                
+        return self.results[task_id]
+        
+    def get_all_chains_of_thought(self):
+        """Get all chains of thought from all scouts"""
+        all_thoughts = []
+        for scout_id, scout in self.scouts.items():
+            all_thoughts.extend(scout.chains_of_thought)
+        return sorted(all_thoughts, key=lambda x: x["timestamp"])
+        
+    def execute_parallel_tasks(self, tasks, context=None):
+        """Execute multiple tasks in parallel and wait for all results"""
+        task_ids = []
+        for task in tasks:
+            task_id = self.add_task(task, context=context)
+            task_ids.append(task_id)
+            
+        results = []
+        for task_id in task_ids:
+            while True:
+                result = self.get_task_result(task_id)
+                if result["status"] in ["completed", "failed"]:
+                    results.append(result)
+                    break
+                time.sleep(0.5)
+                
+        return results
+        
+    def stop(self):
+        """Stop the orchestrator and all scouts"""
+        self.stop_event.set()
+        for scout in self.scouts.values():
+            scout.stop()
+        self.orchestrator_thread.join(timeout=2)
+
+# ================================
 # Async Task Processor
 # ================================
 class AsyncTaskProcessor:
@@ -534,6 +818,57 @@ class ToolRegistry:
         self.together = Together()
 
     def _register_default_tools(self):
+        # Scout Agent Orchestration tools
+        self.register_function(
+            name="orchestrate_tasks",
+            description="Split a complex task into subtasks and assign them to scout agents to run in parallel",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "main_task": {"type": "string", "description": "The main task description"},
+                    "subtasks": {"type": "array", "items": {"type": "string"}, "description": "List of subtasks to run in parallel"},
+                    "context": {"type": "object", "description": "Additional context to provide for all subtasks", "default": {}}
+                },
+                "required": ["main_task", "subtasks"]
+            },
+            function=self._orchestrate_tasks
+        )
+        
+        self.register_function(
+            name="assign_specialized_task",
+            description="Assign a task to a specific type of specialized scout agent",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "The task description"},
+                    "specialization": {"type": "string", "description": "The required specialization (research, code, planning, creative, critical)"},
+                    "context": {"type": "object", "description": "Additional context for the task", "default": {}}
+                },
+                "required": ["task", "specialization"]
+            },
+            function=self._assign_specialized_task
+        )
+        
+        self.register_function(
+            name="get_scout_status",
+            description="Get the status of all scout agents",
+            parameters={
+                "type": "object",
+                "properties": {}
+            },
+            function=self._get_scout_status
+        )
+        
+        self.register_function(
+            name="get_chains_of_thought",
+            description="Get all chains of thought from scout agents' reasoning",
+            parameters={
+                "type": "object",
+                "properties": {}
+            },
+            function=self._get_chains_of_thought
+        )
+        
         # Date and time tools
         self.register_function(
             name="create_pydantic_model",
@@ -548,6 +883,7 @@ class ToolRegistry:
             },
             function=self._create_pydantic_model
         )
+        
         self.register_function(
             name="add_numbers",
             description="Add two numbers",
@@ -837,6 +1173,201 @@ class ToolRegistry:
             parameters={"type": "object", "properties": {"path": {"type": "string", "description": "File path"}}, "required": ["path"]},
             function=self._delete_file
         )
+    def _orchestrate_tasks(self, main_task: str, subtasks: List[str], context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Orchestrate multiple parallel tasks using scout agents"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            if context is None:
+                context = {}
+            
+            # Add main task to context
+            context["main_task"] = main_task
+            
+            start_time = time.time()
+            results = agent.agent_orchestrator.execute_parallel_tasks(subtasks, context)
+            execution_time = time.time() - start_time
+            
+            # Organize results
+            successful_results = []
+            failed_results = []
+            
+            for i, result in enumerate(results):
+                task_result = {
+                    "subtask": subtasks[i],
+                    "status": result["status"]
+                }
+                
+                if result["status"] == "completed":
+                    task_result["result"] = result.get("result", {}).get("solution", "")
+                    task_result["chain_of_thought"] = result.get("result", {}).get("chain_of_thought", "")
+                    task_result["scout_id"] = result.get("scout_id", "unknown")
+                    successful_results.append(task_result)
+                else:
+                    task_result["error"] = result.get("error", "Unknown error")
+                    failed_results.append(task_result)
+            
+            # Collect all chains of thought
+            chains_of_thought = agent.agent_orchestrator.get_all_chains_of_thought()
+            recent_thoughts = sorted(chains_of_thought, key=lambda x: x["timestamp"], reverse=True)[:min(len(chains_of_thought), 3)]
+            
+            return {
+                "success": len(failed_results) == 0,
+                "main_task": main_task,
+                "total_subtasks": len(subtasks),
+                "completed_subtasks": len(successful_results),
+                "failed_subtasks": len(failed_results),
+                "execution_time": execution_time,
+                "successful_results": successful_results,
+                "failed_results": failed_results,
+                "recent_chains_of_thought": recent_thoughts
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
+    def _assign_specialized_task(self, task: str, specialization: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Assign a task to a specific type of specialized scout agent"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            if context is None:
+                context = {}
+            
+            # Add specialization to context
+            context["specialization"] = specialization
+            
+            # Find suitable scout agent
+            suitable_scout = None
+            for scout_id, scout in agent.agent_orchestrator.scouts.items():
+                if scout.specialization == specialization:
+                    suitable_scout = scout
+                    break
+            
+            if not suitable_scout:
+                return {"error": f"No scout agent with specialization '{specialization}' found", "success": False}
+            
+            # Assign task
+            task_id = agent.agent_orchestrator.add_task(task, context=context)
+            
+            # Wait for completion
+            start_time = time.time()
+            max_wait_time = 60  # Maximum wait time in seconds
+            
+            while True:
+                result = agent.agent_orchestrator.get_task_result(task_id)
+                if result["status"] in ["completed", "failed"]:
+                    break
+                    
+                if time.time() - start_time > max_wait_time:
+                    return {"error": "Timed out waiting for scout agent to complete task", "success": False}
+                
+                time.sleep(0.5)
+            
+            execution_time = time.time() - start_time
+            
+            if result["status"] == "completed":
+                return {
+                    "success": True,
+                    "task": task,
+                    "specialization": specialization,
+                    "execution_time": execution_time,
+                    "scout_id": result.get("scout_id", "unknown"),
+                    "solution": result.get("result", {}).get("solution", ""),
+                    "chain_of_thought": result.get("result", {}).get("chain_of_thought", "")
+                }
+            else:
+                return {
+                    "success": False,
+                    "task": task,
+                    "specialization": specialization,
+                    "error": result.get("error", "Unknown error"),
+                    "execution_time": execution_time
+                }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
+    def _get_scout_status(self) -> Dict[str, Any]:
+        """Get status of all scout agents"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            scout_statuses = []
+            for scout_id, scout in agent.agent_orchestrator.scouts.items():
+                scout_statuses.append({
+                    "scout_id": scout_id,
+                    "specialization": scout.specialization,
+                    "status": scout.status,
+                    "is_available": scout.is_available.is_set(),
+                    "pending_tasks": scout.task_queue.qsize(),
+                    "completed_chains": len(scout.chains_of_thought)
+                })
+            
+            return {
+                "success": True,
+                "scout_count": len(scout_statuses),
+                "scouts": scout_statuses,
+                "busy_scouts": len([s for s in scout_statuses if not s["is_available"]]),
+                "available_scouts": len([s for s in scout_statuses if s["is_available"]])
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
+    def _get_chains_of_thought(self) -> Dict[str, Any]:
+        """Get all chains of thought from scout agents"""
+        try:
+            agent = None
+            for frame in inspect.stack():
+                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
+                    agent = frame.frame.f_locals['self']
+                    break
+            
+            if not agent:
+                return {"error": "Could not access TogetherAgent instance", "success": False}
+            
+            all_thoughts = agent.agent_orchestrator.get_all_chains_of_thought()
+            
+            # Group by scout agent
+            scout_thoughts = {}
+            for thought in all_thoughts:
+                scout_id = thought["agent_id"]
+                if scout_id not in scout_thoughts:
+                    scout_thoughts[scout_id] = []
+                scout_thoughts[scout_id].append(thought)
+            
+            # Get most recent thoughts
+            recent_thoughts = sorted(all_thoughts, key=lambda x: x["timestamp"], reverse=True)[:min(len(all_thoughts), 5)]
+            
+            return {
+                "success": True,
+                "total_chains": len(all_thoughts),
+                "scouts_with_chains": len(scout_thoughts),
+                "recent_chains": recent_thoughts,
+                "chains_by_scout": scout_thoughts
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
     def _add_numbers(self, a: float, b: float) -> Dict[str, Any]:
         return {"result": a + b, "success": True}
 
@@ -2507,7 +3038,7 @@ Please provide a final summary of all the work completed."""
 # Together Agent
 # =======================
 class TogetherAgent:
-    def __init__(self, model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"):
+    def __init__(self, model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", num_scouts=5):
         self.api_key = os.environ.get("TOGETHER_API_KEY")
         if not self.api_key:
             raise ValueError("API key is required. Set TOGETHER_API_KEY environment variable.")
@@ -2545,6 +3076,13 @@ print("Hello, world!")
         self.enable_logprobs = False
         self.enable_planning = True
         self.planning_session = None
+        
+        # Initialize the agent orchestrator with scout agents
+        console.print(f"[cyan]Initializing Agent Orchestrator with {num_scouts} scout agents...[/cyan]")
+        self.agent_orchestrator = AgentOrchestrator(num_scouts=num_scouts, model=model)
+        console.print(f"[green]Agent Orchestrator initialized with {len(self.agent_orchestrator.scouts)} scout agents[/green]")
+        
+        # Keep task_processor for backward compatibility
         self.task_processor = AsyncTaskProcessor()
         self.interaction_memory = []
         self.environment_state = {
@@ -2558,18 +3096,21 @@ print("Hello, world!")
         self.is_llama4 = "llama-4" in self.model.lower()
         if self.is_llama4:
             system_content = (
-                "You are an expert conversationalist with the ability to perform multiple function calls in a single turn. "
+                "You are an expert conversationalist with the ability to perform multiple function calls in a single turn "
+                "and orchestrate a team of specialized scout agents to solve complex problems in parallel. "
                 "You can call functions using one or more of the following formats:\n"
                 "1. [function_name(param1=value1, param2=value2)]\n"
                 "2. <function=function_name>{\"param1\": \"value1\", \"param2\": \"value2\"}</function>\n"
                 "3. JSON structured output: {\"name\": \"function_name\", \"arguments\": {\"param1\": \"value1\"}}\n\n"
                 "Feel free to include multiple function calls in your response. "
+                "For complex tasks, consider using the agent_orchestrator to delegate work to specialized scout agents.\n"
                 "Always analyze the conversation context and use the best available tools to provide an accurate response.\n\n"
                 "<|eot|>"
             )
         else:
             system_content = (
-                "You are a helpful AI assistant that can dynamically use tools to accomplish tasks. "
+                "You are a helpful AI assistant that can dynamically use tools to accomplish tasks and "
+                "orchestrate a team of specialized scout agents to solve complex problems in parallel. "
                 "You can issue function calls using the defined tools."
             )
         self.system_message = {"role": "system", "content": system_content}
@@ -3208,16 +3749,22 @@ print("Hello, world!")
 # Main CLI Loop
 # =======================
 def main():
-    parser = argparse.ArgumentParser(description="Chat with an AI agent using Together API with dynamic tools")
+    # Make sure re module is available in this function's scope
+    import re
+    
+    parser = argparse.ArgumentParser(description="Chat with an orchestrator AI agent with specialized scout agents using Together API")
     parser.add_argument("--model", default="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", help="Model to use (default: meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8)")
+    parser.add_argument("--scouts", type=int, default=5, help="Number of scout agents to initialize (default: 5)")
     parser.add_argument("--logprobs", action="store_true", help="Enable returning logprobs for confidence analysis")
     parser.add_argument("--test-mode", action="store_true", help="Run in test mode with mock API responses")
     args = parser.parse_args()
     
     welcome = (
-        "[bold blue]Together Agent CLI[/bold blue]\n"
-        "Chat with an AI agent that can use and create tools dynamically.\n"
-        "The agent has self-adaptive capabilities and supports multiple function calls in one turn.\n"
+        "[bold blue]Enhanced Together Agent CLI with Scout Orchestration[/bold blue]\n"
+        "Chat with an AI agent that uses multiple specialized scout agents to solve complex tasks in parallel.\n"
+        "The main agent coordinates a team of specialized scouts (research, code, planning, creative, critical).\n"
+        "Each scout uses extensive chain-of-thought reasoning to solve its assigned tasks.\n"
+        "The system supports autonomous task decomposition and parallel execution.\n"
         "Type [bold]'exit'[/bold] or [bold]'quit'[/bold] to exit."
     )
     console.print(Panel.fit(welcome, title="Welcome"))
@@ -3226,8 +3773,10 @@ def main():
         os.environ["TOGETHER_API_KEY"] = "dummy_api_key_for_testing"
     
     try:
-        agent = TogetherAgent(model=args.model)
+        console.print(f"[cyan]Initializing TogetherAgent with {args.scouts} scout agents...[/cyan]")
+        agent = TogetherAgent(model=args.model, num_scouts=args.scouts)
         agent.enable_logprobs = args.logprobs
+        console.print(f"[green]Successfully initialized agent with {len(agent.agent_orchestrator.scouts)} scout agents[/green]")
     except ValueError as e:
         if "API key is required" in str(e) and not args.test_mode:
             console.print("[red]Error: Together API key is required. Set TOGETHER_API_KEY environment variable.[/red]")
@@ -3246,7 +3795,6 @@ def main():
                 try:
                     if user_input.strip().startswith("execute_python("):
                         # Extract the code from execute_python call by parsing parameters
-                        import re
                         code_match = re.search(r'execute_python\(code="([^"]+)"', user_input)
                         if code_match:
                             code = code_match.group(1).replace("\\n", "\n")
