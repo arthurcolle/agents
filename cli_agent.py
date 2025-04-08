@@ -4151,6 +4151,64 @@ class CLIAgent:
                 "success": False,
                 "message": f"Error in experience replay: {str(e)}"
             }
+
+    async def _handle_tool_call_async(self, tool_call):
+        """Async wrapper to handle a single tool call, running sync code in executor."""
+        function_name = tool_call.function.name
+        try:
+            arguments = json.loads(tool_call.function.arguments)
+        except json.JSONDecodeError as e:
+            error_msg = f"Error parsing arguments for {function_name}: {e}. Arguments: '{tool_call.function.arguments}'"
+            self.console.print(f"[bold red]{error_msg}[/bold red]")
+            return {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps({"success": False, "message": error_msg})
+            }
+
+        self.console.print(f"[bold blue]Running tool: {function_name}...[/bold blue]")
+
+        # Check if the target function is async
+        is_async = False
+        if self.tool_registry.get_tool(function_name):
+            is_async = asyncio.iscoroutinefunction(self.tool_registry.get_tool(function_name))
+        elif function_name == "execute_agent_command":
+             is_async = True # _execute_agent_command is async
+        elif self.editor and hasattr(self.editor.network, function_name):
+             # Assume editor network functions are async based on previous edits
+             is_async = True
+
+        try:
+            if is_async:
+                # Directly await async functions
+                result = await self._handle_tool_call(function_name, arguments)
+            else:
+                # Run synchronous functions in an executor to avoid blocking the event loop
+                loop = asyncio.get_running_loop()
+                # Use functools.partial to pass arguments to the sync function
+                sync_call = functools.partial(self._handle_tool_call, function_name, arguments)
+                result = await loop.run_in_executor(self.executor, sync_call)
+
+            return {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps(result)
+            }
+        except Exception as e:
+            error_msg = f"Exception during tool execution {function_name}: {e}"
+            self.console.print(f"[bold red]{error_msg}[/bold red]")
+            logger.exception(f"Exception details for tool {function_name}")
+            return {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps({"success": False, "message": error_msg})
+            }
+
+    async def _execute_parallel_tools_async(self, tool_calls):
+        """Executes multiple tool calls in parallel."""
+        tasks = [self._handle_tool_call_async(tool_call) for tool_call in tool_calls]
+        results = await asyncio.gather(*tasks)
+        return results
     
     async def chat(self, message: str, autonomous: bool = False, context: Dict = None) -> str:
         """
