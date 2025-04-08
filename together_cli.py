@@ -1385,7 +1385,24 @@ class ToolRegistry:
             },
             function=self._monitor_task
         )
-    
+
+        # Add a tool for direct user response
+        self.register_function(
+            name="respond_to_user",
+            description="Provide a direct text response to the user",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "response_text": {
+                        "type": "string",
+                        "description": "The text content to send to the user"
+                    }
+                },
+                "required": ["response_text"]
+            },
+            function=self._respond_to_user # Implement this helper method
+        )
+
     def register_function(self, name: str, description: str, parameters: Dict[str, Any], function: Callable, source_code: Optional[str] = None):
         """Register a function to be available for the agent."""
         if name in self.functions:
@@ -1412,14 +1429,33 @@ class ToolRegistry:
                 }
             })
         return tools
-    
-    def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
-        """Call a registered function with the provided arguments."""
+
+    def call_function(self, name: str, arguments: Dict[str, Any], agent=None) -> Any:
+        """
+        Call a registered function with the provided arguments.
+        Optionally pass the calling agent instance for context.
+        """
         if name not in self.functions:
-            return {"error": f"Function '{name}' not found in registry"}
-        
+            # Try finding a similar tool
+            similar_tool = self._find_similar_tool(name)
+            if similar_tool:
+                console.print(f"[yellow]Function '{name}' not found, attempting similar tool '{similar_tool}'[/yellow]")
+                name = similar_tool
+            else:
+                 return {"error": f"Function '{name}' not found in registry"}
+
+        spec = self.functions[name]
+        func = spec.function
+
         try:
-            result = self.functions[name].function(**arguments)
+            # Check if the function expects an 'agent' argument
+            sig = inspect.signature(func)
+            if 'agent' in sig.parameters:
+                # Pass the agent instance if the function accepts it
+                result = func(**arguments, agent=agent)
+            else:
+                # Call without the agent instance
+                result = func(**arguments)
             return result
         except Exception as e:
             return {
@@ -2739,7 +2775,13 @@ class ToolRegistry:
             return {"success": True, "query": query, "fact_check_result": result}
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
+
+    def _respond_to_user(self, response_text: str) -> Dict[str, Any]:
+        """Helper function for the respond_to_user tool."""
+        # This function mainly acts as a placeholder for the action logic.
+        # The actual response sending is handled by the agent's main loop.
+        return {"success": True, "response_sent": response_text}
+
     def _create_planning_session(self, task: str) -> Dict[str, Any]:
         """Create a new planning session for complex multi-turn operations."""
         try:

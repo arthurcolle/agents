@@ -34,6 +34,15 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
 
+# --- Import from atomic_agent ---
+try:
+    from atomic_agent import AgentOrchestrator, ScoutAgent, ToolRegistry as AtomicToolRegistry
+    # Rename imported ToolRegistry to avoid conflict if needed later
+except ImportError as e:
+    console.print(f"[red]Error importing from atomic_agent: {e}[/red]")
+    console.print("[yellow]Please ensure atomic_agent.py is in the same directory or Python path.[/yellow]")
+    sys.exit(1)
+
 # --- Dependency Handling ---
 try:
     import aiohttp
@@ -148,86 +157,6 @@ class ExternalAction(Action):
     """Actions interacting with the external environment."""
     pass
 
-# --- Tool Registry (Adapted from together_cli.py) ---
-# We'll reuse the ToolRegistry concept but integrate it better with CoALA actions later
-class ToolRegistry:
-    def __init__(self):
-        self.functions: Dict[str, Any] = {} # Simplified for now
-        self._register_basic_tools()
-
-    def _register_basic_tools(self):
-        # Register a few essential tools for computer usage
-        self.register_function(
-            name="execute_python",
-            description="Execute Python code and return the result",
-            parameters={"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]},
-            function=self._execute_python
-        )
-        self.register_function(
-            name="read_file",
-            description="Read the contents of a file",
-            parameters={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
-            function=self._read_file
-        )
-        self.register_function(
-            name="list_directory",
-            description="List files and directories",
-            parameters={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
-            function=self._list_directory
-        )
-        # Add more tools later (web search, clipboard, etc.)
-
-    def register_function(self, name: str, description: str, parameters: Dict, function: Callable):
-        self.functions[name] = {"description": description, "parameters": parameters, "function": function}
-
-    def get_openai_tools_format(self) -> List[Dict[str, Any]]:
-        tools = []
-        for name, spec in self.functions.items():
-            tools.append({
-                "type": "function",
-                "function": {"name": name, "description": spec["description"], "parameters": spec["parameters"]}
-            })
-        return tools
-
-    def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
-        if name not in self.functions:
-            return {"error": f"Function '{name}' not found"}
-        try:
-            return self.functions[name]["function"](**arguments)
-        except Exception as e:
-            return {"error": str(e), "traceback": traceback.format_exc()}
-
-    # Basic tool implementations (simplified)
-    def _execute_python(self, code: str) -> Dict[str, Any]:
-        console.print(f"[cyan]Executing Python:[/cyan]\n[dim]{code}[/dim]")
-        stdout_capture = StringIO()
-        stderr_capture = StringIO()
-        try:
-            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                exec(code, globals())
-            stdout = stdout_capture.getvalue()
-            stderr = stderr_capture.getvalue()
-            return {"success": True, "stdout": stdout, "stderr": stderr}
-        except Exception as e:
-            return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
-
-    def _read_file(self, path: str) -> Dict[str, Any]:
-        console.print(f"[cyan]Reading file: {path}[/cyan]")
-        try:
-            content = Path(path).read_text()
-            return {"success": True, "content": content}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _list_directory(self, path: str) -> Dict[str, Any]:
-        console.print(f"[cyan]Listing directory: {path}[/cyan]")
-        try:
-            items = [str(p) for p in Path(path).iterdir()]
-            return {"success": True, "items": items}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-
 # --- CoALA Agent Class ---
 
 class CoALAAgent:
@@ -246,9 +175,19 @@ class CoALAAgent:
         self.working_memory = WorkingMemory()
         self.episodic_memory = EpisodicMemory()
         self.semantic_memory = SemanticMemory()
-        # Procedural memory is implicitly the agent's code + ToolRegistry for now
+        # Procedural memory is implicitly the agent's code + ToolRegistry
 
-        self.tool_registry = ToolRegistry()
+        # Initialize the Agent Orchestrator
+        # TODO: Make num_scouts configurable
+        self.agent_orchestrator = AgentOrchestrator(num_scouts=3, model=model)
+        console.print(f"[green]Initialized Agent Orchestrator with {len(self.agent_orchestrator.scouts)} scouts.[/green]")
+
+        # Use the full ToolRegistry from atomic_agent
+        self.tool_registry = AtomicToolRegistry()
+        # Pass self (CoALAAgent instance) to the registry if needed by tools
+        # For now, tools using inspect.stack() might need adaptation or CoALAAgent needs necessary attributes
+        self.tool_registry.agent_instance = self # Provide access for tools needing agent state
+
         self.conversation_history = [] # Stores raw LLM interactions
 
         # Define the core system prompt based on CoALA principles
@@ -290,9 +229,17 @@ class CoALAAgent:
     def plan_step(self) -> List[Dict[str, Any]]:
         """Uses LLM to reason and propose actions based on current state."""
         context = self.get_memory_context()
+        # Escape curly braces for the example JSON in the f-string
+        example_json = "[{'action_name': '...', 'arguments': {{...}}, 'reasoning': '...'}]"
+        planning_prompt_content = (
+            f"{context}\nBased on the current goal and recent observations, what are the next logical steps or actions? "
+            f"Consider using tools like 'execute_python', 'read_file', 'web_search', or 'respond_to_user'. "
+            f"For complex tasks, consider using 'orchestrate_tasks' or 'assign_specialized_task'. "
+            f"Propose 1-3 actions using JSON format like: {example_json}"
+        )
         planning_prompt = [
             *self.conversation_history,
-            {"role": "user", "content": f"{context}\nBased on the current goal and recent observations, what are the next logical steps or actions? Propose 1-3 actions using JSON format: [{'action_name': '...', 'arguments': {...}, 'reasoning': '...'}]"}
+            {"role": "user", "content": planning_prompt_content}
         ]
 
         # Define Pydantic model for expected JSON output
@@ -360,16 +307,20 @@ class CoALAAgent:
         action_name = action.get("action_name")
         arguments = action.get("arguments", {})
 
-        if action_name == "respond_to_user": # Special action for direct response
-            result = arguments.get("response_text", "Okay.")
-            self.add_log({"role": "assistant", "content": result})
-            return result
+        # Call tool using the registry, passing self for context if needed
+        result = self.tool_registry.call_function(action_name, arguments, agent=self)
+
+        # Log tool call and result
+        # Check if the result indicates a direct response was intended
+        if action_name == "respond_to_user" and result.get("success"):
+            response_text = result.get("response_sent", "Action completed.")
+            self.add_log({"role": "assistant", "content": response_text})
+            # Return the text intended for the user
+            return response_text
         else:
-            # Call tool
-            result = self.tool_registry.call_function(action_name, arguments)
-            # Log tool call and result
+            # Log non-response tool calls
             self.add_log({
-                "role": "tool",
+                "role": "tool", # Use standard 'tool' role
                 "name": action_name,
                 "content": json.dumps(result, indent=2), # Log result as content
                 "tool_call_id": str(uuid.uuid4()) # Generate a dummy ID
@@ -403,12 +354,12 @@ class CoALAAgent:
         # 4. Act
         result = self.act_step()
 
-        # Check if the action was a direct response to the user
+        # Check if the action was a direct response to the user via the tool
         if self.working_memory.selected_action and self.working_memory.selected_action.get("action_name") == "respond_to_user":
-            return result # Return the response text directly
+            # The result itself is the response text in this case
+            return result
         else:
-            # If an action was taken, potentially loop again or generate a summary response
-            # For now, just return the raw result of the action
+            # If another action was taken, potentially loop again or generate a summary response
             console.print(f"[bold magenta]Action Result:[/bold magenta]\n{json.dumps(result, indent=2)}")
             # We might need another LLM call here to summarize the result for the user
             # For simplicity now, we'll just indicate the action was done.

@@ -2200,7 +2200,7 @@ class ToolRegistry:
             },
             function=self._optimize_agent_team
         )
-        
+
         self.register_function(
             name="get_agent_performance",
             description="Get performance metrics for all agents",
@@ -2210,7 +2210,7 @@ class ToolRegistry:
             },
             function=self._get_agent_performance
         )
-        
+
         self.register_function(
             name="get_collaboration_network",
             description="Get the collaboration network between agents",
@@ -2220,7 +2220,7 @@ class ToolRegistry:
             },
             function=self._get_collaboration_network
         )
-        
+
         # Advanced memory management tools
         self.register_function(
             name="search_agent_memory",
@@ -2235,7 +2235,7 @@ class ToolRegistry:
             },
             function=self._search_agent_memory
         )
-        
+
         self.register_function(
             name="add_to_memory",
             description="Add an item to the agent's semantic memory",
@@ -2249,7 +2249,7 @@ class ToolRegistry:
             },
             function=self._add_to_memory
         )
-        
+
         self.register_function(
             name="get_memory_summary",
             description="Get a summary of the agent's memory",
@@ -2261,7 +2261,7 @@ class ToolRegistry:
             },
             function=self._get_memory_summary
         )
-        
+
         self.register_function(
             name="assign_specialized_task",
             description="Assign a task to a specific type of specialized scout agent",
@@ -2276,7 +2276,7 @@ class ToolRegistry:
             },
             function=self._assign_specialized_task
         )
-        
+
         self.register_function(
             name="get_scout_status",
             description="Get the status of all scout agents",
@@ -2286,7 +2286,7 @@ class ToolRegistry:
             },
             function=self._get_scout_status
         )
-        
+
         self.register_function(
             name="get_chains_of_thought",
             description="Get all chains of thought from scout agents' reasoning",
@@ -2296,7 +2296,7 @@ class ToolRegistry:
             },
             function=self._get_chains_of_thought
         )
-        
+
         self.register_function(
             name="get_solution_rollouts",
             description="Get all solution rollouts from scout agents",
@@ -2306,7 +2306,7 @@ class ToolRegistry:
             },
             function=self._get_solution_rollouts
         )
-        
+
         # Date and time tools
         self.register_function(
             name="create_pydantic_model",
@@ -2321,7 +2321,7 @@ class ToolRegistry:
             },
             function=self._create_pydantic_model
         )
-        
+
         self.register_function(
             name="add_numbers",
             description="Add two numbers",
@@ -2386,7 +2386,7 @@ class ToolRegistry:
             },
             function=self._get_current_datetime
         )
-        
+
         # Web search tools
         self.register_function(
             name="web_search",
@@ -2400,7 +2400,7 @@ class ToolRegistry:
             },
             function=self._web_search
         )
-        
+
         # Python code execution
         self.register_function(
             name="execute_python",
@@ -2611,7 +2611,7 @@ class ToolRegistry:
             parameters={"type": "object", "properties": {"path": {"type": "string", "description": "File path"}}, "required": ["path"]},
             function=self._delete_file
         )
-        
+
         # Self-modification functions
         self.register_function(
             name="create_dynamic_function",
@@ -2633,18 +2633,23 @@ class ToolRegistry:
             }},
             function=self._list_dynamic_functions
         )
-    def _orchestrate_tasks(self, main_task: str, subtasks: List[str], context: Dict[str, Any] = None) -> Dict[str, Any]:
+
+    # --- Tool Implementations ---
+    # Note: These methods now accept an optional 'agent' parameter
+
+    def _orchestrate_tasks(self, main_task: str, subtasks: List[str], context: Dict[str, Any] = None, agent=None) -> Dict[str, Any]:
         """Orchestrate multiple parallel tasks using scout agents"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)): # Check for both types
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             if context is None:
                 context = {}
             
@@ -2691,23 +2696,24 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-    
-    def _assign_specialized_task(self, task: str, specialization: str, context: Dict[str, Any] = None, location: str = None) -> Dict[str, Any]:
+
+    def _assign_specialized_task(self, task: str, specialization: str, context: Dict[str, Any] = None, location: str = None, agent=None) -> Dict[str, Any]:
         """Assign a task to a specific type of specialized scout agent"""
         # Handle special case for weather tasks
         if "weather" in task.lower() and location:
             # Redirect to weather function
             return self._get_weather(location=location)
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             if context is None:
                 context = {}
             
@@ -2763,19 +2769,20 @@ class ToolRegistry:
                 }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-    
-    def _get_scout_status(self) -> Dict[str, Any]:
+
+    def _get_scout_status(self, agent=None) -> Dict[str, Any]:
         """Get status of all scout agents"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             scout_statuses = []
             for scout_id, scout in agent.agent_orchestrator.scouts.items():
                 scout_statuses.append({
@@ -2797,19 +2804,20 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _get_solution_rollouts(self) -> Dict[str, Any]:
+
+    def _get_solution_rollouts(self, agent=None) -> Dict[str, Any]:
         """Get all solution rollouts from scout agents"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             all_rollouts = agent.agent_orchestrator.get_all_rollouts()
             
             # Group by scout agent
@@ -2832,8 +2840,8 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _extract_code(self, text: str, language: str = "") -> Dict[str, Any]:
+
+    def _extract_code(self, text: str, language: str = "", agent=None) -> Dict[str, Any]:
         """Extract code blocks from text using structured output parsing"""
         try:
             # Import the CodeExtractor class
@@ -2865,8 +2873,8 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-    
-    def _extract_and_execute_code(self, text: str) -> Dict[str, Any]:
+
+    def _extract_and_execute_code(self, text: str, agent=None) -> Dict[str, Any]:
         """Extract code blocks from text and execute them"""
         try:
             # Import the CodeExtractor class
@@ -2878,37 +2886,39 @@ class ToolRegistry:
             return result
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _optimize_agent_team(self) -> Dict[str, Any]:
+
+    def _optimize_agent_team(self, agent=None) -> Dict[str, Any]:
         """Optimize the agent team structure based on performance history"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             result = agent.agent_orchestrator.optimize_team_structure()
             result["success"] = True
             return result
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _get_agent_performance(self) -> Dict[str, Any]:
+
+    def _get_agent_performance(self, agent=None) -> Dict[str, Any]:
         """Get performance metrics for all agents"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             metrics = agent.agent_orchestrator.get_agent_performance_metrics()
             
             # Calculate overall statistics
@@ -2935,37 +2945,39 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _get_collaboration_network(self) -> Dict[str, Any]:
+
+    def _get_collaboration_network(self, agent=None) -> Dict[str, Any]:
         """Get the collaboration network between agents"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             network = agent.agent_orchestrator.get_collaboration_network()
             network["success"] = True
             return network
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _search_agent_memory(self, query: str, limit: int = 5) -> Dict[str, Any]:
+
+    def _search_agent_memory(self, query: str, limit: int = 5, agent=None) -> Dict[str, Any]:
         """Search the agent's semantic memory"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator') or not hasattr(agent.agent_orchestrator, 'memory'):
+                 return {"error": "Could not access Agent Orchestrator memory", "success": False}
+
             # Search both orchestrator memory and individual agent memories
             orchestrator_results = agent.agent_orchestrator.memory.search_memory(query, limit)
             
@@ -2985,19 +2997,20 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _add_to_memory(self, content: str, category: str = "general") -> Dict[str, Any]:
+
+    def _add_to_memory(self, content: str, category: str = "general", agent=None) -> Dict[str, Any]:
         """Add an item to the agent's semantic memory"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator') or not hasattr(agent.agent_orchestrator, 'memory'):
+                 return {"error": "Could not access Agent Orchestrator memory", "success": False}
+
             metadata = {
                 "category": category,
                 "source": "user_input",
@@ -3015,19 +3028,20 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _get_memory_summary(self, category: str = "") -> Dict[str, Any]:
+
+    def _get_memory_summary(self, category: str = "", agent=None) -> Dict[str, Any]:
         """Get a summary of the agent's memory"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator') or not hasattr(agent.agent_orchestrator, 'memory'):
+                 return {"error": "Could not access Agent Orchestrator memory", "success": False}
+
             orchestrator_summary = agent.agent_orchestrator.memory.summarize_memories(category)
             
             # Also get summaries from individual agents
@@ -3045,19 +3059,20 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-    
-    def _get_chains_of_thought(self) -> Dict[str, Any]:
+
+    def _get_chains_of_thought(self, agent=None) -> Dict[str, Any]:
         """Get all chains of thought from scout agents"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             all_thoughts = agent.agent_orchestrator.get_all_chains_of_thought()
             
             # Group by scout agent
@@ -3080,19 +3095,20 @@ class ToolRegistry:
             }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
-            
-    def _generate_solution_rollouts(self, task: str, num_rollouts: int = 3, specialization: str = "") -> Dict[str, Any]:
+
+    def _generate_solution_rollouts(self, task: str, num_rollouts: int = 3, specialization: str = "", agent=None) -> Dict[str, Any]:
         """Generate multiple solution approaches (rollouts) for a given task"""
         try:
-            agent = None
-            for frame in inspect.stack():
-                if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
-                    agent = frame.frame.f_locals['self']
-                    break
-            
-            if not agent:
-                return {"error": "Could not access TogetherAgent instance", "success": False}
-            
+            # Use passed agent instance if available, otherwise try inspect.stack()
+            if agent is None:
+                for frame in inspect.stack():
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                        agent = frame.frame.f_locals['self']
+                        break
+
+            if not agent or not hasattr(agent, 'agent_orchestrator'):
+                return {"error": "Could not access Agent Orchestrator instance", "success": False}
+
             # Set the maximum number of rollouts
             for scout_id, scout in agent.agent_orchestrator.scouts.items():
                 scout.max_rollouts = min(num_rollouts, 5)  # Cap at 5 to prevent excessive API calls
