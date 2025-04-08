@@ -29,6 +29,7 @@ import tempfile
 import urllib.parse
 import asyncio
 import traceback
+import redis
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO, BytesIO
 from pathlib import Path
@@ -150,6 +151,20 @@ class ScoutAgent:
         self.chains_of_thought = []
         self.is_available = threading.Event()
         self.is_available.set()  # Initially available
+        
+        # Initialize Redis pubsub for agent communication
+        try:
+            self.redis_client = redis.Redis(host='localhost', port=6379, db=0)
+            self.pubsub = self.redis_client.pubsub()
+            self.pubsub.subscribe(f'agent_{self.agent_id}')
+            self.pubsub_thread = threading.Thread(target=self._listen_for_messages, daemon=True)
+            self.pubsub_thread.start()
+            print(f"[green]Agent {self.agent_id} subscribed to Redis channel agent_{self.agent_id}[/green]")
+        except Exception as e:
+            print(f"[yellow]Warning: Redis PubSub initialization failed for agent {self.agent_id}: {e}[/yellow]")
+            self.redis_client = None
+            self.pubsub = None
+            
         self.worker_thread.start()
         
         # Initialize system prompt based on specialization
@@ -165,6 +180,91 @@ class ScoutAgent:
             specialization, "You are a specialized scout agent working under a central orchestrating agent.")}
         self.conversation_history.append(self.system_message)
         
+    def _listen_for_messages(self):
+        """Listen for messages from other agents via Redis pubsub"""
+        if not self.pubsub:
+            return
+            
+        while not self.stop_event.is_set():
+            try:
+                message = self.pubsub.get_message(timeout=1)
+                if message and message['type'] == 'message':
+                    data = json.loads(message['data'].decode('utf-8'))
+                    print(f"[cyan]Agent {self.agent_id} received message: {data}[/cyan]")
+                    
+                    # Handle different message types
+                    if data.get('type') == 'task_request':
+                        # Another agent is requesting help with a task
+                        self.add_task(self._process_task_request, data)
+                    elif data.get('type') == 'knowledge_share':
+                        # Another agent is sharing knowledge
+                        self.knowledge_base.append({
+                            'content': data.get('content'),
+                            'source': f"agent_{data.get('sender_id')}",
+                            'timestamp': time.time()
+                        })
+            except Exception as e:
+                print(f"[yellow]Error in pubsub listener for agent {self.agent_id}: {e}[/yellow]")
+                time.sleep(1)
+                
+    def send_message(self, recipient_id, message_type, content):
+        """Send a message to another agent via Redis pubsub"""
+        if not hasattr(self, 'redis_client') or not self.redis_client:
+            print(f"[yellow]Warning: Redis client not available for agent {self.agent_id}[/yellow]")
+            return False
+            
+        try:
+            message = {
+                'sender_id': self.agent_id,
+                'sender_specialization': self.specialization,
+                'type': message_type,
+                'content': content,
+                'timestamp': time.time()
+            }
+            self.redis_client.publish(f'agent_{recipient_id}', json.dumps(message))
+            return True
+        except Exception as e:
+            print(f"[yellow]Error sending message from agent {self.agent_id} to {recipient_id}: {e}[/yellow]")
+            return False
+            
+    def broadcast_message(self, message_type, content):
+        """Broadcast a message to all agents via Redis pubsub"""
+        if not hasattr(self, 'redis_client') or not self.redis_client:
+            print(f"[yellow]Warning: Redis client not available for agent {self.agent_id}[/yellow]")
+            return False
+            
+        try:
+            message = {
+                'sender_id': self.agent_id,
+                'sender_specialization': self.specialization,
+                'type': message_type,
+                'content': content,
+                'timestamp': time.time()
+            }
+            self.redis_client.publish('agent_broadcast', json.dumps(message))
+            return True
+        except Exception as e:
+            print(f"[yellow]Error broadcasting message from agent {self.agent_id}: {e}[/yellow]")
+            return False
+            
+    def _process_task_request(self, data):
+        """Process a task request from another agent"""
+        task = data.get('task')
+        sender_id = data.get('sender_id')
+        
+        # Check if this is a task we can handle based on specialization
+        if self.specialization == data.get('requested_specialization'):
+            result = self.perform_task(task, data.get('context'))
+            # Send the result back to the requesting agent
+            self.send_message(sender_id, 'task_result', result)
+            return result
+        else:
+            # We're not the right specialization for this task
+            self.send_message(sender_id, 'task_rejected', {
+                'reason': f"Agent {self.agent_id} is {self.specialization}, not {data.get('requested_specialization')}"
+            })
+            return None
+            
     def _worker(self):
         while not self.stop_event.is_set():
             try:
@@ -271,6 +371,10 @@ class ScoutAgent:
     def stop(self):
         self.stop_event.set()
         self.worker_thread.join(timeout=2)
+        if hasattr(self, 'pubsub_thread') and self.pubsub_thread:
+            self.pubsub_thread.join(timeout=2)
+        if hasattr(self, 'pubsub') and self.pubsub:
+            self.pubsub.unsubscribe()
         
 # ================================
 # Central Agent Orchestrator
@@ -288,6 +392,20 @@ class AgentOrchestrator:
         self.processed_urls = set()
         self.url_pattern = re.compile(r'https?://[^\s<>"\']+|www\.[^\s<>"\']+')
         self.image_processing_limit = 5
+        
+        # Initialize Redis for orchestrator
+        try:
+            self.redis_client = redis.Redis(host='localhost', port=6379, db=0)
+            self.pubsub = self.redis_client.pubsub()
+            self.pubsub.subscribe('agent_broadcast')
+            self.pubsub.subscribe('orchestrator')
+            self.pubsub_thread = threading.Thread(target=self._listen_for_messages, daemon=True)
+            self.pubsub_thread.start()
+            print(f"[green]Orchestrator subscribed to Redis channels[/green]")
+        except Exception as e:
+            print(f"[yellow]Warning: Redis PubSub initialization failed for orchestrator: {e}[/yellow]")
+            self.redis_client = None
+            self.pubsub = None
         
         # Create scouts with different specializations
         specializations = ["research", "code", "planning", "creative", "critical"]
@@ -405,12 +523,87 @@ class AgentOrchestrator:
                 
         return results
         
+    def _listen_for_messages(self):
+        """Listen for messages from agents via Redis pubsub"""
+        if not self.pubsub:
+            return
+            
+        while not self.stop_event.is_set():
+            try:
+                message = self.pubsub.get_message(timeout=1)
+                if message and message['type'] == 'message':
+                    data = json.loads(message['data'].decode('utf-8'))
+                    print(f"[cyan]Orchestrator received message on channel {message['channel'].decode('utf-8')}: {data}[/cyan]")
+                    
+                    # Handle different message types
+                    if data.get('type') == 'task_result':
+                        # An agent has completed a task
+                        task_id = data.get('task_id')
+                        if task_id in self.results:
+                            self.results[task_id].update({
+                                "status": "completed",
+                                "result": data.get('content'),
+                                "scout_id": data.get('sender_id')
+                            })
+                    elif data.get('type') == 'knowledge_share':
+                        # An agent is sharing knowledge with everyone
+                        self.knowledge_base.append({
+                            'content': data.get('content'),
+                            'source': f"agent_{data.get('sender_id')}",
+                            'timestamp': time.time()
+                        })
+            except Exception as e:
+                print(f"[yellow]Error in pubsub listener for orchestrator: {e}[/yellow]")
+                time.sleep(1)
+                
+    def send_message_to_agent(self, agent_id, message_type, content):
+        """Send a message to a specific agent via Redis pubsub"""
+        if not hasattr(self, 'redis_client') or not self.redis_client:
+            print(f"[yellow]Warning: Redis client not available for orchestrator[/yellow]")
+            return False
+            
+        try:
+            message = {
+                'sender_id': 'orchestrator',
+                'type': message_type,
+                'content': content,
+                'timestamp': time.time()
+            }
+            self.redis_client.publish(f'agent_{agent_id}', json.dumps(message))
+            return True
+        except Exception as e:
+            print(f"[yellow]Error sending message from orchestrator to agent {agent_id}: {e}[/yellow]")
+            return False
+            
+    def broadcast_to_agents(self, message_type, content):
+        """Broadcast a message to all agents via Redis pubsub"""
+        if not hasattr(self, 'redis_client') or not self.redis_client:
+            print(f"[yellow]Warning: Redis client not available for orchestrator[/yellow]")
+            return False
+            
+        try:
+            message = {
+                'sender_id': 'orchestrator',
+                'type': message_type,
+                'content': content,
+                'timestamp': time.time()
+            }
+            self.redis_client.publish('agent_broadcast', json.dumps(message))
+            return True
+        except Exception as e:
+            print(f"[yellow]Error broadcasting message from orchestrator: {e}[/yellow]")
+            return False
+    
     def stop(self):
         """Stop the orchestrator and all scouts"""
         self.stop_event.set()
         for scout in self.scouts.values():
             scout.stop()
         self.orchestrator_thread.join(timeout=2)
+        if hasattr(self, 'pubsub_thread') and self.pubsub_thread:
+            self.pubsub_thread.join(timeout=2)
+        if hasattr(self, 'pubsub') and self.pubsub:
+            self.pubsub.unsubscribe()
 
 # ================================
 # Async Task Processor
@@ -1232,8 +1425,12 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
     
-    def _assign_specialized_task(self, task: str, specialization: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _assign_specialized_task(self, task: str, specialization: str, context: Dict[str, Any] = None, location: str = None) -> Dict[str, Any]:
         """Assign a task to a specific type of specialized scout agent"""
+        # Handle special case for weather tasks
+        if "weather" in task.lower() and location:
+            # Redirect to weather function
+            return self._get_weather(location=location)
         try:
             agent = None
             for frame in inspect.stack():
@@ -1501,7 +1698,7 @@ class ToolRegistry:
             function=self._run_assistant
         )
         # Jina tools
-        # Register the new search, read, and fact_check functions
+        # Register the new search, read, fact_check, and weather functions
         self.register_function(
             name="search",
             description="Search the web for information",
@@ -1513,6 +1710,20 @@ class ToolRegistry:
                 "required": ["query"]
             },
             function=self.search
+        )
+        
+        # Register a more robust weather function
+        self.register_function(
+            name="get_weather",
+            description="Get current weather information for a location",
+            parameters={
+                "type": "object", 
+                "properties": {
+                    "location": {"type": "string", "description": "Location (e.g., city name)"}
+                }, 
+                "required": ["location"]
+            },
+            function=self._get_weather
         )
         
         self.register_function(
@@ -2125,7 +2336,7 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
-    def _get_weather(self, location: str, city: str = None) -> Dict[str, Any]:
+    def _get_weather(self, location: str = "New York", city: str = None) -> Dict[str, Any]:
         # Use city parameter if provided, otherwise use location
         location = city or location
         try:
@@ -3751,6 +3962,14 @@ print("Hello, world!")
 def main():
     # Make sure re module is available in this function's scope
     import re
+    
+    # Check if redis is installed, if not, install it
+    try:
+        import redis
+    except ImportError:
+        print("[yellow]Redis package not found. Installing...[/yellow]")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "redis"])
+        import redis
     
     parser = argparse.ArgumentParser(description="Chat with an orchestrator AI agent with specialized scout agents using Together API")
     parser.add_argument("--model", default="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", help="Model to use (default: meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8)")
