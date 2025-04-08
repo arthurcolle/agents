@@ -95,21 +95,114 @@ REDIS_CHANNEL_PREFIX = "llama4_agent:"  # Prefix for Redis channels
 
 # Initialize Redis PubSub
 redis_client = None
+redis_async_client = None
 pubsub = None
+pubsub_listener_task = None
+pubsub_handlers = {}
 
 if REDIS_AVAILABLE:
     try:
+        # Initialize synchronous client for non-async code
         redis_client = redis.Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,
             password=REDIS_PASSWORD,
             decode_responses=True
         )
-        pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
+        
+        # Initialize async client for async code
+        async def init_async_redis():
+            global redis_async_client, pubsub, pubsub_listener_task
+            redis_async_client = await redis.asyncio.from_url(
+                f"redis://{REDIS_HOST}:{REDIS_PORT}",
+                password=REDIS_PASSWORD,
+                decode_responses=True
+            )
+            pubsub = redis_async_client.pubsub()
+            
+            # Subscribe to agent events channel
+            await pubsub.subscribe("agent_events")
+            
+            # Start pubsub listener task
+            pubsub_listener_task = asyncio.create_task(listen_for_pubsub_messages())
+            
+            return redis_async_client
+        
+        # Function to listen for pubsub messages
+        async def listen_for_pubsub_messages():
+            try:
+                logger.info("Started PubSub listener")
+                while True:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if message and message["type"] == "message":
+                        channel = message["channel"]
+                        try:
+                            data = json.loads(message["data"])
+                            
+                            # Handle message based on channel
+                            if channel in pubsub_handlers:
+                                for handler in pubsub_handlers[channel]:
+                                    try:
+                                        if asyncio.iscoroutinefunction(handler):
+                                            asyncio.create_task(handler(data))
+                                        else:
+                                            handler(data)
+                                    except Exception as handler_error:
+                                        logger.error(f"Error in PubSub handler: {handler_error}")
+                        except json.JSONDecodeError:
+                            logger.error(f"Invalid JSON in PubSub message: {message['data']}")
+                    
+                    # Small sleep to prevent CPU spinning
+                    await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                logger.info("PubSub listener cancelled")
+            except Exception as e:
+                logger.error(f"Error in PubSub listener: {e}")
+        
+        # Function to register a handler for a channel
+        def register_pubsub_handler(channel, handler):
+            if channel not in pubsub_handlers:
+                pubsub_handlers[channel] = []
+            pubsub_handlers[channel].append(handler)
+            logger.info(f"Registered handler for PubSub channel: {channel}")
+        
+        # Function to publish a message
+        async def publish_message(channel, data):
+            if redis_async_client:
+                try:
+                    message = json.dumps(data) if not isinstance(data, str) else data
+                    await redis_async_client.publish(channel, message)
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to publish to channel {channel}: {e}")
+                    return False
+            return False
+        
+        # Initialize async Redis in the background
+        asyncio.create_task(init_async_redis())
+        
         logger.info("Redis PubSub initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Redis: {str(e)}")
         REDIS_AVAILABLE = False
+
+# Import multiprocessing and threading
+import multiprocessing
+import threading
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
+# Initialize process and thread pools for parallel execution
+process_pool = None
+thread_pool = None
+
+try:
+    # Determine optimal number of workers
+    cpu_count = multiprocessing.cpu_count()
+    process_pool = ProcessPoolExecutor(max_workers=cpu_count)
+    thread_pool = ThreadPoolExecutor(max_workers=cpu_count * 4)  # More threads for I/O-bound tasks
+    logger.info(f"Initialized process pool with {cpu_count} workers and thread pool with {cpu_count * 4} workers")
+except Exception as e:
+    logger.error(f"Failed to initialize process/thread pools: {str(e)}")
 
 # Create necessary directories
 os.makedirs(MODULES_PATH, exist_ok=True)
@@ -3816,3 +3909,120 @@ if __name__ == "__main__":
     else:
         print("\n💡 Run with --interactive flag for interactive mode")
         print("👋 Exiting non-interactive mode")
+    async def parallel_process(self, func, data_chunks, cpu_bound=True):
+        """
+        Process data in parallel using multiple CPU cores
+        
+        Args:
+            func: Function to execute on each data chunk
+            data_chunks: List of data chunks to process
+            cpu_bound: Whether this is a CPU-bound task (True) or I/O-bound (False)
+            
+        Returns:
+            List of results from processing each chunk
+        """
+        if not self.use_multiprocessing:
+            # Process sequentially if multiprocessing is disabled
+            results = []
+            for chunk in data_chunks:
+                if asyncio.iscoroutinefunction(func):
+                    result = await func(chunk)
+                else:
+                    result = func(chunk)
+                results.append(result)
+            return results
+        
+        # Process in parallel
+        tasks = []
+        for chunk in data_chunks:
+            if cpu_bound:
+                # CPU-bound tasks go to process pool
+                task = self._run_in_process_pool(func, chunk)
+            else:
+                # I/O-bound tasks go to thread pool
+                task = self._run_in_thread_pool(func, chunk)
+            tasks.append(task)
+        
+        # Wait for all tasks to complete
+        return await asyncio.gather(*tasks)
+    
+    async def distribute_task(self, task_type, task_data, priority=0):
+        """
+        Distribute a task to be processed asynchronously
+        
+        Args:
+            task_type: Type of task
+            task_data: Data for the task
+            priority: Priority (0-9, higher is more important)
+            
+        Returns:
+            Task ID if successful, None otherwise
+        """
+        if not self.distributed_mode or not redis_async_client:
+            logger.warning("Distributed mode not available, executing task directly")
+            # Execute directly if distributed mode not available
+            if task_type in agent_kernel.capability_registry.capabilities:
+                handler = agent_kernel.capability_registry.capabilities[task_type]["function"]
+                return await self._run_in_thread_pool(handler, **task_data)
+            return None
+        
+        try:
+            # Generate task ID
+            task_id = f"task_{int(time.time() * 1000)}_{task_type}_{uuid.uuid4().hex[:8]}"
+            
+            # Create task
+            task = {
+                "id": task_id,
+                "type": task_type,
+                "data": task_data,
+                "agent_id": self.agent_id,
+                "conversation_id": self.conversation_id,
+                "priority": priority,
+                "created_at": time.time()
+            }
+            
+            # Store task in metadata
+            async with self._metadata_lock:
+                self.metadata["distributed_tasks"][task_id] = {
+                    "status": "pending",
+                    "created_at": time.time(),
+                    "data": task_data
+                }
+            
+            # Publish task to Redis
+            await publish_message(self.pubsub_channels["agent_tasks"], task)
+            
+            logger.info(f"Distributed task {task_id} of type {task_type}")
+            return task_id
+        except Exception as e:
+            logger.error(f"Failed to distribute task: {e}")
+            return None
+    
+    async def wait_for_distributed_task(self, task_id, timeout=60):
+        """
+        Wait for a distributed task to complete
+        
+        Args:
+            task_id: Task ID to wait for
+            timeout: Timeout in seconds
+            
+        Returns:
+            Task result if completed, None otherwise
+        """
+        if not self.distributed_mode:
+            return None
+            
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            # Check if task is completed
+            async with self._metadata_lock:
+                if task_id in self.metadata["distributed_tasks"]:
+                    task = self.metadata["distributed_tasks"][task_id]
+                    if task.get("status") == "completed":
+                        return task.get("result")
+            
+            # Wait a bit before checking again
+            await asyncio.sleep(0.5)
+            
+        logger.warning(f"Timeout waiting for task {task_id}")
+        return None
