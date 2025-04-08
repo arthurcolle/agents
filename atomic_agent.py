@@ -42,6 +42,12 @@ except ImportError:
     import aiohttp
 
 try:
+    import pytz
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pytz"])
+    import pytz
+
+try:
     from together import Together
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "together"])
@@ -501,6 +507,20 @@ class ToolRegistry:
         self._register_default_tools()
 
     def _register_default_tools(self):
+        # Date and time tools
+        self.register_function(
+            name="get_current_datetime",
+            description="Get the current date and time",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "timezone": {"type": "string", "description": "Optional timezone (e.g., 'UTC', 'US/Eastern')", "default": "local"}
+                },
+                "required": []
+            },
+            function=self._get_current_datetime
+        )
+        
         # Web search tools
         self.register_function(
             name="web_search",
@@ -924,6 +944,10 @@ class ToolRegistry:
 
     def get_tool(self, name: str):
         return self.functions[name].function if name in self.functions else None
+        
+    def get_available_tools(self) -> List[str]:
+        """Return a list of all available tool names"""
+        return list(self.functions.keys())
 
     # ===============================
     # Default tool implementations
@@ -1735,6 +1759,52 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
+    def _get_current_datetime(self, timezone: str = "local") -> Dict[str, Any]:
+        """Get the current date and time, optionally in a specific timezone."""
+        try:
+            import datetime
+            import pytz
+            from zoneinfo import ZoneInfo, available_timezones
+            
+            now = datetime.datetime.now()
+            local_time = now
+            
+            if timezone and timezone.lower() != "local":
+                try:
+                    # Try using ZoneInfo (Python 3.9+)
+                    local_time = now.astimezone(ZoneInfo(timezone))
+                except (ImportError, KeyError):
+                    try:
+                        # Fall back to pytz
+                        tz = pytz.timezone(timezone)
+                        local_time = now.astimezone(tz)
+                    except (pytz.exceptions.UnknownTimeZoneError, ImportError):
+                        return {
+                            "error": f"Unknown timezone: {timezone}",
+                            "available_timezones": "Use standard timezone names like 'UTC', 'US/Eastern', 'Europe/London'",
+                            "success": False
+                        }
+            
+            result = {
+                "current_datetime": local_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "date": local_time.strftime("%Y-%m-%d"),
+                "time": local_time.strftime("%H:%M:%S"),
+                "timezone": timezone if timezone != "local" else "local system timezone",
+                "timestamp": time.time(),
+                "iso_format": local_time.isoformat(),
+                "success": True
+            }
+            
+            # Add day of week, month name, etc.
+            result["day_of_week"] = local_time.strftime("%A")
+            result["month"] = local_time.strftime("%B")
+            result["year"] = local_time.year
+            result["day"] = local_time.day
+            
+            return result
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
     def _monitor_task(self, task_id: str) -> Dict[str, Any]:
         try:
             agent = None
@@ -1759,6 +1829,8 @@ def extract_python_code(text: str) -> list:
 
 def parse_function_calls(text: str) -> List[Dict[str, Any]]:
     function_calls = []
+    
+    # Try to find JSON-formatted function calls first
     json_pattern = r'\{(?:[^{}]|(?:\{[^{}]*\}))*\}'
     potential_matches = re.findall(json_pattern, text)
     for potential_json in potential_matches:
@@ -1768,8 +1840,11 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
                 function_calls.append({"name": data["name"], "arguments": data["arguments"]})
         except json.JSONDecodeError:
             continue
+    
     if function_calls:
         return function_calls
+    
+    # Try to find function calls in the format [function_name(arg1=val1, arg2=val2)]
     pattern = r'\[(\w+)\((.*?)\)\]'
     matches = re.findall(pattern, text)
     for match in matches:
@@ -1789,15 +1864,31 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
             console.print(f"[red]Error parsing arguments for {func_name}: {args_str}[/red]")
             continue
         function_calls.append({"name": func_name, "arguments": args})
+    
+    # Try to find function calls in the format <function=function_name>{"arg1": "val1"}</function>
     function_pattern = r'<function=(\w+)>(.*?)</function>'
     fn_matches = re.findall(function_pattern, text)
     for m in fn_matches:
         func_name = m[0]
+        args_str = m[1].strip()
         try:
-            args = json.loads(m[1])
+            # If args_str is empty or not valid JSON, use empty dict
+            if not args_str or args_str == "{}":
+                args = {}
+            else:
+                args = json.loads(args_str)
             function_calls.append({"name": func_name, "arguments": args})
         except json.JSONDecodeError:
             console.print(f"[red]Error parsing arguments for {func_name}: {m[1]}[/red]")
+            # Still add the function call with empty arguments as a fallback
+            function_calls.append({"name": func_name, "arguments": {}})
+    
+    # Special case for <|python_start|><function=X>...<|python_end pattern
+    python_function_pattern = r'<\|python_start\|><function=(\w+)>'
+    python_fn_matches = re.findall(python_function_pattern, text)
+    for func_name in python_fn_matches:
+        function_calls.append({"name": func_name, "arguments": {}})
+    
     return function_calls
 
 def get_structured_function_call(messages: List[Dict[str, str]], tools: List[Dict[str, Any]], model: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo") -> List[Dict[str, Any]]:
@@ -2230,16 +2321,70 @@ print("Hello, world!")
                             function_calls = parse_function_calls(assistant_content)
                             if function_calls:
                                 results = []
+                                all_successful = True
                                 for fc in function_calls:
                                     name = fc["name"]
                                     args = fc["arguments"]
                                     console.print(f"[cyan]Calling function: [bold]{name}[/bold][/cyan]")
                                     console.print(f"[cyan]With arguments:[/cyan] {json.dumps(args, indent=2)}")
-                                    result = self.tool_registry.call_function(name, args)
-                                    console.print(f"[green]Result from {name}:[/green]")
-                                    console.print(json.dumps(result, indent=2))
+                                    
+                                    # Check if function exists
+                                    if not self.tool_registry.has_tool(name):
+                                        error_msg = f"Function '{name}' not found in registry"
+                                        console.print(f"[red]{error_msg}[/red]")
+                                        result = {"error": error_msg, "success": False}
+                                        all_successful = False
+                                    else:
+                                        result = self.tool_registry.call_function(name, args)
+                                        
+                                    # Check if there was an error
+                                    if "error" in result:
+                                        all_successful = False
+                                        console.print(f"[red]Error in {name}: {result.get('error')}[/red]")
+                                    else:
+                                        console.print(f"[green]Result from {name}:[/green]")
+                                        console.print(json.dumps(result, indent=2))
+                                        
                                     self.conversation_history.append({"role": "tool", "name": name, "content": json.dumps(result, indent=2)})
                                     results.append({"function_name": name, "arguments": args, "result": result})
+                                
+                                # If any function call failed, ask the model to correct itself
+                                if not all_successful:
+                                    correction_prompt = (
+                                        f"There were errors in your function calls: {json.dumps(results)}. "
+                                        f"Please correct your approach and try again with valid function calls."
+                                    )
+                                    self.add_message("user", correction_prompt)
+                                    corrected_response = self.client.completions.create(
+                                        model=self.model,
+                                        prompt=self.format_llama4_prompt() + "\nAssistant: ",
+                                        max_tokens=1024,
+                                        stop=["<|eot|>"]
+                                    )
+                                    corrected_content = corrected_response.choices[0].text + "<|eot|>"
+                                    corrected_message = {"role": "assistant", "content": corrected_content}
+                                    self.conversation_history.append(corrected_message)
+                                    
+                                    # Try to parse function calls from the corrected response
+                                    corrected_function_calls = parse_function_calls(corrected_content)
+                                    if corrected_function_calls:
+                                        # Process the corrected function calls
+                                        corrected_results = []
+                                        for fc in corrected_function_calls:
+                                            name = fc["name"]
+                                            args = fc["arguments"]
+                                            if self.tool_registry.has_tool(name):
+                                                console.print(f"[cyan]Retrying function: [bold]{name}[/bold][/cyan]")
+                                                console.print(f"[cyan]With arguments:[/cyan] {json.dumps(args, indent=2)}")
+                                                result = self.tool_registry.call_function(name, args)
+                                                console.print(f"[green]Result from {name}:[/green]")
+                                                console.print(json.dumps(result, indent=2))
+                                                self.conversation_history.append({"role": "tool", "name": name, "content": json.dumps(result, indent=2)})
+                                                corrected_results.append({"function_name": name, "arguments": args, "result": result})
+                                        
+                                        if corrected_results:
+                                            results = corrected_results
+                                
                                 final_prompt = f"Based on these function results: {json.dumps(results)}, provide a direct answer."
                                 final_response = self.client.completions.create(
                                     model=self.model,
