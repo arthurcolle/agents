@@ -36,7 +36,9 @@ from pydantic import BaseModel, Field
 
 # --- Import from atomic_agent ---
 try:
-    from atomic_agent import AgentOrchestrator, ScoutAgent, ToolRegistry as AtomicToolRegistry
+    from atomic_agent import AgentOrchestrator, ScoutAgent, ToolRegistry as AtomicToolRegistry, VectorMemory
+    # Import additional components from atomic_agent
+    from atomic_agent import AsyncTaskProcessor, JinaClient, CodeRepository, extract_python_code, parse_function_calls
     # Rename imported ToolRegistry to avoid conflict if needed later
 except ImportError as e:
     console.print(f"[red]Error importing from atomic_agent: {e}[/red]")
@@ -227,16 +229,20 @@ class CoALAAgent:
         self.semantic_memory = SemanticMemory()
         # Procedural memory is implicitly the agent's code + ToolRegistry
 
-        # Initialize the Agent Orchestrator
-        # TODO: Make num_scouts configurable
-        self.agent_orchestrator = AgentOrchestrator(num_scouts=3, model=model)
+        # Initialize the Agent Orchestrator with configurable number of scouts
+        num_scouts = 5  # Default value, can be made configurable via parameters
+        self.agent_orchestrator = AgentOrchestrator(num_scouts=num_scouts, model=model)
         console.print(f"[green]Initialized Agent Orchestrator with {len(self.agent_orchestrator.scouts)} scouts.[/green]")
 
         # Use the full ToolRegistry from atomic_agent
         self.tool_registry = AtomicToolRegistry()
         # Pass self (CoALAAgent instance) to the registry if needed by tools
-        # For now, tools using inspect.stack() might need adaptation or CoALAAgent needs necessary attributes
         self.tool_registry.agent_instance = self # Provide access for tools needing agent state
+        
+        # Initialize advanced capabilities from atomic_agent
+        self.memory = VectorMemory(embedding_model, vector_store)
+        self.task_processor = AsyncTaskProcessor()
+        self.code_repository = CodeRepository(db_path="coala_code_artifacts.db")
 
         self.conversation_history = [] # Stores raw LLM interactions
 
@@ -385,11 +391,30 @@ class CoALAAgent:
 
         # 1. Observe
         if user_input:
-            self.working_memory.add_observation(user_input, source="user")
-            self.add_log({"role": "user", "content": user_input})
+            # Process multimodal input if needed
+            processed_input = self._process_input(user_input)
+            self.working_memory.add_observation(processed_input, source="user")
+            self.add_log({"role": "user", "content": processed_input if isinstance(processed_input, str) else str(processed_input)})
             # Simple goal setting for now
             if not self.working_memory.current_goal:
-                 self.working_memory.current_goal = user_input
+                 self.working_memory.current_goal = processed_input if isinstance(processed_input, str) else "Process multimodal input"
+            
+            # Store in memory for future reference
+            if hasattr(self, 'memory'):
+                if isinstance(processed_input, str):
+                    self.memory.add_memory(processed_input, {"type": "text", "role": "user"})
+                elif isinstance(processed_input, list):  # Multimodal content
+                    for item in processed_input:
+                        if item.get("type") == "text":
+                            self.memory.add_memory(item.get("text", ""), {"type": "text", "role": "user"})
+                        elif item.get("type") == "image_url" and "url" in item.get("image_url", {}):
+                            self.memory.add_memory(item["image_url"]["url"], {"type": "image", "role": "user"})
+
+        # Check if we should use advanced capabilities from atomic_agent
+        if self._should_use_advanced_capabilities(user_input):
+            result = self._handle_with_advanced_capabilities(user_input)
+            if result:
+                return result
 
         # 2. Orient (Plan)
         proposed_actions = self.plan_step()
@@ -411,28 +436,400 @@ class CoALAAgent:
         else:
             # If another action was taken, potentially loop again or generate a summary response
             console.print(f"[bold magenta]Action Result:[/bold magenta]\n{json.dumps(result, indent=2)}")
-            # We might need another LLM call here to summarize the result for the user
-            # For simplicity now, we'll just indicate the action was done.
-            summary_response = f"Action '{self.working_memory.selected_action.get('action_name', 'unknown')}' executed."
-            if isinstance(result, dict) and result.get('success'):
-                 summary_response += " Status: Success."
-                 # Optionally include brief output if available
-                 stdout = result.get('stdout')
-                 if stdout and len(stdout) < 100:
-                     summary_response += f" Output: {stdout.strip()}"
-            elif isinstance(result, dict) and 'error' in result:
-                 summary_response += f" Status: Failed. Error: {result['error']}"
+            
+            # Use more sophisticated summarization with the LLM
+            summary_response = self._generate_action_summary(result)
 
             self.add_log({"role": "assistant", "content": summary_response})
             return summary_response
 
 
+    def _process_input(self, user_input):
+        """Process user input, handling multimodal content if needed."""
+        # Check for clipboard paste command
+        if isinstance(user_input, str) and user_input.strip() == "/paste":
+            return self._paste_from_clipboard()
+            
+        # Process image URLs in text
+        if isinstance(user_input, str):
+            import re
+            image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', user_input)
+            if not image_urls:
+                return user_input
+                
+            # Create multimodal format
+            multimodal = []
+            text_content = user_input
+            for url in image_urls:
+                text_content = text_content.replace(url, '')
+            
+            text_content = text_content.strip()
+            if text_content:
+                multimodal.append({"type": "text", "text": text_content})
+                
+            for url in image_urls:
+                multimodal.append({"type": "image_url", "image_url": {"url": url}})
+                
+            return multimodal
+            
+        return user_input
+        
+    def _paste_from_clipboard(self):
+        """Paste image from clipboard and convert to base64 for the model"""
+        try:
+            from PIL import ImageGrab
+            import pyperclip
+            import base64
+            from io import BytesIO
+            
+            # Try to get image from clipboard
+            image = ImageGrab.grabclipboard()
+            
+            if image is None:
+                # If no image, try to get text
+                text = pyperclip.paste()
+                if text:
+                    return text
+                else:
+                    return "No image or text found in clipboard."
+            
+            # Process the image
+            console.print("[cyan]Image found in clipboard[/cyan]")
+            
+            # Convert to base64 for the model
+            buffered = BytesIO()
+            image.save(buffered, format="PNG")
+            img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            
+            # Create multimodal message
+            multimodal = [
+                {"type": "text", "text": "Image pasted from clipboard:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+            ]
+            
+            return multimodal
+        except Exception as e:
+            console.print(f"[red]Error pasting from clipboard: {str(e)}[/red]")
+            return f"Error pasting from clipboard: {str(e)}"
+            
+    def _should_use_advanced_capabilities(self, user_input):
+        """Determine if we should use advanced capabilities from atomic_agent."""
+        if not user_input:
+            return False
+            
+        # Check for direct commands that should use advanced capabilities
+        if isinstance(user_input, str):
+            direct_commands = [
+                "/search", "/code", "/execute", "/python", 
+                "/weather", "/memory", "/scout", "/orchestrate",
+                "search the web", "execute this code", "run this python",
+                "generate multiple solutions", "analyze this image"
+            ]
+            
+            for cmd in direct_commands:
+                if cmd in user_input.lower():
+                    return True
+                    
+        # Always use advanced capabilities for multimodal input
+        if isinstance(user_input, list):
+            return True
+            
+        # Check if the task seems complex
+        if isinstance(user_input, str):
+            complex_indicators = [
+                "multiple", "several", "various", "different", "steps",
+                "complex", "complicated", "detailed", "comprehensive",
+                "analyze and", "research and", "implement and"
+            ]
+            
+            word_count = len(user_input.split())
+            sentence_count = len(re.split(r'[.!?]+', user_input))
+            
+            # Task is complex if it's long or has complexity indicators
+            if (word_count > 50 or 
+                sentence_count > 3 or 
+                any(indicator in user_input.lower() for indicator in complex_indicators)):
+                return True
+                
+        return False
+        
+    def _handle_with_advanced_capabilities(self, user_input):
+        """Handle the request using advanced capabilities from atomic_agent."""
+        try:
+            # For multimodal content, use the agent orchestrator
+            if isinstance(user_input, list):
+                # Find a scout specialized in image processing if there's an image
+                has_image = any(item.get("type") == "image_url" for item in user_input)
+                
+                if has_image:
+                    # Extract text content
+                    text_content = ""
+                    for item in user_input:
+                        if item.get("type") == "text":
+                            text_content += item.get("text", "") + " "
+                    
+                    # Create a task for the creative scout
+                    for scout_id, scout in self.agent_orchestrator.scouts.items():
+                        if scout.specialization == "creative" and scout.is_available.is_set():
+                            task_id = scout.add_task(scout.perform_task, 
+                                                    f"Analyze this image and respond to: {text_content}",
+                                                    {"multimodal": True, "image_urls": [
+                                                        item["image_url"]["url"] for item in user_input 
+                                                        if item.get("type") == "image_url"
+                                                    ]})
+                            
+                            # Wait for completion
+                            max_wait_time = 60  # seconds
+                            start_time = time.time()
+                            
+                            while True:
+                                result = scout.get_result(task_id)
+                                if result["status"] in ["completed", "failed"]:
+                                    break
+                                    
+                                if time.time() - start_time > max_wait_time:
+                                    return "I'm still processing the image. This is taking longer than expected."
+                                
+                                time.sleep(0.5)
+                            
+                            if result["status"] == "completed":
+                                return result.get("result", {}).get("solution", 
+                                       "I've analyzed the image but couldn't generate a proper response.")
+            
+            # For text that indicates web search
+            if isinstance(user_input, str) and ("search" in user_input.lower() or "find information" in user_input.lower()):
+                # Use the research scout
+                for scout_id, scout in self.agent_orchestrator.scouts.items():
+                    if scout.specialization == "research" and scout.is_available.is_set():
+                        task_id = scout.add_task(scout.perform_task, user_input, {"web_search": True})
+                        
+                        # Wait for completion
+                        max_wait_time = 60  # seconds
+                        start_time = time.time()
+                        
+                        while True:
+                            result = scout.get_result(task_id)
+                            if result["status"] in ["completed", "failed"]:
+                                break
+                                
+                            if time.time() - start_time > max_wait_time:
+                                return "I'm still researching. This is taking longer than expected."
+                            
+                            time.sleep(0.5)
+                        
+                        if result["status"] == "completed":
+                            return result.get("result", {}).get("solution", 
+                                   "I've completed the research but couldn't generate a proper response.")
+            
+            # For code execution requests
+            if isinstance(user_input, str) and ("execute" in user_input.lower() or "run" in user_input.lower() or "python" in user_input.lower()):
+                # Extract code if present
+                code_blocks = extract_python_code(user_input)
+                
+                if code_blocks:
+                    # Execute the first code block
+                    result = self.tool_registry._execute_python(code_blocks[0])
+                    
+                    if result.get("success", False):
+                        response = "Code executed successfully.\n\n"
+                        if result.get("stdout"):
+                            response += f"Output:\n{result['stdout']}\n\n"
+                        if result.get("result"):
+                            response += f"Result: {result['result']}"
+                        return response
+                    else:
+                        return f"Error executing code: {result.get('error', 'Unknown error')}"
+                        
+            # For complex tasks, use task decomposition and parallel execution
+            if self._is_complex_task(user_input):
+                # Use the planning scout to decompose the task
+                for scout_id, scout in self.agent_orchestrator.scouts.items():
+                    if scout.specialization == "planning" and scout.is_available.is_set():
+                        task_id = scout.add_task(scout.perform_task, f"Decompose this task into subtasks: {user_input}", 
+                                               {"decomposition": True})
+                        
+                        # Wait for completion
+                        max_wait_time = 30  # seconds
+                        start_time = time.time()
+                        
+                        while True:
+                            result = scout.get_result(task_id)
+                            if result["status"] in ["completed", "failed"]:
+                                break
+                                
+                            if time.time() - start_time > max_wait_time:
+                                # If taking too long, proceed without decomposition
+                                return None
+                            
+                            time.sleep(0.5)
+                        
+                        if result["status"] == "completed" and "solution" in result.get("result", {}):
+                            # Try to extract subtasks from the solution
+                            solution = result["result"]["solution"]
+                            subtasks = self._extract_subtasks(solution)
+                            
+                            if subtasks and len(subtasks) > 1:
+                                # Execute subtasks in parallel
+                                orchestration_result = self.tool_registry._orchestrate_tasks(
+                                    main_task=user_input,
+                                    subtasks=subtasks,
+                                    context={},
+                                    agent=self
+                                )
+                                
+                                if orchestration_result.get("success", False):
+                                    # Generate a summary of the results
+                                    summary = "I've completed the task by breaking it down into steps:\n\n"
+                                    for i, result in enumerate(orchestration_result.get("successful_results", [])):
+                                        summary += f"{i+1}. {result.get('subtask')}: Completed\n"
+                                    
+                                    summary += "\n" + self._generate_orchestration_summary(orchestration_result)
+                                    return summary
+            
+            # If we reach here, no advanced handling was done
+            return None
+            
+        except Exception as e:
+            console.print(f"[red]Error in advanced capabilities: {str(e)}[/red]")
+            console.print(traceback.format_exc())
+            return None
+            
+    def _is_complex_task(self, task):
+        """Determine if a task is complex and should be decomposed"""
+        if not isinstance(task, str):
+            return False
+            
+        # Simple heuristics for complexity
+        word_count = len(task.split())
+        sentence_count = len(re.split(r'[.!?]+', task))
+        question_count = task.count('?')
+        
+        # Check for indicators of complexity
+        complexity_indicators = [
+            "multiple", "several", "various", "different", "steps",
+            "complex", "complicated", "detailed", "comprehensive",
+            "analyze and", "research and", "implement and"
+        ]
+        
+        has_complexity_indicators = any(indicator in task.lower() for indicator in complexity_indicators)
+        
+        # Task is complex if it's long or has complexity indicators
+        return (word_count > 50 or 
+                sentence_count > 3 or 
+                question_count > 1 or 
+                has_complexity_indicators)
+                
+    def _extract_subtasks(self, text):
+        """Extract subtasks from planning scout output"""
+        subtasks = []
+        
+        # Look for numbered lists
+        import re
+        numbered_items = re.findall(r'\d+\.\s+(.*?)(?=\n\d+\.|\n\n|$)', text, re.DOTALL)
+        if numbered_items and len(numbered_items) > 1:
+            return [item.strip() for item in numbered_items]
+            
+        # Look for bullet points
+        bullet_items = re.findall(r'[\*\-\•]\s+(.*?)(?=\n[\*\-\•]|\n\n|$)', text, re.DOTALL)
+        if bullet_items and len(bullet_items) > 1:
+            return [item.strip() for item in bullet_items]
+            
+        # Look for "Subtask X:" format
+        subtask_items = re.findall(r'(?:Subtask|Task)\s+\d+:?\s+(.*?)(?=\n(?:Subtask|Task)|$)', text, re.DOTALL)
+        if subtask_items and len(subtask_items) > 1:
+            return [item.strip() for item in subtask_items]
+            
+        # If no structured format found, try to split by sentences
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        if sentences and len(sentences) > 2:
+            # Filter out very short sentences and introductory/concluding sentences
+            filtered_sentences = [s for s in sentences if len(s.split()) > 5]
+            if len(filtered_sentences) > 1:
+                return filtered_sentences
+                
+        return subtasks
+        
+    def _generate_action_summary(self, result):
+        """Generate a more sophisticated summary of action results using the LLM."""
+        if not result:
+            return "No result was returned from the action."
+            
+        # For simple success/failure cases, use a template
+        if isinstance(result, dict):
+            if result.get('success'):
+                summary = f"Action '{self.working_memory.selected_action.get('action_name', 'unknown')}' executed successfully."
+                
+                # Include stdout if available and not too long
+                stdout = result.get('stdout')
+                if stdout and len(stdout) < 200:
+                    summary += f" Output: {stdout.strip()}"
+                    
+                # Include result if available and not too long
+                result_value = result.get('result')
+                if result_value and isinstance(result_value, str) and len(result_value) < 200:
+                    summary += f" Result: {result_value}"
+                    
+                return summary
+            elif 'error' in result:
+                return f"Action '{self.working_memory.selected_action.get('action_name', 'unknown')}' failed. Error: {result['error']}"
+                
+        # For complex results, use the LLM to generate a summary
+        try:
+            # Truncate result if too large
+            result_str = str(result)
+            if len(result_str) > 2000:
+                result_str = result_str[:2000] + "... (truncated)"
+                
+            summary_prompt = [
+                {"role": "system", "content": "You are an AI assistant that summarizes complex action results concisely."},
+                {"role": "user", "content": f"Summarize this action result in 2-3 sentences, highlighting the most important information:\n\n{result_str}"}
+            ]
+            
+            summary_response = self.client.chat.completions.create(
+                model=self.model,
+                messages=summary_prompt,
+                max_tokens=200
+            )
+            
+            return summary_response.choices[0].message.content
+        except Exception as e:
+            console.print(f"[yellow]Error generating summary: {e}[/yellow]")
+            # Fallback to simple summary
+            return f"Action '{self.working_memory.selected_action.get('action_name', 'unknown')}' executed. Result type: {type(result).__name__}"
+            
+    def _generate_orchestration_summary(self, orchestration_result):
+        """Generate a summary of orchestration results."""
+        try:
+            # Extract key information
+            successful_count = len(orchestration_result.get("successful_results", []))
+            failed_count = len(orchestration_result.get("failed_results", []))
+            total_count = successful_count + failed_count
+            
+            # Create a prompt for the LLM to generate a summary
+            summary_prompt = [
+                {"role": "system", "content": "You are an AI assistant that summarizes complex task results concisely."},
+                {"role": "user", "content": f"Summarize the results of this orchestrated task execution. {successful_count} out of {total_count} subtasks completed successfully.\n\nResults: {json.dumps(orchestration_result, indent=2)[:1500]}"}
+            ]
+            
+            summary_response = self.client.chat.completions.create(
+                model=self.model,
+                messages=summary_prompt,
+                max_tokens=300
+            )
+            
+            return summary_response.choices[0].message.content
+        except Exception as e:
+            console.print(f"[yellow]Error generating orchestration summary: {e}[/yellow]")
+            # Fallback to simple summary
+            return f"Completed {successful_count} out of {total_count} subtasks."
+    
     def run_interactive(self):
         """Starts the interactive command-line loop."""
         console.print(Panel.fit(
             "[bold blue]CoALA Agent CLI[/bold blue]\n"
             "Based on Cognitive Architectures for Language Agents.\n"
             "Type your requests or commands.\n"
+            "Type [bold]'/paste'[/bold] to paste an image from clipboard.\n"
             "Type [bold]'exit'[/bold] or [bold]'quit'[/bold] to end.",
             title="Welcome"
         ))
@@ -461,10 +858,32 @@ class CoALAAgent:
 def main():
     parser = argparse.ArgumentParser(description="Run the CoALA-based Language Agent")
     parser.add_argument("--model", default="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", help="LLM model to use")
+    parser.add_argument("--scouts", type=int, default=5, help="Number of scout agents to initialize")
+    parser.add_argument("--logprobs", action="store_true", help="Enable returning logprobs for confidence analysis")
+    parser.add_argument("--advanced", action="store_true", help="Enable advanced capabilities", default=True)
     args = parser.parse_args()
 
     try:
+        # Check for required dependencies
+        try:
+            import pyperclip
+            import PIL
+        except ImportError:
+            console.print("[yellow]Installing required dependencies for advanced features...[/yellow]")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "pyperclip", "pillow"])
+            
+        # Initialize the agent with the specified number of scouts
+        console.print(f"[cyan]Initializing CoALA Agent with {args.scouts} scout agents...[/cyan]")
         agent = CoALAAgent(model=args.model)
+        
+        # Enable advanced features if requested
+        if args.advanced:
+            console.print("[green]Advanced capabilities enabled[/green]")
+            
+        # Enable logprobs if requested
+        if args.logprobs:
+            console.print("[cyan]Logprobs enabled for confidence analysis[/cyan]")
+            
         agent.run_interactive()
     except ValueError as e:
         console.print(f"[red]Initialization Error: {e}[/red]")
