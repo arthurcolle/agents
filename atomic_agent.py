@@ -548,6 +548,7 @@ class ToolRegistry:
             },
             function=self._create_pydantic_model
         )
+        self.register_function(
             name="add_numbers",
             description="Add two numbers",
             parameters={
