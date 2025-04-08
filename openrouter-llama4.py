@@ -3810,8 +3810,15 @@ if __name__ == "__main__":
                     "has_printed_prefix": False  # Track if we've printed the prefix
                 }
                 
-                # Use streaming for real-time response
-                for chunk in agent.chat(user_input, stream=True):
+                # Create an event loop if needed
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Use streaming for real-time response - properly await the coroutine
+                for chunk in loop.run_until_complete(agent.chat(user_input, stream=True)):
                     # Print appropriate prefix based on recursive level
                     if not conversation_state["has_printed_prefix"]:
                         print("\n🦙: ", end="", flush=True)
