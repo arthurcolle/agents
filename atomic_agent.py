@@ -689,6 +689,35 @@ class ToolRegistry:
         )
         # File operations (read, write, list_directory, delete_file)
         self.register_function(
+            name="install_package",
+            description="Installs a Python package using pip.",
+            parameters={"type": "object", "properties": {"package_name": {"type": "string", "description": "The name of the package to install."}}, "required": ["package_name"]},
+            function=self._install_package
+        )
+        self.register_function(
+            name="create_or_update_tool",
+            description="Creates or updates a tool with the specified name, code, description, and parameters.",
+            parameters={"type": "object", "properties": {
+                "name": {"type": "string", "description": "The tool name."},
+                "code": {"type": "string", "description": "The Python code for the tool."},
+                "description": {"type": "string", "description": "A description of the tool."},
+                "parameters": {"type": "object", "description": "A dictionary defining the parameters for the tool.", "additionalProperties": {"type": "object", "properties": {"type": {"type": "string", "description": "Data type of the parameter."}, "description": {"type": "string", "description": "Description of the parameter."}}, "required": ["type", "description"]}}
+            }, "required": ["name", "code", "description", "parameters"]},
+            function=self._create_or_update_tool
+        )
+        self.register_function(
+            name="serialize_tool_result",
+            description="Serializes the result of a tool call, truncating if necessary.",
+            parameters={"type": "object", "properties": {"tool_result": {"type": "string", "description": "The result of the tool call."}, "max_length": {"type": "integer", "description": "Maximum length of the serialized result.", "default": 5000}}, "required": ["tool_result"]},
+            function=self._serialize_tool_result
+        )
+        self.register_function(
+            name="task_completed",
+            description="Marks the current task as completed.",
+            parameters={"type": "object", "properties": {}},
+            function=self._task_completed
+        )
+        self.register_function(
             name="read_file",
             description="Read file contents",
             parameters={"type": "object", "properties": {"path": {"type": "string", "description": "File path"}}, "required": ["path"]},
@@ -1066,7 +1095,33 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "success": False}
 
-    def _delete_file(self, path: str) -> Dict[str, Any]:
+    def _install_package(self, package_name: str) -> Dict[str, Any]:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+            return {"success": True, "message": f"Package '{package_name}' installed successfully."}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _create_or_update_tool(self, name: str, code: str, description: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            exec(code, globals())
+            self.register_function(name, globals()[name], description, parameters)
+            return {"success": True, "message": f"Tool '{name}' created/updated successfully."}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _serialize_tool_result(self, tool_result: Any, max_length: int = 5000) -> str:
+        try:
+            serialized_result = json.dumps(tool_result)
+        except TypeError:
+            serialized_result = str(tool_result)
+        if len(serialized_result) > max_length:
+            return serialized_result[:max_length] + f"\n\n(Note: Result was truncated to {max_length} characters out of {len(serialized_result)} total characters.)"
+        else:
+            return serialized_result
+
+    def _task_completed(self) -> str:
+        return "Task marked as completed."
         try:
             path = Path(path).expanduser()
             if not path.exists():
