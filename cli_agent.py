@@ -1959,6 +1959,9 @@ class CLIAgent:
         # Register built-in tools
         self._register_builtin_tools()
         
+        # Register tool templates
+        self._register_tool_templates()
+        
         # Define available tools for OpenAI API
         self.tools = self.tool_registry.get_openai_tools_format() + [
             # File system tools
@@ -3045,6 +3048,39 @@ class CLIAgent:
             "tool_management"
         )
     
+    def _register_tool_templates(self):
+        """Register tool templates from the tool_templates module"""
+        try:
+            from tool_templates import get_all_tool_templates
+            
+            templates = get_all_tool_templates()
+            registered_count = 0
+            
+            for template in templates:
+                # Skip if tool already exists
+                if self.tool_registry.get_tool(template["name"]):
+                    continue
+                    
+                # Register the tool
+                result = self.tool_registry.load_tool_from_code(
+                    template["name"],
+                    template["code"],
+                    template["description"],
+                    template["parameters"],
+                    template["category"]
+                )
+                
+                if result["success"]:
+                    registered_count += 1
+            
+            if registered_count > 0:
+                self.console.print(f"[dim]Registered {registered_count} tool templates[/dim]")
+                
+        except ImportError:
+            self.console.print("[yellow]Tool templates module not found. Some advanced tools will not be available.[/yellow]")
+        except Exception as e:
+            self.console.print(f"[yellow]Error registering tool templates: {e}[/yellow]")
+
     def _register_new_tool(self, name: str, code: str, description: str, 
                           parameters: Dict[str, Any], category: str = "custom") -> Dict:
         """Register a new tool from code"""
@@ -3584,6 +3620,7 @@ def main():
     parser.add_argument("--list-agents", action="store_true", help="List available dynamic agents and exit")
     parser.add_argument("--list-tools", action="store_true", help="List available tools and exit")
     parser.add_argument("--list-categories", action="store_true", help="List available tool categories and exit")
+    parser.add_argument("--list-templates", action="store_true", help="List available tool templates and exit")
     args = parser.parse_args()
     
     # Enable tracing if requested
@@ -3691,6 +3728,49 @@ def main():
             table.add_row(category, str(tool_count))
         
         console.print(table)
+        return
+    
+    # If --list-templates flag is provided, list tool templates and exit
+    if args.list_templates:
+        try:
+            from tool_templates import get_all_tool_templates
+            templates = get_all_tool_templates()
+            
+            console.print(Panel.fit(
+                f"[bold]Available Tool Templates:[/bold] {len(templates)} templates\n",
+                title="Tool Templates",
+                border_style="green"
+            ))
+            
+            # Group templates by category
+            templates_by_category = {}
+            for template in templates:
+                category = template.get("category", "misc")
+                if category not in templates_by_category:
+                    templates_by_category[category] = []
+                templates_by_category[category].append(template)
+            
+            # Display templates by category
+            for category, category_templates in templates_by_category.items():
+                console.print(f"\n[bold cyan]{category.upper()}[/bold cyan] ({len(category_templates)} templates)")
+                
+                table = Table(show_header=True, header_style="bold magenta", box=None)
+                table.add_column("Name")
+                table.add_column("Description")
+                
+                for template in category_templates:
+                    description = template.get("description", "")
+                    # Truncate description if too long
+                    if len(description) > 60:
+                        description = description[:57] + "..."
+                    table.add_row(template["name"], description)
+                
+                console.print(table)
+        except ImportError:
+            console.print("[bold red]Tool templates module not found.[/bold red]")
+        except Exception as e:
+            console.print(f"[bold red]Error listing tool templates: {str(e)}[/bold red]")
+        
         return
     
     # Configure OpenAI client with additional parameters
