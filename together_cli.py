@@ -3313,7 +3313,7 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
         Returns:
             List of dictionaries with function name and arguments
         """
-        function_calls = []
+    function_calls = []
         
         # Look for the standard format: [func_name(param1="value1", param2=value2)]
         import re
