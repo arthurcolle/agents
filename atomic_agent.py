@@ -51,6 +51,18 @@ try:
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "pytz"])
     import pytz
+    
+try:
+    import pyperclip
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyperclip"])
+    import pyperclip
+
+try:
+    from PIL import ImageGrab
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pillow"])
+    from PIL import ImageGrab
 
 try:
     from together import Together
@@ -98,6 +110,8 @@ try:
     from io import BytesIO
     from PIL import Image
     import requests
+    import pyperclip
+    from PIL import ImageGrab
     ADVANCED_EMBEDDINGS_AVAILABLE = True
     # Initialize Jina embedding client
     try:
@@ -5648,6 +5662,11 @@ print("Hello, world!")
 
     def process_image_in_message(self, message):
         if isinstance(message, str):
+            # Check for clipboard paste command
+            if message.strip() == "/paste":
+                return self._paste_from_clipboard()
+                
+            # Process image URLs
             image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', message)
             if not image_urls:
                 return message
@@ -5667,6 +5686,61 @@ print("Hello, world!")
                 
             return multimodal
         return message
+        
+    def _paste_from_clipboard(self):
+        """Paste image from clipboard and convert to base64 for the model"""
+        try:
+            # Try to get image from clipboard
+            image = ImageGrab.grabclipboard()
+            
+            if image is None:
+                # If no image, try to get text
+                text = pyperclip.paste()
+                if text:
+                    return text
+                else:
+                    return "No image or text found in clipboard."
+            
+            # Process the image
+            console.print("[cyan]Image found in clipboard[/cyan]")
+            
+            # Save image to a temporary file with a unique name
+            temp_dir = Path(tempfile.gettempdir())
+            timestamp = int(time.time())
+            img_path = temp_dir / f"clipboard_image_{timestamp}.png"
+            image.save(img_path)
+            
+            console.print(f"[green]Image saved to {img_path}[/green]")
+            
+            # Convert to base64 for the model
+            buffered = BytesIO()
+            image.save(buffered, format="PNG")
+            img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            
+            # Create multimodal message
+            multimodal = [
+                {"type": "text", "text": "Image pasted from clipboard:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+            ]
+            
+            # Add to memory
+            if hasattr(self, 'memory'):
+                self.memory.add_memory(
+                    f"data:image/png;base64,{img_base64[:20]}...", 
+                    {"type": "image", "source": "clipboard", "local_path": str(img_path)}
+                )
+            
+            self.interaction_memory.append({
+                "type": "image", 
+                "source": "clipboard", 
+                "timestamp": time.time(),
+                "local_path": str(img_path)
+            })
+            
+            return multimodal
+        except Exception as e:
+            console.print(f"[red]Error pasting from clipboard: {str(e)}[/red]")
+            return f"Error pasting from clipboard: {str(e)}"
         if isinstance(message, str):
             image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', message)
             if not image_urls:
@@ -6108,6 +6182,7 @@ def main():
         "The main agent coordinates a team of specialized scouts (research, code, planning, creative, critical).\n"
         "Each scout uses extensive chain-of-thought reasoning to solve its assigned tasks.\n"
         "The system supports autonomous task decomposition and parallel execution.\n"
+        "Type [bold]'/paste'[/bold] to paste an image from your clipboard.\n"
         "Type [bold]'exit'[/bold] or [bold]'quit'[/bold] to exit."
     )
     console.print(Panel.fit(welcome, title="Welcome"))
@@ -6175,10 +6250,21 @@ def main():
                     console.print(traceback.format_exc())
                     continue
                 
-            image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', user_input)
-            if image_urls:
+            # Check for paste command
+            if user_input.strip() == "/paste":
+                with console.status("[bold blue]Pasting from clipboard...[/bold blue]", spinner="dots"):
+                    clipboard_content = agent.process_image_in_message("/paste")
+                    if isinstance(clipboard_content, list):
+                        console.print("[green]Image pasted from clipboard[/green]")
+                        response = agent.generate_response(clipboard_content)
+                    else:
+                        console.print(f"[yellow]{clipboard_content}[/yellow]")
+                        continue
+            # Check for image URLs
+            elif re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', user_input):
                 multimodal = []
                 text_content = user_input
+                image_urls = re.findall(r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp)', user_input)
                 for url in image_urls:
                     text_content = text_content.replace(url, '')
                     console.print(f"[cyan]Including image: {url}[/cyan]")
