@@ -16,7 +16,11 @@ import subprocess
 import re
 import inspect
 import importlib
-from typing import Dict, List, Any, Optional, Tuple, Callable
+import pickle
+import numpy as np
+from datetime import datetime
+from typing import Dict, List, Any, Optional, Tuple, Callable, Deque
+from collections import deque
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -1896,8 +1900,14 @@ class CLIAgent:
     Uses a two-layer architecture:
     1. Inner model: Primary reasoning and task execution
     2. Outer model: Meta-cognitive reflection and oversight
+    
+    Features:
+    - Perceptual memory for storing interaction frames
+    - Experience replay for learning from past interactions
+    - Semantic search across interaction history
     """
-    def __init__(self, model="gpt-4o", meta_model=None, console=None, enable_meta=True):
+    def __init__(self, model="gpt-4o", meta_model=None, console=None, enable_meta=True,
+                max_memory_frames=1000, enable_experience_replay=True):
         # Primary reasoning layer
         self.model = model
         self.meta_model = meta_model or model  # Use same model for meta layer if not specified
@@ -1912,6 +1922,13 @@ class CLIAgent:
         # Meta-cognitive layer
         self.enable_meta = enable_meta
         self.meta_layer = MetaReflectionLayer(model=self.meta_model, console=self.console)
+        
+        # Perceptual memory system
+        self.perceptual_memory = PerceptualMemory(max_frames=max_memory_frames)
+        self.enable_experience_replay = enable_experience_replay
+        self.replay_batch_size = 3  # Number of frames to replay
+        self.replay_frequency = 5   # How often to perform replay (every N interactions)
+        self.interaction_count = 0  # Track number of interactions
         
         # Dynamic tool registry
         self.tool_registry = DynamicToolRegistry(console=self.console)
