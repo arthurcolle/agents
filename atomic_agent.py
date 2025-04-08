@@ -2022,6 +2022,35 @@ class ToolRegistry:
             function=self._orchestrate_tasks
         )
         
+        # Code extraction tool
+        self.register_function(
+            name="extract_code",
+            description="Extract code blocks from text using structured output parsing",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text containing code blocks to extract"},
+                    "language": {"type": "string", "description": "Specific language to extract (e.g., 'python', 'javascript')", "default": ""}
+                },
+                "required": ["text"]
+            },
+            function=self._extract_code
+        )
+        
+        # Extract and execute code
+        self.register_function(
+            name="extract_and_execute_code",
+            description="Extract code blocks from text and execute them",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text containing code blocks to extract and execute"}
+                },
+                "required": ["text"]
+            },
+            function=self._extract_and_execute_code
+        )
+        
         self.register_function(
             name="generate_solution_rollouts",
             description="Generate multiple solution approaches (rollouts) for a given task",
@@ -2655,6 +2684,52 @@ class ToolRegistry:
                 "recent_rollouts": recent_rollouts,
                 "rollouts_by_scout": scout_rollouts
             }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+            
+    def _extract_code(self, text: str, language: str = "") -> Dict[str, Any]:
+        """Extract code blocks from text using structured output parsing"""
+        try:
+            # Import the CodeExtractor class
+            from code_extractor import CodeExtractor
+            
+            extractor = CodeExtractor()
+            blocks = extractor.extract_code_blocks(text)
+            
+            # Filter by language if specified
+            if language:
+                blocks = [block for block in blocks if block.language.lower() == language.lower()]
+            
+            # Format the results
+            formatted_blocks = []
+            for i, block in enumerate(blocks):
+                formatted_blocks.append({
+                    "id": i+1,
+                    "language": block.language,
+                    "code": block.code,
+                    "line_count": block.line_count,
+                    "start_line": block.start_line,
+                    "end_line": block.end_line
+                })
+            
+            return {
+                "success": True,
+                "total_blocks": len(blocks),
+                "blocks": formatted_blocks
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
+    def _extract_and_execute_code(self, text: str) -> Dict[str, Any]:
+        """Extract code blocks from text and execute them"""
+        try:
+            # Import the CodeExtractor class
+            from code_extractor import CodeExtractor
+            
+            extractor = CodeExtractor()
+            result = extractor.extract_and_execute(text)
+            
+            return result
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
             
@@ -4921,51 +4996,58 @@ print("Hello, world!")
     
     def extract_python_code(self, text: str) -> List[str]:
         """Extract Python code blocks from text with better handling of formatting issues"""
-        code_blocks = extract_python_code(text)
-        
-        # Process each code block to fix common formatting issues
-        fixed_blocks = []
-        for block in code_blocks:
-            lines = block.split('\n')
-            fixed_lines = []
-            i = 0
-            while i < len(lines):
-                line = lines[i]
-                # Skip purely decorative lines
-                if all(c in '┏━┓┃┗┛ ' for c in line):
-                    i += 1
-                    continue
-                
-                # Fix compressed if statements
-                if ' if ' in line and ': ' in line and not line.strip().startswith('if'):
-                    parts = line.split(' if ')
-                    pre = parts[0].strip()
-                    rest = parts[1].strip()
-                    if_parts = rest.split(': ')
-                    if len(if_parts) == 2:
-                        fixed_lines.append(f"{pre} if {if_parts[0]}:")
-                        fixed_lines.append(f"    {if_parts[1]}")
+        try:
+            # Try to use the new CodeExtractor if available
+            from code_extractor import CodeExtractor
+            extractor = CodeExtractor()
+            return extractor.extract_python_code(text)
+        except ImportError:
+            # Fall back to the old method if CodeExtractor is not available
+            code_blocks = extract_python_code(text)
+            
+            # Process each code block to fix common formatting issues
+            fixed_blocks = []
+            for block in code_blocks:
+                lines = block.split('\n')
+                fixed_lines = []
+                i = 0
+                while i < len(lines):
+                    line = lines[i]
+                    # Skip purely decorative lines
+                    if all(c in '┏━┓┃┗┛ ' for c in line):
                         i += 1
                         continue
-                
-                # Fix compressed function definitions
-                if 'def ' in line and '(' in line and ')' in line and ': ' in line and not line.strip().startswith('def'):
-                    parts = line.split('def ')
-                    pre = parts[0].strip()
-                    rest = 'def ' + parts[1].strip()
-                    if pre:
-                        fixed_lines.append(pre)
-                    fixed_lines.append(rest)
+                    
+                    # Fix compressed if statements
+                    if ' if ' in line and ': ' in line and not line.strip().startswith('if'):
+                        parts = line.split(' if ')
+                        pre = parts[0].strip()
+                        rest = parts[1].strip()
+                        if_parts = rest.split(': ')
+                        if len(if_parts) == 2:
+                            fixed_lines.append(f"{pre} if {if_parts[0]}:")
+                            fixed_lines.append(f"    {if_parts[1]}")
+                            i += 1
+                            continue
+                    
+                    # Fix compressed function definitions
+                    if 'def ' in line and '(' in line and ')' in line and ': ' in line and not line.strip().startswith('def'):
+                        parts = line.split('def ')
+                        pre = parts[0].strip()
+                        rest = 'def ' + parts[1].strip()
+                        if pre:
+                            fixed_lines.append(pre)
+                        fixed_lines.append(rest)
+                        i += 1
+                        continue
+                    
+                    # Add the line as is if no fixes needed
+                    fixed_lines.append(line)
                     i += 1
-                    continue
                 
-                # Add the line as is if no fixes needed
-                fixed_lines.append(line)
-                i += 1
+                fixed_blocks.append('\n'.join(fixed_lines))
             
-            fixed_blocks.append('\n'.join(fixed_lines))
-        
-        return fixed_blocks
+            return fixed_blocks
 
     def process_tool_calls(self, tool_calls):
         results = []
