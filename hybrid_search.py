@@ -91,7 +91,7 @@ class HybridSearch:
                         {i+1} as id,
                         '{doc['title'].replace("'", "''")}' as title,
                         '{doc['content'].replace("'", "''")}' as content,
-                        llm_embedding({{'model':'text-embedding-3-small'}}, 
+                        llm_embedding({{'model_name':'text-embedding-3-small'}}, 
                                      {{'content': '{doc['content'].replace("'", "''")}'}}
                         )::FLOAT[1536] as embedding;
                 """)
@@ -147,7 +147,7 @@ class HybridSearch:
             # Generate query embedding
             self.conn.execute(f"""
                 CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
-                SELECT llm_embedding({{'model':'text-embedding-3-small'}}, 
+                SELECT llm_embedding({{'model_name':'text-embedding-3-small'}}, 
                                    {{'query': '{query.replace("'", "''")}'}})::FLOAT[1536] AS embedding;
             """)
             
