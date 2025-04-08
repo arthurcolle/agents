@@ -1825,6 +1825,46 @@ class AsyncTaskProcessor:
                 }
         except Exception as e:
             return {"success": False, "url": url, "error": str(e)}
+            
+    async def _process_url(self, url):
+        """Process a URL to extract knowledge"""
+        try:
+            console.print(f"[blue]Processing URL: {url}[/blue]")
+            
+            # Check if it's a valid URL
+            if not url.startswith(('http://', 'https://')):
+                return {"success": False, "url": url, "error": "Invalid URL format"}
+                
+            # Try to fetch content from the URL
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=10) as response:
+                        if response.status == 200:
+                            content = await response.text()
+                            
+                            # Add to knowledge base
+                            knowledge_item = KnowledgeItem(content=content, source_url=url)
+                            self.knowledge_base.append(knowledge_item)
+                            
+                            # Extract further URLs
+                            urls_extraction = self.extract_urls(content)
+                            if urls_extraction.urls:
+                                self.add_urls_to_process(urls_extraction.urls)
+                            
+                            return {
+                                "success": True,
+                                "url": url,
+                                "content_length": len(content),
+                                "knowledge_extracted": True,
+                                "further_urls_found": len(urls_extraction.urls) if urls_extraction else 0
+                            }
+                        else:
+                            return {"success": False, "url": url, "error": f"HTTP status {response.status}"}
+            except Exception as e:
+                return {"success": False, "url": url, "error": f"Request failed: {str(e)}"}
+                
+        except Exception as e:
+            return {"success": False, "url": url, "error": str(e)}
 
     def get_knowledge_summary(self):
         return {
