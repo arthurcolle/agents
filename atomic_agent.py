@@ -2597,6 +2597,28 @@ class ToolRegistry:
             parameters={"type": "object", "properties": {"path": {"type": "string", "description": "File path"}}, "required": ["path"]},
             function=self._delete_file
         )
+        
+        # Self-modification functions
+        self.register_function(
+            name="create_dynamic_function",
+            description="Create a new function at runtime",
+            parameters={"type": "object", "properties": {
+                "name": {"type": "string", "description": "Name of the function to create"},
+                "code": {"type": "string", "description": "Python code defining the function"},
+                "description": {"type": "string", "description": "Description of the function"},
+                "parameters": {"type": "object", "description": "Parameters schema in JSON Schema format"},
+                "category": {"type": "string", "description": "Function category for organization", "default": "dynamic"}
+            }, "required": ["name", "code", "description", "parameters"]},
+            function=self._create_dynamic_function
+        )
+        self.register_function(
+            name="list_dynamic_functions",
+            description="List all dynamically created functions",
+            parameters={"type": "object", "properties": {
+                "category": {"type": "string", "description": "Filter by category", "default": "all"}
+            }},
+            function=self._list_dynamic_functions
+        )
     def _orchestrate_tasks(self, main_task: str, subtasks: List[str], context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Orchestrate multiple parallel tasks using scout agents"""
         try:
@@ -3615,6 +3637,119 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
+    def _delete_file(self, path: str) -> Dict[str, Any]:
+        try:
+            path = Path(path).expanduser()
+            if not path.exists():
+                return {"error": f"File '{path}' does not exist"}
+            if not path.is_file():
+                return {"error": f"'{path}' is not a file"}
+            path.unlink()
+            return {"success": True, "message": f"File '{path}' deleted"}
+        except Exception as e:
+            return {"error": str(e), "success": False}
+            
+    def _create_dynamic_function(self, name: str, code: str, description: str, parameters: Dict[str, Any], category: str = "dynamic") -> Dict[str, Any]:
+        """Create a new function at runtime and register it with the tool registry
+        
+        This allows for dynamic expansion of the agent's capabilities during operation.
+        """
+        try:
+            # Safety checks
+            if self.self_modification["safety_checks"]:
+                # Check for potentially harmful operations
+                unsafe_patterns = [
+                    "os.system", "subprocess.call", "subprocess.Popen", 
+                    "eval(", "exec(", "__import__", "open(", "shutil.rmtree"
+                ]
+                for pattern in unsafe_patterns:
+                    if pattern in code:
+                        return {
+                            "success": False, 
+                            "error": f"Unsafe code pattern detected: {pattern}",
+                            "recommendation": "Remove potentially dangerous operations and try again"
+                        }
+            
+            # Create function namespace and compile code
+            namespace = {}
+            exec(code, globals(), namespace)
+            
+            # Find the function in the namespace (assuming it's defined at the top level)
+            if name not in namespace:
+                return {
+                    "success": False, 
+                    "error": f"Function '{name}' not found in the provided code",
+                    "recommendation": "Ensure the function name matches the name defined in the code"
+                }
+            
+            function = namespace[name]
+            
+            # Register the function in our dynamic registry
+            self.dynamic_functions[name] = {
+                "function": function,
+                "description": description,
+                "parameters": parameters,
+                "code": code,
+                "category": category,
+                "created_at": time.time()
+            }
+            
+            # Also register it with the tool registry
+            self.tool_registry.register_function(
+                name=name,
+                description=description,
+                parameters=parameters,
+                function=function,
+                source_code=code
+            )
+            
+            # Update modification history
+            self.self_modification["modification_history"].append({
+                "type": "function_creation",
+                "name": name,
+                "timestamp": time.time(),
+                "category": category
+            })
+            self.self_modification["modification_count"] += 1
+            self.self_modification["last_modification_time"] = time.time()
+            
+            return {
+                "success": True,
+                "message": f"Function '{name}' successfully created and registered",
+                "function_name": name,
+                "category": category
+            }
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+            
+    def _list_dynamic_functions(self, category: str = "all") -> Dict[str, Any]:
+        """List all dynamically created functions, optionally filtered by category"""
+        try:
+            results = []
+            
+            for name, function_data in self.dynamic_functions.items():
+                if category == "all" or function_data["category"] == category:
+                    results.append({
+                        "name": name,
+                        "description": function_data["description"],
+                        "category": function_data["category"],
+                        "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(function_data["created_at"]))
+                    })
+            
+            return {
+                "success": True,
+                "functions": results,
+                "count": len(results),
+                "category_filter": category
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+            
     def _list_available_functions(self) -> Dict[str, Any]:
         function_list = []
         for name, spec in self.functions.items():
@@ -4907,6 +5042,15 @@ Please provide a final summary of all the work completed."""
 # =======================
 class TogetherAgent:
     def __init__(self, model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", num_scouts=5):
+        """Main TogetherAgent class with advanced capabilities including self-modification
+        
+        This agent can:
+        1. Orchestrate specialized scout agents for parallel task execution
+        2. Use vector memory for semantic recall
+        3. Apply reinforcement learning for optimization
+        4. Dynamically add/modify tools and capabilities at runtime
+        5. Perform meta-cognitive reflection on its performance
+        """
         self.api_key = os.environ.get("TOGETHER_API_KEY")
         if not self.api_key:
             raise ValueError("API key is required. Set TOGETHER_API_KEY environment variable.")
@@ -4955,6 +5099,32 @@ print("Hello, world!")
         
         # Initialize advanced capabilities
         self._initialize_advanced_capabilities()
+        
+        # Initialize self-modification capabilities
+        self.self_modification = {
+            "enabled": True,
+            "safety_checks": True,
+            "modification_history": [],
+            "performance_metrics": {},
+            "hot_reload_enabled": True,
+            "last_modification_time": time.time(),
+            "modification_count": 0,
+            "pending_modifications": [],
+            "allowed_modules": [
+                "core", "tools", "memory", "planning", "execution"
+            ]
+        }
+        
+        # Create function registry for runtime modifications
+        self.dynamic_functions = {}
+        
+        # Set up code analyzer for runtime analysis
+        try:
+            import ast
+            self.code_analyzer_available = True
+        except ImportError:
+            self.code_analyzer_available = False
+            console.print("[yellow]Warning: AST module not available, code analysis capabilities will be limited[/yellow]")
         
         # Keep task_processor for backward compatibility
         self.task_processor = AsyncTaskProcessor()
