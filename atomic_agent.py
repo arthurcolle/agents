@@ -1122,8 +1122,6 @@ class ToolRegistry:
 
     def _task_completed(self) -> str:
         return "Task marked as completed."
-        except Exception as e:
-            return {"error": str(e), "success": False}
 
     def _create_python_function(self, name: str, description: str, parameters_schema: Dict[str, Any], source_code: str) -> Dict[str, Any]:
         try:
