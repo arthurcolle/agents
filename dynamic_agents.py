@@ -497,6 +497,378 @@ class DataAnalysisAgent(DynamicAgent):
                 "error": f"Failed to summarize data: {e}"
             }
 
+class KnowledgeBaseAgent(DynamicAgent):
+    """
+    Specialized agent for working with knowledge bases
+    """
+    def __init__(self, agent_id: str):
+        super().__init__(agent_id, "knowledge_base", "Knowledge base access and search agent")
+    
+    def _register_capabilities(self) -> None:
+        """Register knowledge base capabilities"""
+        super()._register_capabilities()
+        
+        self.register_capability("info", self.cmd_info, "Show information about this knowledge base")
+        self.register_capability("search", self.cmd_search, "Search the knowledge base")
+        self.register_capability("list_entries", self.cmd_list_entries, "List entries in the knowledge base")
+        self.register_capability("get_entry", self.cmd_get_entry, "Get a specific entry from the knowledge base")
+        self.register_capability("summarize", self.cmd_summarize, "Generate a summary of the knowledge base")
+    
+    async def cmd_info(self, args: str, context: AgentContext) -> AgentResponse:
+        """Show information about this knowledge base"""
+        kb_name = context.get_variable("kb_name")
+        kb_path = context.get_variable("kb_path")
+        kb_type = context.get_variable("kb_type")
+        kb_entries = context.get_variable("kb_entries")
+        
+        if not kb_name:
+            return {
+                "success": False,
+                "error": "Knowledge base information not available"
+            }
+        
+        info = {
+            "name": kb_name,
+            "type": kb_type,
+            "entries": kb_entries,
+            "path": kb_path
+        }
+        
+        return {
+            "success": True,
+            "message": f"Information about knowledge base: {kb_name}",
+            "data": info
+        }
+    
+    async def cmd_search(self, args: str, context: AgentContext) -> AgentResponse:
+        """
+        Search the knowledge base
+        
+        Args:
+            args: Search query
+        """
+        if not args:
+            return {
+                "success": False,
+                "error": "No search query provided"
+            }
+            
+        kb_name = context.get_variable("kb_name")
+        
+        if not kb_name:
+            return {
+                "success": False,
+                "error": "Knowledge base not available"
+            }
+        
+        try:
+            # Import the CLI agent to access its search functionality
+            import sys
+            import importlib
+            import inspect
+            
+            # Get the main CLI agent instance
+            module = importlib.import_module("cli_agent")
+            
+            # Find CLI agent instances
+            agent_instances = []
+            for name, obj in inspect.getmembers(module):
+                if inspect.isclass(obj) and hasattr(obj, '_search_knowledge_base'):
+                    # Look for instances of this class
+                    for var_name, var_obj in inspect.getmembers(module):
+                        if isinstance(var_obj, obj):
+                            agent_instances.append(var_obj)
+                            break
+            
+            if not agent_instances:
+                return {
+                    "success": False,
+                    "error": "Could not access CLI agent instance"
+                }
+            
+            cli_agent = agent_instances[0]
+            
+            # Search the knowledge base
+            result = cli_agent._search_knowledge_base(kb_name, args)
+            
+            if not result["success"]:
+                return {
+                    "success": False,
+                    "error": result["message"]
+                }
+            
+            return {
+                "success": True,
+                "message": f"Found {len(result['data'])} results for query: {args}",
+                "data": result["data"]
+            }
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "error": f"Error searching knowledge base: {str(e)}",
+                "traceback": traceback.format_exc()
+            }
+    
+    async def cmd_list_entries(self, args: str, context: AgentContext) -> AgentResponse:
+        """
+        List entries in the knowledge base
+        
+        Args:
+            args: Optional limit parameter (e.g., "10")
+        """
+        kb_name = context.get_variable("kb_name")
+        kb_path = context.get_variable("kb_path")
+        
+        if not kb_name or not kb_path:
+            return {
+                "success": False,
+                "error": "Knowledge base not available"
+            }
+        
+        try:
+            import os
+            import json
+            
+            # Parse limit if provided
+            limit = 10
+            if args and args.isdigit():
+                limit = int(args)
+            
+            # Check for index file
+            index_file = os.path.join(kb_path, "index.json")
+            
+            entries = []
+            
+            if os.path.exists(index_file):
+                with open(index_file, 'r', encoding='utf-8') as f:
+                    kb_data = json.load(f)
+                    
+                entries_data = kb_data[:limit]
+                total = len(kb_data)
+                
+                for i, entry in enumerate(entries_data):
+                    if isinstance(entry, dict):
+                        # Extract key information
+                        entry_info = {"index": i}
+                        
+                        if "title" in entry:
+                            entry_info["title"] = entry["title"]
+                        
+                        if "content" in entry:
+                            preview = entry["content"][:100] + "..." if len(entry["content"]) > 100 else entry["content"]
+                            entry_info["preview"] = preview
+                        elif "text" in entry:
+                            preview = entry["text"][:100] + "..." if len(entry["text"]) > 100 else entry["text"]
+                            entry_info["preview"] = preview
+                            
+                        entries.append(entry_info)
+                    else:
+                        preview = str(entry)[:100] + "..." if len(str(entry)) > 100 else str(entry)
+                        entries.append({"index": i, "preview": preview})
+            else:
+                # Look for content files
+                import glob
+                
+                content_files = glob.glob(os.path.join(kb_path, "*.txt")) + \
+                               glob.glob(os.path.join(kb_path, "*.md")) + \
+                               glob.glob(os.path.join(kb_path, "*.json"))
+                
+                content_files = content_files[:limit]
+                total = len(content_files)
+                
+                for i, file_path in enumerate(content_files):
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            preview = content[:100] + "..." if len(content) > 100 else content
+                            entries.append({
+                                "index": i,
+                                "filename": os.path.basename(file_path),
+                                "preview": preview
+                            })
+                    except Exception as e:
+                        entries.append({
+                            "index": i,
+                            "filename": os.path.basename(file_path),
+                            "error": str(e)
+                        })
+            
+            return {
+                "success": True,
+                "message": f"Listed {len(entries)} of {total} entries from knowledge base: {kb_name}",
+                "data": entries
+            }
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "error": f"Error listing knowledge base entries: {str(e)}",
+                "traceback": traceback.format_exc()
+            }
+    
+    async def cmd_get_entry(self, args: str, context: AgentContext) -> AgentResponse:
+        """
+        Get a specific entry from the knowledge base
+        
+        Args:
+            args: ID of the entry to retrieve
+        """
+        if not args or not args.isdigit():
+            return {
+                "success": False,
+                "error": "Invalid entry ID. Please provide a numeric ID."
+            }
+            
+        entry_id = int(args)
+        kb_name = context.get_variable("kb_name")
+        kb_path = context.get_variable("kb_path")
+        
+        if not kb_name or not kb_path:
+            return {
+                "success": False,
+                "error": "Knowledge base not available"
+            }
+        
+        try:
+            import os
+            import json
+            
+            # Check for index file
+            index_file = os.path.join(kb_path, "index.json")
+            
+            if os.path.exists(index_file):
+                with open(index_file, 'r', encoding='utf-8') as f:
+                    kb_data = json.load(f)
+                    
+                if entry_id < 0 or entry_id >= len(kb_data):
+                    return {
+                        "success": False,
+                        "error": f"Entry ID out of range: {entry_id}. Valid range: 0-{len(kb_data)-1}"
+                    }
+                
+                entry = kb_data[entry_id]
+                return {
+                    "success": True,
+                    "message": f"Retrieved entry {entry_id} from knowledge base: {kb_name}",
+                    "data": entry
+                }
+            else:
+                # Look for content files
+                import glob
+                
+                content_files = glob.glob(os.path.join(kb_path, "*.txt")) + \
+                               glob.glob(os.path.join(kb_path, "*.md")) + \
+                               glob.glob(os.path.join(kb_path, "*.json"))
+                
+                if entry_id < 0 or entry_id >= len(content_files):
+                    return {
+                        "success": False,
+                        "error": f"Entry ID out of range: {entry_id}. Valid range: 0-{len(content_files)-1}"
+                    }
+                
+                file_path = content_files[entry_id]
+                
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        return {
+                            "success": True,
+                            "message": f"Retrieved file {os.path.basename(file_path)} from knowledge base: {kb_name}",
+                            "data": {
+                                "filename": os.path.basename(file_path),
+                                "content": content
+                            }
+                        }
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": f"Error reading file: {str(e)}"
+                    }
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "error": f"Error retrieving knowledge base entry: {str(e)}",
+                "traceback": traceback.format_exc()
+            }
+    
+    async def cmd_summarize(self, args: str, context: AgentContext) -> AgentResponse:
+        """Generate a summary of the knowledge base"""
+        kb_name = context.get_variable("kb_name")
+        kb_entries = context.get_variable("kb_entries")
+        
+        if not kb_name:
+            return {
+                "success": False,
+                "error": "Knowledge base not available"
+            }
+        
+        try:
+            # Get a sample of entries to summarize
+            entries_result = await self.cmd_list_entries("5", context)
+            
+            if not entries_result["success"]:
+                return {
+                    "success": False,
+                    "error": f"Error getting entries to summarize: {entries_result['error']}"
+                }
+            
+            # Use OpenAI to generate a summary
+            try:
+                import openai
+                from openai import OpenAI
+                
+                client = OpenAI()
+                
+                prompt = f"""
+                Please generate a concise summary of this knowledge base:
+                
+                Knowledge Base: {kb_name}
+                Total Entries: {kb_entries}
+                
+                Sample entries:
+                {entries_result['data']}
+                
+                Provide a summary that explains:
+                1. What kind of information this knowledge base contains
+                2. What topics it covers
+                3. How it might be useful
+                
+                Keep the summary under 300 words.
+                """
+                
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that summarizes knowledge bases."},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                
+                summary = response.choices[0].message.content
+                
+                return {
+                    "success": True,
+                    "message": f"Generated summary for knowledge base: {kb_name}",
+                    "data": {
+                        "kb_name": kb_name,
+                        "summary": summary
+                    }
+                }
+            except ImportError:
+                return {
+                    "success": False,
+                    "error": "OpenAI package not installed or API key not configured"
+                }
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "error": f"Error summarizing knowledge base: {str(e)}",
+                "traceback": traceback.format_exc()
+            }
+
 class AgentRegistry:
     """Registry for managing dynamic agents"""
     
@@ -504,7 +876,8 @@ class AgentRegistry:
         self.agents: Dict[str, DynamicAgent] = {}
         self.agent_types: Dict[str, Type[DynamicAgent]] = {
             "file": FileAgent,
-            "data_analysis": DataAnalysisAgent
+            "data_analysis": DataAnalysisAgent,
+            "knowledge_base": KnowledgeBaseAgent
         }
     
     def register_agent_type(self, type_name: str, agent_class: Type[DynamicAgent]) -> None:
