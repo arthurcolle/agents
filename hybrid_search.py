@@ -53,7 +53,16 @@ class HybridSearch:
             # Set up OpenAI API key as a secret for FlockMTL
             api_key = os.environ.get("OPENAI_API_KEY", "")
             if api_key:
-                self.conn.execute(f"CREATE OR REPLACE SECRET openai (api_key='{api_key}');")
+                try:
+                    # Try to create the secret
+                    self.conn.execute(f"CREATE SECRET openai (api_key='{api_key}');")
+                except Exception as e:
+                    # If the secret already exists, try to update it
+                    if "already exists" in str(e):
+                        self.conn.execute(f"UPDATE SECRET openai SET api_key='{api_key}';")
+                    else:
+                        logger.warning(f"Could not set OpenAI API key: {e}. Using mock embeddings.")
+                        self.use_mock_embeddings = True
             else:
                 logger.warning("OPENAI_API_KEY environment variable not set. Using mock embeddings.")
                 # Use mock embeddings if no API key is available
