@@ -981,6 +981,34 @@ class Llama4Agent:
         self.max_tokens = max_tokens
         self.debug = debug
         
+        # Advanced connection and retry configuration
+        self.max_retries = 5  # Maximum retry attempts
+        self.base_retry_delay = 1  # Initial retry delay in seconds
+        self.max_retry_delay = 60  # Maximum retry delay in seconds
+        self.retry_jitter = 0.2  # Random jitter factor (0.0-1.0) to avoid thundering herd
+        self.retry_status_codes = [408, 429, 500, 502, 503, 504]  # Status codes to retry
+        
+        # Circuit breaker pattern to avoid overloading servers
+        self.circuit_breaker_threshold = 5  # Consecutive failures to trip circuit breaker
+        self.circuit_breaker_timeout = 90  # Seconds to wait before resetting circuit breaker
+        self.circuit_break_time = None  # When circuit breaker was triggered
+        self.consecutive_failures = 0  # Count of consecutive failures
+        
+        # Request timeout configuration
+        self.connect_timeout = 10  # Connection timeout in seconds
+        self.read_timeout = 180  # Read timeout in seconds for non-streaming
+        self.stream_timeout = 300  # Stream timeout in seconds
+        
+        # API health tracking
+        self.api_health = {
+            "last_success": None,
+            "success_count": 0,
+            "failure_count": 0,
+            "last_latency": 0,
+            "avg_latency": 0,
+            "last_error": None
+        }
+        
         # Conversation state
         self.messages = []
         self.system_prompt = system_prompt or self._get_default_system_prompt()
@@ -1114,47 +1142,268 @@ Always reason step by step when approaching complex problems. Leverage your web 
             "Content-Type": "application/json"
         }
         
-        # Send request
-        try:
-            if self.debug:
-                print(f"[DEBUG] Sending request to: {self.endpoint}")
-                print(f"[DEBUG] Request tools: {json.dumps(self._get_tool_definitions())}")
+        # Check circuit breaker status
+        if self._check_circuit_breaker():
+            return {"error": f"Circuit breaker active. Cooling down for {self.circuit_breaker_timeout} seconds. Try again later."}
             
-            response = requests.post(
-                self.endpoint,
-                headers=headers,
-                data=json.dumps(request_data),
-                stream=stream
-            )
-            
-            if not response.ok:
-                error_info = f"API request failed: {response.status_code} - {response.text}"
-                logger.error(error_info)
-                if args.debug:
-                    print(f"[DEBUG] API error: {error_info}")
-                return {"error": error_info}
+        # Track request start time for latency monitoring
+        start_time = time.time()
+        
+        # Send request with advanced retry logic
+        for attempt in range(self.max_retries):
+            try:
+                if self.debug:
+                    print(f"[DEBUG] Sending request to: {self.endpoint}")
+                    print(f"[DEBUG] Request tools: {json.dumps(self._get_tool_definitions())}")
                 
-            # Process the response based on streaming preference
-            if stream:
-                try:
-                    return self._handle_streaming_response(response)
-                except Exception as stream_error:
-                    error_info = f"Error processing streaming response: {str(stream_error)}"
+                # Add jitter to avoid thundering herd problem
+                jitter_factor = 1.0 + (random.random() * self.retry_jitter * 2) - self.retry_jitter
+                
+                # Set appropriate timeouts based on streaming mode
+                timeout = (self.connect_timeout, self.stream_timeout if stream else self.read_timeout)
+                
+                # Make the API request
+                response = requests.post(
+                    self.endpoint,
+                    headers=headers,
+                    data=json.dumps(request_data),
+                    stream=stream,
+                    timeout=timeout
+                )
+                
+                # Handle non-OK responses
+                if not response.ok:
+                    status_code = response.status_code
+                    error_info = f"API request failed: {status_code} - {response.text}"
                     logger.error(error_info)
-                    if self.debug:
-                        print(f"[DEBUG] Stream processing error: {error_info}")
-                        print(f"[DEBUG] {traceback.format_exc()}")
-                    return {"error": error_info}
-            else:
-                return self._handle_response(response.json())
+                    
+                    # Update API health metrics
+                    self._update_api_health(success=False, error=error_info)
+                    self.consecutive_failures += 1
+                    
+                    # Only retry for specific status codes
+                    if status_code in self.retry_status_codes and attempt < self.max_retries - 1:
+                        retry_delay = min(
+                            self.base_retry_delay * (2 ** attempt) * jitter_factor,
+                            self.max_retry_delay
+                        )
+                        
+                        # Add additional delay for rate limiting
+                        if status_code == 429:
+                            # Try to get retry-after header, or use our calculated delay
+                            retry_after = response.headers.get('Retry-After')
+                            if retry_after and retry_after.isdigit():
+                                retry_delay = max(int(retry_after), retry_delay)
+                        
+                        logger.info(f"Retrying after {retry_delay:.2f}s (attempt {attempt+1}/{self.max_retries}, status code {status_code})...")
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        # Check if we should activate circuit breaker
+                        self._check_circuit_breaker_threshold()
+                        return {"error": error_info}
                 
-        except Exception as e:
-            error_info = f"Error in chat request: {str(e)}"
-            logger.error(error_info)
-            if self.debug:
-                print(f"[DEBUG] Request error: {error_info}")
-                print(f"[DEBUG] {traceback.format_exc()}")
-            return {"error": error_info}
+                # Process the response based on streaming preference
+                if stream:
+                    try:
+                        # Reset failure count on successful connection
+                        self.consecutive_failures = 0
+                        
+                        # Record successful request
+                        latency = time.time() - start_time
+                        self._update_api_health(success=True, latency=latency)
+                        
+                        return self._handle_streaming_response(response)
+                    except requests.exceptions.ConnectionError as conn_err:
+                        # Connection error during streaming
+                        error_info = f"Error streaming response: Connection closed"
+                        logger.error(error_info)
+                        
+                        # Update failure metrics
+                        self.consecutive_failures += 1
+                        self._update_api_health(success=False, error=error_info)
+                        
+                        # Only retry if not the last attempt
+                        if attempt < self.max_retries - 1:
+                            retry_delay = min(
+                                self.base_retry_delay * (2 ** attempt) * jitter_factor,
+                                self.max_retry_delay
+                            )
+                            logger.info(f"Retrying after {retry_delay:.2f}s (attempt {attempt+1}/{self.max_retries})...")
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            # Check if we should activate circuit breaker
+                            self._check_circuit_breaker_threshold()
+                            return {"error": "Connection closed after maximum retries"}
+                    except requests.exceptions.ReadTimeout:
+                        # Timeout during streaming
+                        error_info = "Stream read timeout"
+                        logger.error(error_info)
+                        
+                        # Update failure metrics
+                        self.consecutive_failures += 1
+                        self._update_api_health(success=False, error=error_info)
+                        
+                        # Only retry if not the last attempt
+                        if attempt < self.max_retries - 1:
+                            retry_delay = min(
+                                self.base_retry_delay * (2 ** attempt) * jitter_factor,
+                                self.max_retry_delay
+                            )
+                            logger.info(f"Retrying after {retry_delay:.2f}s (attempt {attempt+1}/{self.max_retries})...")
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            # Check if we should activate circuit breaker
+                            self._check_circuit_breaker_threshold()
+                            return {"error": "Stream timeout after maximum retries"}
+                    except Exception as stream_error:
+                        error_info = f"Error processing streaming response: {str(stream_error)}"
+                        logger.error(error_info)
+                        
+                        # Update failure metrics
+                        self._update_api_health(success=False, error=error_info)
+                        
+                        if self.debug:
+                            print(f"[DEBUG] Stream processing error: {error_info}")
+                            print(f"[DEBUG] {traceback.format_exc()}")
+                        return {"error": error_info}
+                else:
+                    # Non-streaming mode
+                    try:
+                        result = self._handle_response(response.json())
+                        
+                        # Reset failure count on successful request
+                        self.consecutive_failures = 0
+                        
+                        # Record successful request
+                        latency = time.time() - start_time
+                        self._update_api_health(success=True, latency=latency)
+                        
+                        return result
+                    except json.JSONDecodeError:
+                        error_info = "Invalid JSON response from API"
+                        logger.error(error_info)
+                        
+                        # Update failure metrics
+                        self.consecutive_failures += 1
+                        self._update_api_health(success=False, error=error_info)
+                        
+                        if attempt < self.max_retries - 1:
+                            retry_delay = min(
+                                self.base_retry_delay * (2 ** attempt) * jitter_factor,
+                                self.max_retry_delay
+                            )
+                            logger.info(f"Retrying after {retry_delay:.2f}s (attempt {attempt+1}/{self.max_retries})...")
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            # Check if we should activate circuit breaker
+                            self._check_circuit_breaker_threshold()
+                            return {"error": error_info}
+                    
+            except requests.exceptions.ConnectionError as conn_err:
+                # Connection error during request
+                error_info = f"Connection error: {str(conn_err)}"
+                logger.error(error_info)
+                
+                # Update failure metrics
+                self.consecutive_failures += 1
+                self._update_api_health(success=False, error=error_info)
+                
+                # Only retry if not the last attempt
+                if attempt < self.max_retries - 1:
+                    retry_delay = min(
+                        self.base_retry_delay * (2 ** attempt) * jitter_factor,
+                        self.max_retry_delay
+                    )
+                    logger.info(f"Retrying after {retry_delay:.2f}s (attempt {attempt+1}/{self.max_retries})...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    # Check if we should activate circuit breaker
+                    self._check_circuit_breaker_threshold()
+                    return {"error": "Maximum retries exceeded. Connection failed."}
+            except requests.exceptions.Timeout as timeout_err:
+                # Timeout error during request
+                error_type = "Connection timeout" if "connect" in str(timeout_err).lower() else "Read timeout"
+                error_info = f"{error_type}: {str(timeout_err)}"
+                logger.error(error_info)
+                
+                # Update failure metrics
+                self.consecutive_failures += 1
+                self._update_api_health(success=False, error=error_info)
+                
+                # Only retry if not the last attempt
+                if attempt < self.max_retries - 1:
+                    retry_delay = min(
+                        self.base_retry_delay * (2 ** attempt) * jitter_factor,
+                        self.max_retry_delay
+                    )
+                    logger.info(f"Retrying after {retry_delay:.2f}s (attempt {attempt+1}/{self.max_retries})...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    # Check if we should activate circuit breaker
+                    self._check_circuit_breaker_threshold()
+                    return {"error": f"Maximum retries exceeded. {error_type}."}
+            except Exception as e:
+                error_info = f"Error in chat request: {str(e)}"
+                logger.error(error_info)
+                
+                # Update failure metrics
+                self.consecutive_failures += 1
+                self._update_api_health(success=False, error=error_info)
+                
+                if self.debug:
+                    print(f"[DEBUG] Request error: {error_info}")
+                    print(f"[DEBUG] {traceback.format_exc()}")
+                return {"error": error_info}
+            
+    def _check_circuit_breaker(self):
+        """Check if the circuit breaker is active and should block requests"""
+        if self.circuit_break_time is None:
+            return False
+            
+        # Check if circuit breaker timeout has elapsed
+        if time.time() - self.circuit_break_time > self.circuit_breaker_timeout:
+            logger.info("Circuit breaker reset after cooling down period")
+            self.circuit_break_time = None
+            self.consecutive_failures = 0
+            return False
+            
+        return True
+        
+    def _check_circuit_breaker_threshold(self):
+        """Check if we've hit the threshold for activating the circuit breaker"""
+        if self.consecutive_failures >= self.circuit_breaker_threshold:
+            logger.warning(f"Circuit breaker activated after {self.consecutive_failures} consecutive failures")
+            self.circuit_break_time = time.time()
+            return True
+        return False
+        
+    def _update_api_health(self, success=True, latency=None, error=None):
+        """Update API health tracking metrics"""
+        now = time.time()
+        
+        if success:
+            self.api_health["last_success"] = now
+            self.api_health["success_count"] += 1
+            
+            if latency is not None:
+                # Update latency metrics
+                self.api_health["last_latency"] = latency
+                
+                # Update average latency with exponential moving average
+                if self.api_health["avg_latency"] == 0:
+                    self.api_health["avg_latency"] = latency
+                else:
+                    # Use 0.1 as smoothing factor
+                    self.api_health["avg_latency"] = (0.9 * self.api_health["avg_latency"]) + (0.1 * latency)
+        else:
+            self.api_health["failure_count"] += 1
+            self.api_health["last_error"] = error
             
     def _handle_streaming_response(self, response):
         """
@@ -1163,88 +1412,130 @@ Always reason step by step when approaching complex problems. Leverage your web 
         """
         content_chunks = []
         function_call_chunks = {}
+        last_activity_time = time.time()
+        timeout_duration = 30  # seconds with no activity before declaring timeout
         
-        # Process the stream
-        for chunk in response.iter_lines():
-            if chunk:
-                chunk = chunk.decode('utf-8')
-                if chunk.startswith('data: '):
-                    chunk = chunk[6:]  # Remove 'data: ' prefix
-                    
-                    if chunk == "[DONE]":
+        # Process the stream with better error handling and timeout detection
+        try:
+            for chunk in response.iter_lines():
+                # Update activity time since we received a chunk (even if empty)
+                last_activity_time = time.time()
+                
+                if chunk:
+                    chunk = chunk.decode('utf-8')
+                    if chunk.startswith('data: '):
+                        chunk = chunk[6:]  # Remove 'data: ' prefix
+                        
+                        if chunk == "[DONE]":
+                            break
+                            
+                        try:
+                            # Store debug info
+                            debug_info = f"Raw chunk: {chunk}"
+                            
+                            chunk_data = json.loads(chunk)
+                            debug_info += f"\nParsed chunk: {json.dumps(chunk_data)}"
+                            
+                            # Debug logging only if debug flag is enabled
+                            if self.debug:
+                                print(f"[DEBUG] {debug_info}")
+                                
+                            # Handle potential errors in the chunk
+                            if "error" in chunk_data:
+                                error_msg = chunk_data.get("error", {}).get("message", "Unknown API error")
+                                logger.error(f"API error in chunk: {error_msg}")
+                                if self.debug:
+                                    print(f"[DEBUG] API error in chunk: {error_msg}")
+                                yield {"type": "error", "content": f"API error: {error_msg}"}
+                                continue
+                                
+                            # Check if choices exists and is not empty
+                            if "choices" in chunk_data and chunk_data["choices"] and len(chunk_data["choices"]) > 0:
+                                choice_data = chunk_data["choices"][0]
+                                
+                                # Check for finish reason
+                                if "finish_reason" in choice_data and choice_data["finish_reason"]:
+                                    finish_reason = choice_data["finish_reason"]
+                                    # Log non-standard finish reasons
+                                    if finish_reason not in ["stop", None]:
+                                        logger.info(f"Stream finished with reason: {finish_reason}")
+                                        if finish_reason == "length":
+                                            yield {"type": "info", "content": "Response exceeded maximum token limit"}
+                                        elif finish_reason == "content_filter":
+                                            yield {"type": "error", "content": "Content was filtered for safety reasons"}
+                                
+                                delta = choice_data.get("delta", {})
+                                
+                                if self.debug:
+                                    print(f"[DEBUG] Delta: {json.dumps(delta)}")
+                                
+                                # Process delta (content or function call)
+                                if "content" in delta and delta["content"]:
+                                    content = delta["content"]
+                                    content_chunks.append(content)
+                                    yield {"type": "content", "content": content}
+                                
+                                # Process tool calls
+                                if "tool_calls" in delta and delta["tool_calls"]:
+                                    if self.debug:
+                                        print(f"\n[DEBUG] Received tool_calls in delta: {json.dumps(delta['tool_calls'])}")
+                                    
+                                    tool_call = delta["tool_calls"][0]
+                                    
+                                    # Initialize function call if new
+                                    tool_index = tool_call.get("index", 0)
+                                    
+                                    if tool_index not in function_call_chunks:
+                                        call_id = f"call_{uuid.uuid4()}"
+                                        if self.debug:
+                                            print(f"[DEBUG] Creating new tool call ID: {call_id}")
+                                        function_call_chunks[tool_index] = {
+                                            "id": call_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": "",
+                                                "arguments": ""
+                                            }
+                                        }
+                                        
+                                    # Append function info
+                                    if "function" in tool_call:
+                                        function_info = tool_call["function"]
+                                        if self.debug:
+                                            print(f"[DEBUG] Function info: {json.dumps(function_info)}")
+                                        
+                                        if "name" in function_info:
+                                            function_call_chunks[tool_index]["function"]["name"] += function_info["name"]
+                                            if self.debug:
+                                                print(f"[DEBUG] Updated name: {function_call_chunks[tool_index]['function']['name']}")
+                                            
+                                        if "arguments" in function_info:
+                                            function_call_chunks[tool_index]["function"]["arguments"] += function_info["arguments"]
+                                            if self.debug:
+                                                print(f"[DEBUG] Updated arguments: {function_call_chunks[tool_index]['function']['arguments']}")
+                                        
+                                    yield {"type": "tool_call", "tool_call": tool_call}
+                        except json.JSONDecodeError:
+                            logger.error(f"Failed to parse JSON: {chunk}")
+                            yield {"type": "error", "content": "Failed to parse response chunk"}
+                else:
+                    # Check for inactivity timeout
+                    current_time = time.time()
+                    if current_time - last_activity_time > timeout_duration:
+                        logger.warning(f"Stream inactive for {timeout_duration} seconds, closing connection")
+                        yield {"type": "error", "content": "Stream timed out due to inactivity"}
                         break
                         
-                    try:
-                        # Store debug info
-                        debug_info = f"Raw chunk: {chunk}"
-                        
-                        chunk_data = json.loads(chunk)
-                        debug_info += f"\nParsed chunk: {json.dumps(chunk_data)}"
-                        
-                        # Debug logging only if debug flag is enabled
-                        if self.debug:
-                            print(f"[DEBUG] {debug_info}")
-                            
-                        # Check if choices exists and is not empty
-                        if "choices" in chunk_data and chunk_data["choices"] and len(chunk_data["choices"]) > 0:
-                            delta = chunk_data["choices"][0].get("delta", {})
-                            
-                            if agent_kernel.debug:
-                                print(f"[DEBUG] Delta: {json.dumps(delta)}")
-                            
-                            # Process delta (content or function call)
-                            if "content" in delta and delta["content"]:
-                                content = delta["content"]
-                                content_chunks.append(content)
-                                yield {"type": "content", "content": content}
-                        elif "error" in chunk_data:
-                            # Handle API error
-                            error_msg = chunk_data.get("error", {}).get("message", "Unknown API error")
-                            if agent.debug:
-                                print(f"[DEBUG] API error in chunk: {error_msg}")
-                            yield {"type": "error", "content": f"API error: {error_msg}"}
-                        
-                        if "tool_calls" in delta and delta["tool_calls"]:
-                            if agent.debug:
-                                print(f"\n[DEBUG] Received tool_calls in delta: {json.dumps(delta['tool_calls'])}")
-                            tool_call = delta["tool_calls"][0]
-                            
-                            # Initialize function call if new
-                            tool_index = tool_call.get("index", 0)
-                            
-                            if tool_index not in function_call_chunks:
-                                call_id = f"call_{uuid.uuid4()}"
-                                if self.debug:
-                                    print(f"[DEBUG] Creating new tool call ID: {call_id}")
-                                function_call_chunks[tool_index] = {
-                                    "id": call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": "",
-                                        "arguments": ""
-                                    }
-                                }
-                                
-                            # Append function info
-                            if "function" in tool_call:
-                                function_info = tool_call["function"]
-                                if self.debug:
-                                    print(f"[DEBUG] Function info: {json.dumps(function_info)}")
-                                
-                                if "name" in function_info:
-                                    function_call_chunks[tool_index]["function"]["name"] += function_info["name"]
-                                    if self.debug:
-                                        print(f"[DEBUG] Updated name: {function_call_chunks[tool_index]['function']['name']}")
-                                    
-                                if "arguments" in function_info:
-                                    function_call_chunks[tool_index]["function"]["arguments"] += function_info["arguments"]
-                                    if self.debug:
-                                        print(f"[DEBUG] Updated arguments: {function_call_chunks[tool_index]['function']['arguments']}")
-                                
-                            yield {"type": "tool_call", "tool_call": tool_call}
-                        
-                    except json.JSONDecodeError:
-                        logger.error(f"Failed to parse JSON: {chunk}")
+        except requests.exceptions.ConnectionError as e:
+            # Re-raise the exception to be caught by the retry mechanism in chat()
+            logger.error(f"Connection error during streaming: {str(e)}")
+            raise
+        except requests.exceptions.ReadTimeout as e:
+            logger.error(f"Read timeout during streaming: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Error in streaming response handler: {str(e)}")
+            yield {"type": "error", "content": f"Error in streaming: {str(e)}"}
                         
         # Assemble complete message and add to conversation
         assistant_message = {}
