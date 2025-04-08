@@ -3833,75 +3833,66 @@ class CLIAgent:
                 from editor import HttpMethod
                 method_enum = getattr(HttpMethod, method)
 
-                # Assuming self.editor.network.request is async
-                response = await self.editor.network.request(
-                    method_enum, url, headers=headers, params=params,
-                    data=data, json_data=json_data, timeout=timeout
-                )
-
+                # Network operations are async, but we're in a sync method
+                # Return a message indicating this should be called from async context
                 result = {
-                    "success": response.is_success,
-                    "message": f"HTTP {response.status_code} {method} {url}",
-                    "data": {
-                        "status_code": response.status_code,
-                        "headers": response.headers,
-                        "text": response.text[:1000] + ("..." if len(response.text) > 1000 else ""),
-                        "json": response.json,
-                        "elapsed": response.elapsed,
-                        "url": response.url
-                    }
+                    "success": False,
+                    "message": "HTTP request must be called from an async context",
+                    "data": None
                 }
             elif name == "download_file" and self.editor:
                 url = arguments.get("url")
                 filepath = arguments.get("filepath")
                 show_progress = arguments.get("show_progress", True)
 
-                # Assuming self.editor.network.download_file is async
-                download_result = await self.editor.network.download_file(
-                    url, filepath, show_progress=show_progress
-                )
-
-                result = download_result
+                # Network operations are async, but we're in a sync method
+                result = {
+                    "success": False,
+                    "message": "File download must be called from an async context",
+                    "data": None
+                }
             elif name == "ping" and self.editor:
                 host = arguments.get("host")
                 count = arguments.get("count", 4)
                 timeout = arguments.get("timeout", 5)
 
-                # Assuming self.editor.network.ping is async
-                ping_result = await self.editor.network.ping(
-                    host, count=count, timeout=timeout
-                )
-
-                result = ping_result
+                # Network operations are async, but we're in a sync method
+                result = {
+                    "success": False,
+                    "message": "Ping must be called from an async context",
+                    "data": None
+                }
             elif name == "traceroute" and self.editor:
                 host = arguments.get("host")
                 max_hops = arguments.get("max_hops", 30)
                 timeout = arguments.get("timeout", 5)
 
-                # Assuming self.editor.network.traceroute is async
-                traceroute_result = await self.editor.network.traceroute(
-                    host, max_hops=max_hops, timeout=timeout
-                )
-
-                result = traceroute_result
+                # Network operations are async, but we're in a sync method
+                result = {
+                    "success": False,
+                    "message": "Traceroute must be called from an async context",
+                    "data": None
+                }
             elif name == "check_port" and self.editor:
                 host = arguments.get("host")
                 port = arguments.get("port")
                 timeout = arguments.get("timeout", 5)
 
-                # Assuming self.editor.network.check_port is async
-                port_result = await self.editor.network.check_port(
-                    host, port, timeout=timeout
-                )
-
-                result = port_result
+                # Network operations are async, but we're in a sync method
+                result = {
+                    "success": False,
+                    "message": "Port check must be called from an async context",
+                    "data": None
+                }
             elif name == "dns_lookup" and self.editor:
                 hostname = arguments.get("hostname")
 
-                # Assuming self.editor.network.dns_lookup is async
-                dns_result = await self.editor.network.dns_lookup(hostname)
-
-                result = dns_result
+                # Network operations are async, but we're in a sync method
+                result = {
+                    "success": False,
+                    "message": "DNS lookup must be called from an async context",
+                    "data": None
+                }
             # Handle enhanced file system operations
             elif name == "search_files" and self.editor:
                 directory = arguments.get("directory", ".")
@@ -4185,7 +4176,87 @@ class CLIAgent:
         try:
             if is_async:
                 # Directly await async functions
-                result = await self._handle_tool_call(function_name, arguments)
+                if function_name == "execute_agent_command":
+                    result = await self._execute_agent_command(**arguments)
+                # Handle network operations
+                elif function_name == "http_request" and self.editor:
+                    url = arguments.get("url")
+                    method = arguments.get("method", "GET")
+                    headers = arguments.get("headers")
+                    params = arguments.get("params")
+                    data = arguments.get("data")
+                    json_data = arguments.get("json_data")
+                    timeout = arguments.get("timeout")
+                    
+                    from editor import HttpMethod
+                    method_enum = getattr(HttpMethod, method)
+
+                    response = await self.editor.network.request(
+                        method_enum, url, headers=headers, params=params,
+                        data=data, json_data=json_data, timeout=timeout
+                    )
+
+                    result = {
+                        "success": response.is_success,
+                        "message": f"HTTP {response.status_code} {method} {url}",
+                        "data": {
+                            "status_code": response.status_code,
+                            "headers": response.headers,
+                            "text": response.text[:1000] + ("..." if len(response.text) > 1000 else ""),
+                            "json": response.json,
+                            "elapsed": response.elapsed,
+                            "url": response.url
+                        }
+                    }
+                elif function_name == "download_file" and self.editor:
+                    url = arguments.get("url")
+                    filepath = arguments.get("filepath")
+                    show_progress = arguments.get("show_progress", True)
+
+                    download_result = await self.editor.network.download_file(
+                        url, filepath, show_progress=show_progress
+                    )
+
+                    result = download_result
+                elif function_name == "ping" and self.editor:
+                    host = arguments.get("host")
+                    count = arguments.get("count", 4)
+                    timeout = arguments.get("timeout", 5)
+
+                    ping_result = await self.editor.network.ping(
+                        host, count=count, timeout=timeout
+                    )
+
+                    result = ping_result
+                elif function_name == "traceroute" and self.editor:
+                    host = arguments.get("host")
+                    max_hops = arguments.get("max_hops", 30)
+                    timeout = arguments.get("timeout", 5)
+
+                    traceroute_result = await self.editor.network.traceroute(
+                        host, max_hops=max_hops, timeout=timeout
+                    )
+
+                    result = traceroute_result
+                elif function_name == "check_port" and self.editor:
+                    host = arguments.get("host")
+                    port = arguments.get("port")
+                    timeout = arguments.get("timeout", 5)
+
+                    port_result = await self.editor.network.check_port(
+                        host, port, timeout=timeout
+                    )
+
+                    result = port_result
+                elif function_name == "dns_lookup" and self.editor:
+                    hostname = arguments.get("hostname")
+
+                    dns_result = await self.editor.network.dns_lookup(hostname)
+
+                    result = dns_result
+                else:
+                    # For other async functions
+                    result = await self._handle_tool_call(function_name, arguments)
             else:
                 # Run synchronous functions in an executor to avoid blocking the event loop
                 if self.executor is None:
