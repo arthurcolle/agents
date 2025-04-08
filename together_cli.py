@@ -15,6 +15,7 @@ import hashlib
 import base64
 from io import StringIO, BytesIO
 from typing import Dict, List, Any, Callable, Optional, Union, Tuple
+from contextlib import redirect_stdout, redirect_stderr
 import traceback
 from pathlib import Path
 import tempfile
@@ -3494,7 +3495,7 @@ def extract_python_code(text: str) -> list:
                             code_blocks = self.extract_python_code(response_content)
                             if code_blocks:
                                 for code_block in code_blocks:
-                                    if "Run the code" in user_input or "run the code" in user_input:
+                                    if "Run the code" in message or "run the code" in message:
                                         console.print("[cyan]Executing Python code:[/cyan]")
                                         
                                         # Direct execution using our own _execute_python method
@@ -4006,7 +4007,7 @@ def extract_python_code(text: str) -> list:
                             code_blocks = self.extract_python_code(response_content)
                             if code_blocks:
                                 for code_block in code_blocks:
-                                    if "Run the code" in user_input or "run the code" in user_input:
+                                    if "Run the code" in message or "run the code" in message:
                                         console.print("[cyan]Executing Python code:[/cyan]")
                                         
                                         # Direct execution using our own _execute_python method
