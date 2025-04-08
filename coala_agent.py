@@ -39,8 +39,12 @@ try:
     from atomic_agent import AgentOrchestrator, ScoutAgent, ToolRegistry as AtomicToolRegistry, VectorMemory
     # Import additional components from atomic_agent
     from atomic_agent import AsyncTaskProcessor, JinaClient, CodeRepository, extract_python_code, parse_function_calls
+    # Import embedding_model and vector_store from atomic_agent
+    from atomic_agent import embedding_model, vector_store
     # Rename imported ToolRegistry to avoid conflict if needed later
 except ImportError as e:
+    from rich.console import Console
+    console = Console()
     console.print(f"[red]Error importing from atomic_agent: {e}[/red]")
     console.print("[yellow]Please ensure atomic_agent.py is in the same directory or Python path.[/yellow]")
     sys.exit(1)
@@ -74,6 +78,7 @@ except ImportError:
 
 # --- Initialization ---
 # Initialize console early, before it might be used in except blocks
+from rich.console import Console
 console = Console()
 
 # --- Import from atomic_agent ---
