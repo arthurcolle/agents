@@ -1368,12 +1368,114 @@ class CodingTools:
                 "data": None
             }
 
-class CLIAgent:
+class MetaReflectionLayer:
     """
-    CLI agent for conversational data analysis
+    Meta-cognitive layer for agent self-reflection and oversight
+    Provides higher-order reasoning about the agent's own thought processes
     """
     def __init__(self, model="gpt-4o", console=None):
         self.model = model
+        self.console = console or Console()
+        self.reflection_history = []
+        self.meta_prompts = {
+            "evaluate_response": (
+                "You are a meta-cognitive oversight system. Evaluate the following response "
+                "from the primary reasoning system. Consider:\n"
+                "1. Is the reasoning sound and logical?\n"
+                "2. Are there any cognitive biases present?\n"
+                "3. Is the response complete and addresses all aspects of the query?\n"
+                "4. Are there alternative perspectives that should be considered?\n"
+                "5. Is the confidence level appropriate given the available information?\n\n"
+                "Primary system query: {query}\n\n"
+                "Primary system response: {response}\n\n"
+                "Provide a brief meta-evaluation and any suggestions for improvement."
+            ),
+            "improve_response": (
+                "You are a meta-cognitive improvement system. The primary reasoning system "
+                "generated a response, and the meta-evaluation identified potential issues. "
+                "Your task is to improve the response based on this feedback.\n\n"
+                "Original query: {query}\n\n"
+                "Primary response: {response}\n\n"
+                "Meta-evaluation: {evaluation}\n\n"
+                "Generate an improved response that addresses the issues identified."
+            )
+        }
+    
+    async def reflect(self, query: str, response: str, client) -> Dict:
+        """Perform meta-reflection on a response"""
+        try:
+            # Format the evaluation prompt
+            eval_prompt = self.meta_prompts["evaluate_response"].format(
+                query=query,
+                response=response
+            )
+            
+            # Get meta-evaluation
+            meta_response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a meta-cognitive oversight system that evaluates the quality of responses."},
+                    {"role": "user", "content": eval_prompt}
+                ]
+            )
+            
+            evaluation = meta_response.choices[0].message.content
+            
+            # Record the reflection
+            reflection = {
+                "timestamp": time.time(),
+                "query": query,
+                "primary_response": response,
+                "meta_evaluation": evaluation
+            }
+            self.reflection_history.append(reflection)
+            
+            return {
+                "evaluation": evaluation,
+                "reflection": reflection
+            }
+        except Exception as e:
+            logger.error(f"Error in meta-reflection: {e}")
+            return {
+                "evaluation": f"Error in meta-reflection: {str(e)}",
+                "reflection": None
+            }
+    
+    async def improve(self, query: str, response: str, evaluation: str, client) -> str:
+        """Generate an improved response based on meta-reflection"""
+        try:
+            # Format the improvement prompt
+            improve_prompt = self.meta_prompts["improve_response"].format(
+                query=query,
+                response=response,
+                evaluation=evaluation
+            )
+            
+            # Get improved response
+            improved_response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a meta-cognitive improvement system that enhances responses."},
+                    {"role": "user", "content": improve_prompt}
+                ]
+            )
+            
+            return improved_response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error improving response: {e}")
+            return response  # Return original response if improvement fails
+
+class CLIAgent:
+    """
+    CLI agent for conversational data analysis with meta-recursive self-awareness
+    Uses a two-layer architecture:
+    1. Inner model: Primary reasoning and task execution
+    2. Outer model: Meta-cognitive reflection and oversight
+    """
+    def __init__(self, model="gpt-4o", meta_model=None, console=None, enable_meta=True):
+        # Primary reasoning layer
+        self.model = model
+        self.meta_model = meta_model or model  # Use same model for meta layer if not specified
         self.data_tools = DataAnalysisTools()
         self.modal = ModalIntegration()
         self.file_tools = FileSystemTools()
@@ -1381,6 +1483,10 @@ class CLIAgent:
         self.conversation_history = []
         self.console = console or Console()
         self.hooks = CLIAgentHooks(self.console, display_name="Data Analysis Agent")
+        
+        # Meta-cognitive layer
+        self.enable_meta = enable_meta
+        self.meta_layer = MetaReflectionLayer(model=self.meta_model, console=self.console)
         
         # Dynamic agent contexts
         self.agent_contexts = {}
@@ -2070,20 +2176,25 @@ class CLIAgent:
             }
     
     async def chat(self, message: str) -> str:
-        """Chat with the agent"""
+        """
+        Chat with the agent using a two-layer architecture:
+        1. Inner model generates the primary response
+        2. Outer model performs meta-reflection and improves the response
+        """
         # Add user message to conversation history
         self.conversation_history.append({"role": "user", "content": message})
         
         # Notify hooks that the agent is starting
         self.hooks.on_start("CLI Agent")
         
-        # Run the agent
+        # Run the primary reasoning layer (inner model)
         with self.console.status("[bold green]Thinking..."):
             try:
                 # Check if the message contains any code execution requests
                 if "```python" in message or "```py" in message or "execute this code" in message.lower():
                     self.console.print("[bold yellow]Warning: Code execution detected in request. Proceeding with caution.[/bold yellow]")
                 
+                # Primary reasoning with inner model
                 response = client.chat.completions.create(
                     model=self.model,
                     messages=self.conversation_history,
@@ -2135,7 +2246,30 @@ class CLIAgent:
                             messages=self.conversation_history
                         )
                         
-                        final_response = second_response.choices[0].message.content
+                        primary_response = second_response.choices[0].message.content
+                        
+                        # Meta-cognitive reflection (outer model) if enabled
+                        final_response = primary_response
+                        if self.enable_meta:
+                            with self.console.status("[bold cyan]Performing meta-reflection..."):
+                                # Get meta-evaluation
+                                reflection = await self.meta_layer.reflect(message, primary_response, client)
+                                
+                                # Improve response based on meta-reflection
+                                if reflection and "evaluation" in reflection:
+                                    improved_response = await self.meta_layer.improve(
+                                        message, 
+                                        primary_response, 
+                                        reflection["evaluation"],
+                                        client
+                                    )
+                                    final_response = improved_response
+                                    
+                                    # Add meta-reflection to conversation history as a system note
+                                    self.conversation_history.append({
+                                        "role": "system",
+                                        "content": f"Meta-reflection: {reflection['evaluation']}"
+                                    })
                         
                         # Add the final response to the conversation
                         self.conversation_history.append({
@@ -2145,18 +2279,41 @@ class CLIAgent:
                         
                         return final_response
                 else:
-                    # No tool calls, just return the response
-                    content = assistant_message.content
+                    # No tool calls, just get the primary response
+                    primary_response = assistant_message.content
+                    
+                    # Meta-cognitive reflection (outer model) if enabled
+                    final_response = primary_response
+                    if self.enable_meta:
+                        with self.console.status("[bold cyan]Performing meta-reflection..."):
+                            # Get meta-evaluation
+                            reflection = await self.meta_layer.reflect(message, primary_response, client)
+                            
+                            # Improve response based on meta-reflection
+                            if reflection and "evaluation" in reflection:
+                                improved_response = await self.meta_layer.improve(
+                                    message, 
+                                    primary_response, 
+                                    reflection["evaluation"],
+                                    client
+                                )
+                                final_response = improved_response
+                                
+                                # Add meta-reflection to conversation history as a system note
+                                self.conversation_history.append({
+                                    "role": "system",
+                                    "content": f"Meta-reflection: {reflection['evaluation']}"
+                                })
                     
                     # Add the response to the conversation history
                     self.conversation_history.append({
                         "role": "assistant",
-                        "content": content
+                        "content": final_response
                     })
                     
                     # Notify hooks that the agent has completed
-                    self.hooks.on_end("CLI Agent", content)
-                    return content
+                    self.hooks.on_end("CLI Agent", final_response)
+                    return final_response
                     
             except Exception as e:
                 logger.error(f"Error in chat: {e}")
@@ -2167,6 +2324,8 @@ def main():
     """Main function for the CLI agent"""
     parser = argparse.ArgumentParser(description="CLI Agent for Data Analysis")
     parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent")
+    parser.add_argument("--meta-model", default=None, help="Model to use for meta-reflection (defaults to same as primary model)")
+    parser.add_argument("--disable-meta", action="store_true", help="Disable meta-cognitive reflection layer")
     parser.add_argument("--trace", action="store_true", help="Enable tracing for debugging")
     parser.add_argument("--debug", action="store_true", help="Show debug information including agent hooks")
     parser.add_argument("--temperature", type=float, default=0.7, help="Temperature for model generation (0.0-2.0)")
@@ -2181,8 +2340,13 @@ def main():
     # Create console
     console = Console()
     
-    # Create the agent
-    agent = CLIAgent(model=args.model, console=console)
+    # Create the agent with meta-cognitive layer
+    agent = CLIAgent(
+        model=args.model, 
+        meta_model=args.meta_model,
+        console=console,
+        enable_meta=not args.disable_meta
+    )
     
     # If --list-agents flag is provided, list agents and exit
     if args.list_agents:
@@ -2215,10 +2379,12 @@ def main():
     client.max_tokens = args.max_tokens
     
     # Welcome message
+    meta_status = "enabled" if not args.disable_meta else "disabled"
     console.print(Panel.fit(
         "[bold blue]Welcome to the Data Analysis CLI Agent![/bold blue]\n"
         "You can chat with me about data analysis tasks, and I'll help you analyze data, "
         "create visualizations, and more.\n"
+        f"[bold cyan]Meta-cognitive reflection:[/bold cyan] {meta_status}\n"
         "[bold cyan]Dynamic Agents:[/bold cyan] You can create and use specialized agents for specific tasks.\n"
         "Type [bold green]'exit'[/bold green] to quit.",
         title="Data Analysis Assistant",
