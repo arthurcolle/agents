@@ -17,10 +17,11 @@ import re
 import inspect
 import importlib
 import pickle
+import copy
 from collections import deque
 from datetime import datetime
 import numpy as np
-from typing import Dict, List, Any, Optional, Tuple, Callable, Deque
+from typing import Dict, List, Any, Optional, Tuple, Callable, Deque, Union
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -1620,12 +1621,18 @@ class PerceptualMemory:
     """
     Advanced memory system for storing and retrieving interaction frames
     Enables experience replay and semantic search across past interactions
+    Features temporal snapshotting for evolutionary optimization
     """
     def __init__(self, max_frames=1000, embedding_dim=1536, vector_db_path="perceptual_memory.pkl"):
         self.frames = deque(maxlen=max_frames)  # Store recent frames in memory
         self.frame_embeddings = deque(maxlen=max_frames)  # Store embeddings for semantic search
         self.vector_db_path = vector_db_path
         self.embedding_dim = embedding_dim
+        
+        # Temporal snapshots for evolutionary strategies
+        self.snapshots = {}  # Dictionary of timestamped memory snapshots
+        self.snapshot_metrics = {}  # Performance metrics for each snapshot
+        self.evolution_history = []  # Track evolutionary improvements
         
         # Load existing memory if available
         self._load_memory()
@@ -1634,7 +1641,9 @@ class PerceptualMemory:
         self.stats = {
             "total_frames_added": 0,
             "total_retrievals": 0,
-            "total_replays": 0
+            "total_replays": 0,
+            "total_snapshots": 0,
+            "total_evolutions": 0
         }
     
     def _load_memory(self):
@@ -1795,6 +1804,153 @@ class PerceptualMemory:
         
         return samples
     
+    def create_snapshot(self, snapshot_id: str = None) -> str:
+        """
+        Create a temporal snapshot of the current memory state
+        
+        Args:
+            snapshot_id: Optional identifier for the snapshot
+            
+        Returns:
+            snapshot_id: Identifier for the created snapshot
+        """
+        if snapshot_id is None:
+            snapshot_id = f"snapshot_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            
+        # Create a deep copy of the current memory state
+        self.snapshots[snapshot_id] = {
+            "frames": copy.deepcopy(list(self.frames)),
+            "embeddings": copy.deepcopy(list(self.frame_embeddings)),
+            "timestamp": time.time(),
+            "stats": copy.deepcopy(self.stats)
+        }
+        
+        # Update stats
+        self.stats["total_snapshots"] += 1
+        
+        logging.info(f"Created memory snapshot: {snapshot_id} with {len(self.frames)} frames")
+        return snapshot_id
+    
+    def restore_snapshot(self, snapshot_id: str) -> bool:
+        """
+        Restore memory state from a snapshot
+        
+        Args:
+            snapshot_id: Identifier for the snapshot to restore
+            
+        Returns:
+            success: Whether the restoration was successful
+        """
+        if snapshot_id not in self.snapshots:
+            logging.error(f"Snapshot not found: {snapshot_id}")
+            return False
+            
+        snapshot = self.snapshots[snapshot_id]
+        
+        # Restore memory state
+        self.frames = deque(snapshot["frames"], maxlen=self.frames.maxlen)
+        self.frame_embeddings = deque(snapshot["embeddings"], maxlen=self.frame_embeddings.maxlen)
+        
+        logging.info(f"Restored memory snapshot: {snapshot_id} with {len(self.frames)} frames")
+        return True
+    
+    def compare_snapshots(self, snapshot_id1: str, snapshot_id2: str) -> Dict:
+        """
+        Compare two memory snapshots
+        
+        Args:
+            snapshot_id1: First snapshot ID
+            snapshot_id2: Second snapshot ID
+            
+        Returns:
+            comparison: Dictionary with comparison metrics
+        """
+        if snapshot_id1 not in self.snapshots or snapshot_id2 not in self.snapshots:
+            return {"error": "One or both snapshots not found"}
+            
+        snapshot1 = self.snapshots[snapshot_id1]
+        snapshot2 = self.snapshots[snapshot_id2]
+        
+        # Compare basic metrics
+        comparison = {
+            "frame_count_diff": len(snapshot2["frames"]) - len(snapshot1["frames"]),
+            "time_diff": snapshot2["timestamp"] - snapshot1["timestamp"],
+            "retrieval_diff": snapshot2["stats"]["total_retrievals"] - snapshot1["stats"]["total_retrievals"],
+            "replay_diff": snapshot2["stats"]["total_replays"] - snapshot1["stats"]["total_replays"]
+        }
+        
+        return comparison
+    
+    def evolve_memory(self, fitness_function: Callable, population_size: int = 5) -> str:
+        """
+        Apply evolutionary strategies to optimize memory
+        
+        Args:
+            fitness_function: Function to evaluate fitness of a memory state
+            population_size: Number of variations to create
+            
+        Returns:
+            best_snapshot_id: ID of the best evolved snapshot
+        """
+        # Create a base snapshot
+        base_snapshot_id = self.create_snapshot("base_evolution")
+        
+        # Create population of variations
+        variations = []
+        for i in range(population_size):
+            # Create a variation by randomly sampling from the base
+            var_snapshot_id = f"evolution_{int(time.time())}_{i}"
+            self.snapshots[var_snapshot_id] = copy.deepcopy(self.snapshots[base_snapshot_id])
+            
+            # Modify the variation (e.g., prioritize different frames)
+            frames = self.snapshots[var_snapshot_id]["frames"]
+            if frames:
+                # Randomly reorder some frames to change priorities
+                sample_size = min(len(frames) // 3, 10)
+                if sample_size > 0:
+                    indices = random.sample(range(len(frames)), sample_size)
+                    for idx in indices:
+                        # Increase "importance" of random frames
+                        if isinstance(frames[idx], dict) and "importance" in frames[idx]:
+                            frames[idx]["importance"] *= random.uniform(0.5, 1.5)
+            
+            variations.append(var_snapshot_id)
+        
+        # Evaluate fitness of each variation
+        fitness_scores = {}
+        for var_id in variations:
+            # Temporarily restore this variation
+            original_frames = copy.deepcopy(list(self.frames))
+            original_embeddings = copy.deepcopy(list(self.frame_embeddings))
+            
+            self.restore_snapshot(var_id)
+            
+            # Evaluate fitness
+            fitness = fitness_function(self)
+            fitness_scores[var_id] = fitness
+            
+            # Restore original state
+            self.frames = deque(original_frames, maxlen=self.frames.maxlen)
+            self.frame_embeddings = deque(original_embeddings, maxlen=self.frame_embeddings.maxlen)
+        
+        # Find the best variation
+        best_snapshot_id = max(fitness_scores, key=fitness_scores.get)
+        
+        # Record evolution history
+        self.evolution_history.append({
+            "timestamp": time.time(),
+            "base_snapshot": base_snapshot_id,
+            "variations": variations,
+            "fitness_scores": fitness_scores,
+            "best_snapshot": best_snapshot_id
+        })
+        
+        # Update stats
+        self.stats["total_evolutions"] += 1
+        
+        logging.info(f"Evolved memory: best snapshot is {best_snapshot_id} with fitness {fitness_scores[best_snapshot_id]}")
+        return best_snapshot_id
+    
     def get_memory_stats(self) -> Dict:
         """Get memory statistics"""
         return {
@@ -1802,7 +1958,10 @@ class PerceptualMemory:
             "max_size": self.frames.maxlen,
             "total_frames_added": self.stats["total_frames_added"],
             "total_retrievals": self.stats["total_retrievals"],
-            "total_replays": self.stats["total_replays"]
+            "total_replays": self.stats["total_replays"],
+            "total_snapshots": self.stats.get("total_snapshots", 0),
+            "total_evolutions": self.stats.get("total_evolutions", 0),
+            "snapshots": list(self.snapshots.keys())
         }
 
 class MetaReflectionLayer:
@@ -1904,18 +2063,22 @@ class MetaReflectionLayer:
 
 class CLIAgent:
     """
-    CLI agent for conversational data analysis with meta-recursive self-awareness
-    Uses a two-layer architecture:
-    1. Inner model: Primary reasoning and task execution
-    2. Outer model: Meta-cognitive reflection and oversight
-    
-    Features:
-    - Perceptual memory for storing interaction frames
+    Autonomous CLI agent with advanced capabilities:
+    - Two-layer architecture with meta-recursive self-awareness
+    - Perceptual memory with temporal snapshotting
+    - Evolutionary strategies for continuous improvement
     - Experience replay for learning from past interactions
     - Semantic search across interaction history
+    
+    This agent can autonomously:
+    1. Execute complex tasks with minimal human guidance
+    2. Evolve its memory and strategies over time
+    3. Adapt to changing requirements through evolutionary optimization
+    4. Maintain temporal snapshots for rollback and comparison
     """
     def __init__(self, model="gpt-4o", meta_model=None, console=None, enable_meta=True, 
-                max_memory_frames=1000, enable_experience_replay=True):
+                max_memory_frames=1000, enable_experience_replay=True, 
+                enable_evolution=True, autonomous_mode=True):
         # Primary reasoning layer
         self.model = model
         self.meta_model = meta_model or model  # Use same model for meta layer if not specified
@@ -1925,7 +2088,7 @@ class CLIAgent:
         self.code_tools = CodingTools()
         self.conversation_history = []
         self.console = console or Console()
-        self.hooks = CLIAgentHooks(self.console, display_name="Data Analysis Agent")
+        self.hooks = CLIAgentHooks(self.console, display_name="Autonomous Agent")
         
         # Meta-cognitive layer
         self.enable_meta = enable_meta
@@ -1934,18 +2097,34 @@ class CLIAgent:
         # Dynamic tool registry
         self.tool_registry = DynamicToolRegistry(console=self.console)
         
-        # Perceptual memory system
+        # Perceptual memory system with evolutionary capabilities
         self.perceptual_memory = PerceptualMemory(max_frames=max_memory_frames)
         self.enable_experience_replay = enable_experience_replay
+        self.enable_evolution = enable_evolution
         self.replay_batch_size = 3
         self.replay_frequency = 5
+        self.evolution_frequency = 10  # How often to evolve memory (in interactions)
         self.interaction_count = 0
+        
+        # Autonomous mode settings
+        self.autonomous_mode = autonomous_mode
+        self.autonomous_tasks = []  # Queue of tasks to execute autonomously
+        self.autonomous_context = {}  # Context for autonomous execution
+        self.last_autonomous_check = time.time()
+        self.autonomous_check_interval = 60  # Check for autonomous tasks every 60 seconds
+        
+        # Temporal snapshots for agent state
+        self.snapshots = {}
+        self.current_snapshot_id = None
         
         # Dynamic agent contexts
         self.agent_contexts = {}
         
         # Initialize dynamic agent tools
         self._init_dynamic_agent_tools()
+        
+        # Create initial memory snapshot
+        self.create_snapshot("initial_state")
         
     def _init_dynamic_agent_tools(self):
         """Initialize tools for dynamic agent management"""
@@ -3362,7 +3541,7 @@ class CLIAgent:
                 "message": f"Error in experience replay: {str(e)}"
             }
     
-    async def chat(self, message: str) -> str:
+    async def chat(self, message: str, autonomous: bool = False, context: Dict = None) -> str:
         """
         Chat with the agent using a two-layer architecture:
         1. Inner model generates the primary response
@@ -3374,11 +3553,24 @@ class CLIAgent:
         # Add user message to conversation history
         self.conversation_history.append({"role": "user", "content": message})
         
+        # Add context if provided (for autonomous mode)
+        if context:
+            context_str = json.dumps(context, indent=2)
+            self.conversation_history.append({
+                "role": "system", 
+                "content": f"Context for this interaction: {context_str}"
+            })
+        
         # Notify hooks that the agent is starting
-        self.hooks.on_start("CLI Agent")
+        agent_name = "Autonomous Agent" if autonomous else "CLI Agent"
+        self.hooks.on_start(agent_name)
         
         # Increment interaction counter
         self.interaction_count += 1
+        
+        # Create a snapshot every 5 interactions
+        if self.interaction_count % 5 == 0:
+            self.create_snapshot(f"interaction_{self.interaction_count}")
         
         # Run the primary reasoning layer (inner model)
         with self.console.status("[bold green]Thinking..."):
@@ -3561,8 +3753,25 @@ class CLIAgent:
                                 style="dim"
                             )
                     
+                    # Perform evolutionary optimization if enabled and it's time
+                    if (self.enable_evolution and 
+                        self.interaction_count % self.evolution_frequency == 0 and
+                        self.interaction_count > 2):
+                        self.console.print("[bold magenta]Performing evolutionary optimization...[/bold magenta]")
+                        evolution_result = self.evolve_agent()
+                        if evolution_result["success"] and self.console:
+                            self.console.print(
+                                f"[dim][Evolution: optimized agent memory and strategies][/dim]",
+                                style="dim"
+                            )
+                    
+                    # Check for autonomous tasks
+                    if not autonomous:  # Don't check during autonomous execution to prevent recursion
+                        self.check_autonomous_tasks()
+                    
                     # Notify hooks that the agent has completed
-                    self.hooks.on_end("CLI Agent", final_response)
+                    agent_name = "Autonomous Agent" if autonomous else "CLI Agent"
+                    self.hooks.on_end(agent_name, final_response)
                     return final_response
                     
             except Exception as e:
@@ -3609,17 +3818,261 @@ class CLIAgent:
                 "data": []
             }
     
+    def create_snapshot(self, snapshot_id: str = None) -> str:
+        """Create a snapshot of the current agent state"""
+        if snapshot_id is None:
+            snapshot_id = f"agent_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        
+        # Create memory snapshot
+        memory_snapshot_id = self.perceptual_memory.create_snapshot(f"{snapshot_id}_memory")
+        
+        # Create agent state snapshot
+        self.snapshots[snapshot_id] = {
+            "timestamp": time.time(),
+            "memory_snapshot_id": memory_snapshot_id,
+            "conversation_history": copy.deepcopy(self.conversation_history),
+            "interaction_count": self.interaction_count,
+            "autonomous_context": copy.deepcopy(self.autonomous_context),
+            "autonomous_tasks": copy.deepcopy(self.autonomous_tasks)
+        }
+        
+        self.current_snapshot_id = snapshot_id
+        
+        if self.console:
+            self.console.print(f"[dim]Created agent snapshot: {snapshot_id}[/dim]")
+        
+        return snapshot_id
+    
+    def restore_snapshot(self, snapshot_id: str) -> bool:
+        """Restore agent state from a snapshot"""
+        if snapshot_id not in self.snapshots:
+            if self.console:
+                self.console.print(f"[bold red]Snapshot not found: {snapshot_id}[/bold red]")
+            return False
+        
+        snapshot = self.snapshots[snapshot_id]
+        
+        # Restore memory
+        memory_restored = self.perceptual_memory.restore_snapshot(snapshot["memory_snapshot_id"])
+        if not memory_restored:
+            if self.console:
+                self.console.print(f"[bold red]Failed to restore memory snapshot: {snapshot['memory_snapshot_id']}[/bold red]")
+            return False
+        
+        # Restore agent state
+        self.conversation_history = copy.deepcopy(snapshot["conversation_history"])
+        self.interaction_count = snapshot["interaction_count"]
+        self.autonomous_context = copy.deepcopy(snapshot["autonomous_context"])
+        self.autonomous_tasks = copy.deepcopy(snapshot["autonomous_tasks"])
+        
+        self.current_snapshot_id = snapshot_id
+        
+        if self.console:
+            self.console.print(f"[dim]Restored agent to snapshot: {snapshot_id}[/dim]")
+        
+        return True
+    
+    def add_autonomous_task(self, task: str, priority: int = 1, context: Dict = None) -> str:
+        """Add a task to the autonomous execution queue"""
+        task_id = str(uuid.uuid4())
+        
+        task_obj = {
+            "id": task_id,
+            "task": task,
+            "priority": priority,
+            "context": context or {},
+            "created": time.time(),
+            "status": "pending"
+        }
+        
+        # Add to queue based on priority
+        inserted = False
+        for i, existing_task in enumerate(self.autonomous_tasks):
+            if priority > existing_task["priority"]:
+                self.autonomous_tasks.insert(i, task_obj)
+                inserted = True
+                break
+        
+        if not inserted:
+            self.autonomous_tasks.append(task_obj)
+        
+        if self.console and self.autonomous_mode:
+            self.console.print(f"[dim]Added autonomous task: {task} (priority: {priority})[/dim]")
+        
+        return task_id
+    
+    def execute_next_autonomous_task(self) -> Dict:
+        """Execute the next task in the autonomous queue"""
+        if not self.autonomous_tasks:
+            return {"success": False, "message": "No autonomous tasks in queue"}
+        
+        # Get the highest priority task
+        task = self.autonomous_tasks.pop(0)
+        task["status"] = "executing"
+        
+        if self.console:
+            self.console.print(f"[bold cyan]Executing autonomous task: {task['task']}[/bold cyan]")
+        
+        # Execute the task
+        try:
+            response = asyncio.run(self.chat(task["task"], autonomous=True, context=task["context"]))
+            
+            task["status"] = "completed"
+            task["completed"] = time.time()
+            task["response"] = response
+            
+            # Store in autonomous context
+            self.autonomous_context[task["id"]] = task
+            
+            return {
+                "success": True,
+                "message": f"Successfully executed autonomous task: {task['task']}",
+                "task": task,
+                "response": response
+            }
+        except Exception as e:
+            task["status"] = "failed"
+            task["error"] = str(e)
+            
+            # Store in autonomous context
+            self.autonomous_context[task["id"]] = task
+            
+            return {
+                "success": False,
+                "message": f"Error executing autonomous task: {str(e)}",
+                "task": task
+            }
+    
+    def check_autonomous_tasks(self) -> None:
+        """Check and execute autonomous tasks if needed"""
+        if not self.autonomous_mode or not self.autonomous_tasks:
+            return
+        
+        # Check if it's time to execute tasks
+        current_time = time.time()
+        if current_time - self.last_autonomous_check < self.autonomous_check_interval:
+            return
+        
+        self.last_autonomous_check = current_time
+        
+        # Execute the next task
+        if self.autonomous_tasks:
+            self.execute_next_autonomous_task()
+    
+    def evaluate_memory_fitness(self, memory: PerceptualMemory) -> float:
+        """Evaluate the fitness of a memory state for evolutionary optimization"""
+        # This is a simple fitness function that can be customized
+        # Higher is better
+        
+        # Base fitness
+        fitness = 100.0
+        
+        # Reward more frames (up to a point)
+        frame_count = len(memory.frames)
+        optimal_frame_count = memory.frames.maxlen * 0.7  # 70% of max capacity is optimal
+        
+        if frame_count < optimal_frame_count:
+            # Penalize too few frames
+            fitness -= (optimal_frame_count - frame_count) / optimal_frame_count * 30
+        else:
+            # Small penalty for too many frames
+            fitness -= (frame_count - optimal_frame_count) / optimal_frame_count * 10
+        
+        # Reward diversity in frames
+        # This is a simple heuristic - in a real system you'd use embedding similarity
+        unique_queries = set()
+        for frame in memory.frames:
+            if isinstance(frame, dict) and "interaction" in frame:
+                user_message = frame["interaction"].get("user_message", "")
+                unique_queries.add(user_message[:50])  # First 50 chars as a simple fingerprint
+        
+        diversity_score = len(unique_queries) / max(1, len(memory.frames)) * 50
+        fitness += diversity_score
+        
+        # Reward recent activity
+        recent_count = sum(1 for frame in memory.frames 
+                          if isinstance(frame, dict) and 
+                          frame.get("timestamp", 0) > time.time() - 3600)  # Last hour
+        recency_score = recent_count / max(1, len(memory.frames)) * 20
+        fitness += recency_score
+        
+        return fitness
+    
+    def evolve_agent(self) -> Dict:
+        """Apply evolutionary strategies to optimize the agent"""
+        if not self.enable_evolution:
+            return {"success": False, "message": "Evolution is disabled"}
+        
+        # Create a snapshot before evolution
+        pre_evolution_snapshot = self.create_snapshot("pre_evolution")
+        
+        try:
+            # Evolve memory using the fitness function
+            best_memory_snapshot = self.perceptual_memory.evolve_memory(
+                self.evaluate_memory_fitness,
+                population_size=5
+            )
+            
+            # Restore the best memory snapshot
+            memory_restored = self.perceptual_memory.restore_snapshot(best_memory_snapshot)
+            
+            if memory_restored:
+                # Create a new agent snapshot after evolution
+                post_evolution_snapshot = self.create_snapshot("post_evolution")
+                
+                return {
+                    "success": True,
+                    "message": "Successfully evolved agent",
+                    "pre_evolution_snapshot": pre_evolution_snapshot,
+                    "post_evolution_snapshot": post_evolution_snapshot,
+                    "best_memory_snapshot": best_memory_snapshot
+                }
+            else:
+                # Restore pre-evolution state
+                self.restore_snapshot(pre_evolution_snapshot)
+                
+                return {
+                    "success": False,
+                    "message": "Failed to restore evolved memory snapshot",
+                    "pre_evolution_snapshot": pre_evolution_snapshot
+                }
+        except Exception as e:
+            # Restore pre-evolution state
+            self.restore_snapshot(pre_evolution_snapshot)
+            
+            return {
+                "success": False,
+                "message": f"Error during evolution: {str(e)}",
+                "pre_evolution_snapshot": pre_evolution_snapshot
+            }
+    
     def get_memory_stats(self) -> Dict:
         """Get statistics about the perceptual memory system"""
-        return self.perceptual_memory.get_memory_stats()
+        memory_stats = self.perceptual_memory.get_memory_stats()
+        
+        # Add agent-specific stats
+        agent_stats = {
+            "interaction_count": self.interaction_count,
+            "conversation_history_length": len(self.conversation_history),
+            "autonomous_mode": self.autonomous_mode,
+            "autonomous_tasks_pending": len(self.autonomous_tasks),
+            "autonomous_tasks_completed": len([t for t in self.autonomous_context.values() 
+                                             if t.get("status") == "completed"]),
+            "snapshots": list(self.snapshots.keys()),
+            "current_snapshot": self.current_snapshot_id
+        }
+        
+        return {**memory_stats, **agent_stats}
 
 def main():
     """Main function for the CLI agent"""
-    parser = argparse.ArgumentParser(description="CLI Agent for Data Analysis")
+    parser = argparse.ArgumentParser(description="Autonomous CLI Agent with Evolutionary Capabilities")
     parser.add_argument("--model", default="gpt-4o", help="Model to use for the agent")
     parser.add_argument("--meta-model", default=None, help="Model to use for meta-reflection (defaults to same as primary model)")
     parser.add_argument("--disable-meta", action="store_true", help="Disable meta-cognitive reflection layer")
     parser.add_argument("--disable-replay", action="store_true", help="Disable experience replay")
+    parser.add_argument("--disable-evolution", action="store_true", help="Disable evolutionary optimization")
+    parser.add_argument("--disable-autonomous", action="store_true", help="Disable autonomous mode")
     parser.add_argument("--memory-size", type=int, default=1000, help="Maximum number of interaction frames to store in memory")
     parser.add_argument("--trace", action="store_true", help="Enable tracing for debugging")
     parser.add_argument("--debug", action="store_true", help="Show debug information including agent hooks")
@@ -3629,6 +4082,10 @@ def main():
     parser.add_argument("--list-tools", action="store_true", help="List available tools and exit")
     parser.add_argument("--list-categories", action="store_true", help="List available tool categories and exit")
     parser.add_argument("--list-templates", action="store_true", help="List available tool templates and exit")
+    parser.add_argument("--list-snapshots", action="store_true", help="List available agent snapshots and exit")
+    parser.add_argument("--restore-snapshot", type=str, help="Restore agent from a snapshot ID")
+    parser.add_argument("--task", type=str, help="Add an autonomous task to execute")
+    parser.add_argument("--task-priority", type=int, default=1, help="Priority for the autonomous task (higher is more important)")
     args = parser.parse_args()
     
     # Enable tracing if requested
@@ -3638,16 +4095,68 @@ def main():
     # Create console
     console = Console()
     
-    # Create the agent with meta-cognitive layer and perceptual memory
+    # Create the agent with meta-cognitive layer, perceptual memory, and evolutionary capabilities
     agent = CLIAgent(
         model=args.model, 
         meta_model=args.meta_model,
         console=console,
         enable_meta=not args.disable_meta,
         max_memory_frames=args.memory_size,
-        enable_experience_replay=not args.disable_replay
+        enable_experience_replay=not args.disable_replay,
+        enable_evolution=not args.disable_evolution,
+        autonomous_mode=not args.disable_autonomous
     )
     
+    
+    # If --restore-snapshot flag is provided, restore from snapshot
+    if args.restore_snapshot:
+        success = agent.restore_snapshot(args.restore_snapshot)
+        if success:
+            console.print(f"[bold green]Successfully restored agent from snapshot: {args.restore_snapshot}[/bold green]")
+        else:
+            console.print(f"[bold red]Failed to restore agent from snapshot: {args.restore_snapshot}[/bold red]")
+            return
+    
+    # If --task flag is provided, add an autonomous task
+    if args.task:
+        task_id = agent.add_autonomous_task(args.task, priority=args.task_priority)
+        console.print(f"[bold green]Added autonomous task with ID: {task_id}[/bold green]")
+        
+        # If only adding a task, don't enter interactive mode
+        if not args.list_agents and not args.list_tools and not args.list_categories and not args.list_templates and not args.list_snapshots:
+            console.print("[bold cyan]Task added to queue. Agent will execute it autonomously.[/bold cyan]")
+            console.print("[bold cyan]Run without --task to enter interactive mode.[/bold cyan]")
+            return
+    
+    # If --list-snapshots flag is provided, list snapshots and exit
+    if args.list_snapshots:
+        snapshots = agent.snapshots
+        
+        console.print(Panel.fit(
+            f"[bold]Available Agent Snapshots:[/bold] {len(snapshots)} snapshots\n",
+            title="Agent Snapshots",
+            border_style="green"
+        ))
+        
+        if snapshots:
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Snapshot ID")
+            table.add_column("Timestamp")
+            table.add_column("Memory Size")
+            table.add_column("Current")
+            
+            for snapshot_id, snapshot in snapshots.items():
+                timestamp = datetime.fromtimestamp(snapshot["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                memory_size = len(snapshot.get("conversation_history", []))
+                is_current = "✓" if snapshot_id == agent.current_snapshot_id else ""
+                
+                table.add_row(snapshot_id, timestamp, str(memory_size), is_current)
+            
+            console.print(table)
+        else:
+            console.print("[yellow]No snapshots available yet.[/yellow]")
+        
+        return
     
     # If --list-agents flag is provided, list agents and exit
     if args.list_agents:
@@ -3788,17 +4297,27 @@ def main():
     # Welcome message
     meta_status = "enabled" if not args.disable_meta else "disabled"
     replay_status = "enabled" if not args.disable_replay else "disabled"
+    evolution_status = "enabled" if not args.disable_evolution else "disabled"
+    autonomous_status = "enabled" if not args.disable_autonomous else "disabled"
     memory_size = args.memory_size
     
     console.print(Panel.fit(
-        "[bold blue]Welcome to the Data Analysis CLI Agent![/bold blue]\n"
-        "You can chat with me about data analysis tasks, and I'll help you analyze data, "
-        "create visualizations, and more.\n"
+        "[bold blue]Welcome to the Autonomous Agent with Evolutionary Capabilities![/bold blue]\n"
+        "This agent can autonomously execute tasks, evolve its memory and strategies over time, "
+        "and adapt to your needs.\n"
         f"[bold cyan]Meta-cognitive reflection:[/bold cyan] {meta_status}\n"
         f"[bold cyan]Experience replay:[/bold cyan] {replay_status} (memory: {memory_size} frames)\n"
+        f"[bold cyan]Evolutionary optimization:[/bold cyan] {evolution_status}\n"
+        f"[bold cyan]Autonomous mode:[/bold cyan] {autonomous_status}\n"
         "[bold cyan]Dynamic Agents:[/bold cyan] You can create and use specialized agents for specific tasks.\n"
-        "Type [bold green]'exit'[/bold green] to quit.",
-        title="Data Analysis Assistant",
+        "[bold cyan]Commands:[/bold cyan]\n"
+        "  [bold green]/snapshot[/bold green] - Create a new snapshot of the current agent state\n"
+        "  [bold green]/restore [ID][/bold green] - Restore agent from a snapshot\n"
+        "  [bold green]/evolve[/bold green] - Manually trigger evolutionary optimization\n"
+        "  [bold green]/task [description][/bold green] - Add an autonomous task\n"
+        "  [bold green]/stats[/bold green] - Show agent statistics\n"
+        "  [bold green]/exit[/bold green] - Exit the program",
+        title="Autonomous Agent",
         border_style="blue"
     ))
     
@@ -3808,10 +4327,51 @@ def main():
             # Get user input
             user_input = Prompt.ask("\n[bold green]You")
             
-            # Check for exit command
-            if user_input.lower() in ["exit", "quit", "bye"]:
+            # Check for special commands
+            if user_input.lower() in ["exit", "quit", "bye", "/exit"]:
                 console.print("[bold blue]Goodbye![/bold blue]")
                 break
+            elif user_input.lower() == "/snapshot":
+                snapshot_id = agent.create_snapshot()
+                console.print(f"[bold green]Created snapshot: {snapshot_id}[/bold green]")
+                continue
+            elif user_input.lower().startswith("/restore "):
+                snapshot_id = user_input[9:].strip()
+                success = agent.restore_snapshot(snapshot_id)
+                if success:
+                    console.print(f"[bold green]Restored from snapshot: {snapshot_id}[/bold green]")
+                else:
+                    console.print(f"[bold red]Failed to restore from snapshot: {snapshot_id}[/bold red]")
+                continue
+            elif user_input.lower() == "/evolve":
+                console.print("[bold cyan]Triggering evolutionary optimization...[/bold cyan]")
+                result = agent.evolve_agent()
+                if result["success"]:
+                    console.print("[bold green]Successfully evolved agent[/bold green]")
+                else:
+                    console.print(f"[bold red]Evolution failed: {result['message']}[/bold red]")
+                continue
+            elif user_input.lower().startswith("/task "):
+                task = user_input[6:].strip()
+                task_id = agent.add_autonomous_task(task)
+                console.print(f"[bold green]Added autonomous task: {task_id}[/bold green]")
+                continue
+            elif user_input.lower() == "/stats":
+                stats = agent.get_memory_stats()
+                
+                console.print(Panel.fit(
+                    f"[bold]Agent Statistics:[/bold]\n\n"
+                    f"Memory: {stats['current_size']}/{stats['max_size']} frames\n"
+                    f"Interactions: {stats['interaction_count']}\n"
+                    f"Snapshots: {len(stats['snapshots'])}\n"
+                    f"Autonomous tasks pending: {stats['autonomous_tasks_pending']}\n"
+                    f"Autonomous tasks completed: {stats['autonomous_tasks_completed']}\n"
+                    f"Current snapshot: {stats['current_snapshot'] or 'None'}\n"
+                    f"Evolutionary optimizations: {stats['total_evolutions']}",
+                    title="Agent Status",
+                    border_style="green"
+                ))
+                continue
             
             # Process the input
             response = asyncio.run(agent.chat(user_input))
