@@ -251,21 +251,27 @@ class CoALAAgent:
 
         self.conversation_history = [] # Stores raw LLM interactions
 
-        # Define the core system prompt based on CoALA principles
+        # Define the core system prompt based on CoALA principles with advanced function calling
         self.system_prompt = {
             "role": "system",
             "content": (
-                "You are a CoALA-based language agent designed for general computer usage. "
+                "You are a CoALA-based language agent designed for advanced computer usage and problem-solving. "
                 "Your goal is to assist the user by understanding their requests, reasoning about the steps needed, "
-                "and utilizing available tools (actions) to interact with the environment (files, code, web).\n"
-                "Follow this decision cycle:\n"
-                "1. **Observe:** Receive user input and environmental feedback.\n"
+                "and utilizing available tools (actions) to interact with the environment (files, code, web).\n\n"
+                "Follow this enhanced decision cycle:\n"
+                "1. **Observe:** Receive user input and environmental feedback. Analyze multimodal content if present.\n"
                 "2. **Orient (Plan):** Analyze the current state (working memory), retrieve relevant knowledge (long-term memory), "
-                "   and reason to propose potential actions (internal or external).\n"
-                "3. **Decide:** Evaluate proposed actions and select the best one.\n"
-                "4. **Act:** Execute the selected action (e.g., call a tool, update memory, respond to user).\n"
-                "Use JSON format for reasoning steps and action selection when possible.\n"
-                "Available tools can be listed. Use them precisely as defined."
+                "   and reason to propose potential actions (internal or external). For complex tasks, decompose into subtasks.\n"
+                "3. **Decide:** Evaluate proposed actions and select the optimal sequence. Consider parallel execution when possible.\n"
+                "4. **Act:** Execute the selected actions (e.g., call tools, update memory, respond to user). Monitor execution and adapt as needed.\n"
+                "5. **Reflect:** After completing actions, reflect on the effectiveness and learn from the experience.\n\n"
+                "When calling functions:\n"
+                "- Use precise parameter names and types as defined in the function specifications\n"
+                "- For complex tasks, use orchestrate_tasks to delegate to specialized scout agents\n"
+                "- Chain multiple function calls when needed to solve multi-step problems\n"
+                "- Use JSON format for structured reasoning and action selection\n\n"
+                "You can execute Python code, search the web, process images, analyze data, and interact with files. "
+                "Use your capabilities creatively to solve problems efficiently."
             )
         }
         self.add_log(self.system_prompt) # Add system prompt to history
@@ -391,62 +397,305 @@ class CoALAAgent:
             return result # Return raw result for potential further processing
 
     def decision_cycle(self, user_input: Optional[str] = None):
-        """Runs one cycle of the CoALA Observe-Orient-Decide-Act loop."""
+        """Runs one cycle of the CoALA Observe-Orient-Decide-Act loop with enhanced capabilities."""
         self.working_memory.clear_cycle_state()
+        cycle_start_time = time.time()
 
-        # 1. Observe
+        # 1. Observe - Enhanced with multimodal processing and context awareness
         if user_input:
-            # Process multimodal input if needed
+            # Process multimodal input with advanced detection
             processed_input = self._process_input(user_input)
             self.working_memory.add_observation(processed_input, source="user")
             self.add_log({"role": "user", "content": processed_input if isinstance(processed_input, str) else str(processed_input)})
-            # Simple goal setting for now
-            if not self.working_memory.current_goal:
-                 self.working_memory.current_goal = processed_input if isinstance(processed_input, str) else "Process multimodal input"
             
-            # Store in memory for future reference
+            # Intelligent goal setting based on input analysis
+            if not self.working_memory.current_goal:
+                if isinstance(processed_input, str):
+                    # Analyze the input to extract a meaningful goal
+                    if "?" in processed_input:
+                        self.working_memory.current_goal = f"Answer question: {processed_input}"
+                    elif any(cmd in processed_input.lower() for cmd in ["create", "make", "build", "generate"]):
+                        self.working_memory.current_goal = f"Create content: {processed_input}"
+                    elif any(cmd in processed_input.lower() for cmd in ["analyze", "examine", "investigate"]):
+                        self.working_memory.current_goal = f"Analyze information: {processed_input}"
+                    else:
+                        self.working_memory.current_goal = processed_input
+                else:  # Multimodal content
+                    # Extract text from multimodal content for goal setting
+                    text_content = ""
+                    has_image = False
+                    for item in processed_input if isinstance(processed_input, list) else []:
+                        if item.get("type") == "text":
+                            text_content += item.get("text", "") + " "
+                        elif item.get("type") == "image_url":
+                            has_image = True
+                    
+                    if has_image and text_content:
+                        self.working_memory.current_goal = f"Process image and text: {text_content.strip()}"
+                    elif has_image:
+                        self.working_memory.current_goal = "Analyze image content"
+                    else:
+                        self.working_memory.current_goal = "Process multimodal input"
+            
+            # Enhanced memory storage with metadata
             if hasattr(self, 'memory'):
                 if isinstance(processed_input, str):
-                    self.memory.add_memory(processed_input, {"type": "text", "role": "user"})
+                    # Add contextual metadata
+                    metadata = {
+                        "type": "text", 
+                        "role": "user",
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "goal": self.working_memory.current_goal,
+                        "sentiment": "neutral"  # Could be enhanced with sentiment analysis
+                    }
+                    self.memory.add_memory(processed_input, metadata)
                 elif isinstance(processed_input, list):  # Multimodal content
                     for item in processed_input:
                         if item.get("type") == "text":
-                            self.memory.add_memory(item.get("text", ""), {"type": "text", "role": "user"})
+                            self.memory.add_memory(item.get("text", ""), {
+                                "type": "text", 
+                                "role": "user",
+                                "part_of_multimodal": True
+                            })
                         elif item.get("type") == "image_url" and "url" in item.get("image_url", {}):
-                            self.memory.add_memory(item["image_url"]["url"], {"type": "image", "role": "user"})
+                            self.memory.add_memory(item["image_url"]["url"], {
+                                "type": "image", 
+                                "role": "user",
+                                "content_type": self._detect_image_type(item["image_url"]["url"])
+                            })
 
-        # Check if we should use advanced capabilities from atomic_agent
-        if self._should_use_advanced_capabilities(user_input):
+        # Check for task complexity and use advanced capabilities when appropriate
+        task_complexity = self._analyze_task_complexity(user_input)
+        self.working_memory.variables["task_complexity"] = task_complexity
+        
+        if task_complexity == "high" or self._should_use_advanced_capabilities(user_input):
+            console.print(f"[cyan]Using advanced capabilities for {task_complexity} complexity task[/cyan]")
             result = self._handle_with_advanced_capabilities(user_input)
             if result:
+                # Track execution metrics
+                cycle_duration = time.time() - cycle_start_time
+                self.add_log({
+                    "role": "system", 
+                    "content": f"Advanced capabilities used. Decision cycle completed in {cycle_duration:.2f}s",
+                    "type": "metrics"
+                })
                 return result
 
-        # 2. Orient (Plan)
+        # 2. Orient (Plan) - Enhanced with memory retrieval and context integration
+        # Retrieve relevant memories before planning
+        if hasattr(self, 'memory'):
+            relevant_memories = self.memory.search_memory(
+                self.working_memory.current_goal or user_input or "", 
+                limit=3
+            )
+            if relevant_memories:
+                memory_context = "Relevant past information:\n"
+                for mem in relevant_memories:
+                    memory_context += f"- {mem['content'][:100]}...\n"
+                self.working_memory.variables["memory_context"] = memory_context
+                console.print(f"[dim cyan]Retrieved {len(relevant_memories)} relevant memories[/dim cyan]")
+
+        # Enhanced planning with context integration
         proposed_actions = self.plan_step()
+        
         if not proposed_actions:
-            # If planning fails, maybe try a simple response
-            console.print("[yellow]Planning failed, attempting simple response.[/yellow]")
-            self.working_memory.selected_action = {"action_name": "respond_to_user", "arguments": {"response_text": "I'm unsure how to proceed. Can you clarify?"}}
+            # If planning fails, use fallback strategies based on task type
+            console.print("[yellow]Primary planning failed, attempting alternative planning approach.[/yellow]")
+            
+            # Try different planning approach based on task type
+            if task_complexity == "high":
+                # For complex tasks, try breaking it down first
+                self.working_memory.selected_action = {
+                    "action_name": "orchestrate_tasks", 
+                    "arguments": {
+                        "main_task": self.working_memory.current_goal or "Process user request",
+                        "subtasks": [
+                            "Analyze the user request in detail",
+                            "Identify the key components needed",
+                            "Formulate a response strategy"
+                        ]
+                    }
+                }
+            else:
+                # For simpler tasks, use direct response
+                self.working_memory.selected_action = {
+                    "action_name": "respond_to_user", 
+                    "arguments": {
+                        "response_text": "I'm not sure how to proceed with your request. Could you provide more details or clarify what you're looking for?"
+                    }
+                }
         else:
-            # 3. Decide
+            # 3. Decide - Enhanced with multi-criteria evaluation
             self.decide_step()
 
-        # 4. Act
-        result = self.act_step()
-
-        # Check if the action was a direct response to the user via the tool
-        if self.working_memory.selected_action and self.working_memory.selected_action.get("action_name") == "respond_to_user":
-            # The result itself is the response text in this case
-            return result
-        else:
-            # If another action was taken, potentially loop again or generate a summary response
-            console.print(f"[bold magenta]Action Result:[/bold magenta]\n{json.dumps(result, indent=2)}")
+        # 4. Act - Enhanced with execution monitoring and error recovery
+        try:
+            result = self.act_step()
             
-            # Use more sophisticated summarization with the LLM
-            summary_response = self._generate_action_summary(result)
+            # Check if the action was a direct response to the user via the tool
+            if self.working_memory.selected_action and self.working_memory.selected_action.get("action_name") == "respond_to_user":
+                # Track execution metrics
+                cycle_duration = time.time() - cycle_start_time
+                self.add_log({
+                    "role": "system", 
+                    "content": f"Direct response. Decision cycle completed in {cycle_duration:.2f}s",
+                    "type": "metrics"
+                })
+                return result
+            else:
+                # If another action was taken, generate a comprehensive summary
+                console.print(f"[bold magenta]Action Result:[/bold magenta]\n{json.dumps(result, indent=2)}")
+                
+                # Enhanced summarization with context awareness
+                summary_response = self._generate_enhanced_action_summary(result)
+                
+                # Store the result in memory for future reference
+                if hasattr(self, 'memory'):
+                    self.memory.add_memory(
+                        f"Action: {self.working_memory.selected_action.get('action_name')} - Result summary: {summary_response[:100]}...",
+                        {
+                            "type": "action_result",
+                            "action": self.working_memory.selected_action.get('action_name'),
+                            "success": "error" not in result if isinstance(result, dict) else True
+                        }
+                    )
 
-            self.add_log({"role": "assistant", "content": summary_response})
-            return summary_response
+                self.add_log({"role": "assistant", "content": summary_response})
+                
+                # Track execution metrics
+                cycle_duration = time.time() - cycle_start_time
+                self.add_log({
+                    "role": "system", 
+                    "content": f"Action execution. Decision cycle completed in {cycle_duration:.2f}s",
+                    "type": "metrics"
+                })
+                
+                return summary_response
+                
+        except Exception as e:
+            # Enhanced error recovery
+            console.print(f"[red]Error during action execution: {str(e)}[/red]")
+            console.print(traceback.format_exc())
+            
+            # Try to recover with a fallback action
+            fallback_response = f"I encountered an issue while processing your request: {str(e)}. Let me try a different approach."
+            
+            # Log the error for future improvement
+            self.add_log({
+                "role": "system", 
+                "content": f"Error in act_step: {str(e)}\n{traceback.format_exc()}",
+                "type": "error"
+            })
+            
+            return fallback_response
+            
+    def _analyze_task_complexity(self, user_input) -> str:
+        """Analyze the complexity of the task based on the user input."""
+        if not user_input or not isinstance(user_input, str):
+            return "medium"
+            
+        # Count indicators of complexity
+        complexity_indicators = {
+            "high": ["complex", "multiple", "analyze", "compare", "create a", "build a", "implement", 
+                    "design", "optimize", "improve", "automate", "integrate"],
+            "medium": ["find", "search", "explain", "describe", "summarize", "calculate", "convert"],
+            "low": ["what is", "who is", "when", "where", "simple", "quick", "help me"]
+        }
+        
+        # Count words and sentences
+        word_count = len(user_input.split())
+        sentence_count = len(re.split(r'[.!?]+', user_input))
+        
+        # Count complexity indicators
+        high_indicators = sum(1 for indicator in complexity_indicators["high"] 
+                             if indicator in user_input.lower())
+        medium_indicators = sum(1 for indicator in complexity_indicators["medium"] 
+                               if indicator in user_input.lower())
+        low_indicators = sum(1 for indicator in complexity_indicators["low"] 
+                            if indicator in user_input.lower())
+        
+        # Determine complexity based on multiple factors
+        if (word_count > 50 or sentence_count > 3 or high_indicators > 1 or
+            "code" in user_input.lower() and word_count > 20):
+            return "high"
+        elif (word_count > 20 or sentence_count > 1 or medium_indicators > 0 or
+             high_indicators > 0):
+            return "medium"
+        else:
+            return "low"
+            
+    def _detect_image_type(self, image_url: str) -> str:
+        """Detect the type of image based on URL or content."""
+        if not image_url:
+            return "unknown"
+            
+        # Check for common image types based on URL
+        if "chart" in image_url.lower() or "graph" in image_url.lower():
+            return "chart"
+        elif "diagram" in image_url.lower() or "flow" in image_url.lower():
+            return "diagram"
+        elif "screenshot" in image_url.lower() or "screen" in image_url.lower():
+            return "screenshot"
+        elif "photo" in image_url.lower() or any(ext in image_url.lower() for ext in [".jpg", ".jpeg", ".png"]):
+            return "photo"
+        elif "code" in image_url.lower() or "snippet" in image_url.lower():
+            return "code"
+        else:
+            return "image"
+            
+    def _generate_enhanced_action_summary(self, result):
+        """Generate a more sophisticated summary of action results using the LLM with enhanced context."""
+        if not result:
+            return "No result was returned from the action."
+            
+        # For simple success/failure cases, use a template
+        if isinstance(result, dict):
+            if result.get('success'):
+                summary = f"Action '{self.working_memory.selected_action.get('action_name', 'unknown')}' executed successfully."
+                
+                # Include stdout if available and not too long
+                stdout = result.get('stdout')
+                if stdout and len(stdout) < 200:
+                    summary += f" Output: {stdout.strip()}"
+                    
+                # Include result if available and not too long
+                result_value = result.get('result')
+                if result_value and isinstance(result_value, str) and len(result_value) < 200:
+                    summary += f" Result: {result_value}"
+                    
+                return summary
+            elif 'error' in result:
+                return f"Action '{self.working_memory.selected_action.get('action_name', 'unknown')}' failed. Error: {result['error']}"
+                
+        # For complex results, use the LLM to generate a summary with enhanced context
+        try:
+            # Truncate result if too large
+            result_str = str(result)
+            if len(result_str) > 2000:
+                result_str = result_str[:2000] + "... (truncated)"
+                
+            # Include context about the original goal and action
+            action_context = f"Original goal: {self.working_memory.current_goal}\n"
+            action_context += f"Selected action: {self.working_memory.selected_action.get('action_name')}\n"
+            action_context += f"Action arguments: {json.dumps(self.working_memory.selected_action.get('arguments', {}))}\n\n"
+            
+            summary_prompt = [
+                {"role": "system", "content": "You are an AI assistant that summarizes complex action results concisely and insightfully."},
+                {"role": "user", "content": f"{action_context}Summarize this action result in 2-3 sentences, highlighting the most important information and explaining its significance to the original goal:\n\n{result_str}"}
+            ]
+            
+            summary_response = self.client.chat.completions.create(
+                model=self.model,
+                messages=summary_prompt,
+                max_tokens=300,
+                temperature=0.3  # Lower temperature for more focused summary
+            )
+            
+            return summary_response.choices[0].message.content
+        except Exception as e:
+            console.print(f"[yellow]Error generating enhanced summary: {e}[/yellow]")
+            # Fallback to simple summary
+            return f"Action '{self.working_memory.selected_action.get('action_name', 'unknown')}' executed. Result type: {type(result).__name__}"
 
 
     def _process_input(self, user_input):

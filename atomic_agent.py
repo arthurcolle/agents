@@ -2133,12 +2133,13 @@ class ToolRegistry:
         # Scout Agent Orchestration tools
         self.register_function(
             name="orchestrate_tasks",
-            description="Split a complex task into subtasks and assign them to scout agents to run in parallel",
+            description="Split a complex task into subtasks and assign them to specialized scout agents to run in parallel for maximum efficiency",
             parameters={
                 "type": "object",
                 "properties": {
                     "main_task": {"type": "string", "description": "The main task description"},
                     "subtasks": {"type": "array", "items": {"type": "string"}, "description": "List of subtasks to run in parallel"},
+                    "priority": {"type": "integer", "description": "Task priority (1-5, higher is more important)", "default": 3},
                     "context": {"type": "object", "description": "Additional context to provide for all subtasks", "default": {}}
                 },
                 "required": ["main_task", "subtasks"]
@@ -2149,12 +2150,13 @@ class ToolRegistry:
         # Code extraction tool
         self.register_function(
             name="extract_code",
-            description="Extract code blocks from text using structured output parsing",
+            description="Extract code blocks from text using advanced structured output parsing with language detection",
             parameters={
                 "type": "object",
                 "properties": {
                     "text": {"type": "string", "description": "Text containing code blocks to extract"},
-                    "language": {"type": "string", "description": "Specific language to extract (e.g., 'python', 'javascript')", "default": ""}
+                    "language": {"type": "string", "description": "Specific language to extract (e.g., 'python', 'javascript', 'html', 'css')", "default": ""},
+                    "execute": {"type": "boolean", "description": "Whether to automatically execute extracted Python code", "default": false}
                 },
                 "required": ["text"]
             },
@@ -4984,9 +4986,22 @@ def get_parallel_function_calls(messages: List[Dict[str, str]], tools: List[Dict
     class FunctionCall(BaseModel):
         name: str = Field(description="Name of the function to call")
         arguments: Dict[str, Any] = Field(description="Arguments for the function call")
+        reasoning: str = Field(description="Reasoning for why this function should be called", default="")
+        priority: int = Field(description="Priority of this function call (1-5, higher is more important)", default=3)
+        
     class ParallelFunctionCalls(BaseModel):
         calls: List[FunctionCall] = Field(description="List of function calls to execute in parallel")
-    system_prefix = "You must respond with a valid JSON object containing multiple function calls to execute in parallel. "
+        execution_strategy: str = Field(description="Strategy for executing these calls (e.g., 'parallel', 'sequential', 'priority-based')", default="parallel")
+        
+    system_prefix = """You must respond with a valid JSON object containing multiple function calls to execute in parallel.
+For each function call, provide:
+1. The exact function name from the available tools
+2. The correct arguments with proper types
+3. A brief reasoning for why this function is needed
+4. A priority level (1-5) to indicate importance
+
+Group related operations that can be executed in parallel, and specify an execution strategy.
+"""
     system_found = False
     for msg in messages:
         if msg["role"] == "system":
@@ -4994,79 +5009,360 @@ def get_parallel_function_calls(messages: List[Dict[str, str]], tools: List[Dict
             system_found = True
             break
     if not system_found:
-        messages.insert(0, {"role": "system", "content": system_prefix + "Identify all operations that can be executed in parallel and return them as a list."})
+        messages.insert(0, {"role": "system", "content": system_prefix + "Identify all operations that can be executed in parallel and return them as a structured list."})
+    
     from together import Together
     together = Together()
-    response = together.chat.completions.create(
-        messages=messages,
-        model=model,
-        response_format={"type": "json_object", "schema": ParallelFunctionCalls.model_json_schema()},
-        tools=tools
-    )
-    content = response.choices[0].message.content
+    
+    # First try with structured JSON format
     try:
+        response = together.chat.completions.create(
+            messages=messages,
+            model=model,
+            response_format={"type": "json_object", "schema": ParallelFunctionCalls.model_json_schema()},
+            tools=tools,
+            temperature=0.2  # Lower temperature for more precise function calling
+        )
+        content = response.choices[0].message.content
         data = json.loads(content)
         if "calls" in data and isinstance(data["calls"], list):
-            return [{"name": call["name"], "arguments": call["arguments"]} for call in data["calls"] if "name" in call and "arguments" in call]
-        return []
-    except json.JSONDecodeError:
-        console.print("[yellow]Warning: JSON parsing for parallel calls failed, falling back to regex[/yellow]")
+            # Sort by priority if provided
+            sorted_calls = sorted(data["calls"], key=lambda x: x.get("priority", 3), reverse=True)
+            return [{"name": call["name"], "arguments": call["arguments"]} for call in sorted_calls if "name" in call and "arguments" in call]
+    except (json.JSONDecodeError, Exception) as e:
+        console.print(f"[yellow]Warning: Structured JSON parsing failed: {str(e)}, trying alternative approach[/yellow]")
+    
+    # Fallback to simpler approach with more direct instructions
+    fallback_messages = messages.copy()
+    fallback_messages.append({
+        "role": "user", 
+        "content": "Identify the specific functions needed to complete this task. For each function, provide the exact name and arguments in JSON format."
+    })
+    
+    try:
+        response = together.chat.completions.create(
+            messages=fallback_messages,
+            model=model,
+            tools=tools,
+            temperature=0.3
+        )
+        content = response.choices[0].message.content
         return parse_function_calls(content)
+    except Exception as e:
+        console.print(f"[red]Error in fallback approach: {str(e)}[/red]")
+        return []
 
 def execute_parallel_functions(function_calls: List[Dict[str, Any]], tool_registry):
+    """Execute multiple function calls in parallel with advanced error handling and retry logic"""
     task_processor = AsyncTaskProcessor()
     tasks = []
+    
+    # First, validate all function calls and try to fix any issues
+    validated_calls = []
     for func_call in function_calls:
         function_name = func_call.get("name")
         arguments = func_call.get("arguments", {})
+        
+        # Try to find similar function if exact match not found
+        if not tool_registry.has_tool(function_name):
+            similar_tools = []
+            for tool_name in tool_registry.get_available_tools():
+                # Check for similarity using various metrics
+                if function_name.lower() in tool_name.lower() or tool_name.lower() in function_name.lower():
+                    similar_tools.append(tool_name)
+                elif function_name.replace("_", "").lower() == tool_name.replace("_", "").lower():
+                    similar_tools.append(tool_name)
+            
+            if similar_tools:
+                # Use the most similar tool
+                corrected_name = similar_tools[0]
+                console.print(f"[yellow]Function '{function_name}' not found, using similar function '{corrected_name}'[/yellow]")
+                function_name = corrected_name
+            else:
+                console.print(f"[red]Function '{function_name}' not found in tool registry and no similar functions available[/red]")
+                continue
+        
+        # Validate arguments against function parameters
+        if function_name in tool_registry.functions:
+            func_spec = tool_registry.functions[function_name]
+            required_params = func_spec.parameters.get("required", [])
+            properties = func_spec.parameters.get("properties", {})
+            
+            # Check for missing required parameters
+            missing_params = [param for param in required_params if param not in arguments]
+            if missing_params:
+                console.print(f"[yellow]Missing required parameters for '{function_name}': {missing_params}[/yellow]")
+                # Try to provide default values for missing parameters
+                for param in missing_params:
+                    if param in properties and "default" in properties[param]:
+                        arguments[param] = properties[param]["default"]
+                        console.print(f"[yellow]Using default value for '{param}'[/yellow]")
+            
+            # Check for invalid parameters
+            invalid_params = [param for param in arguments if param not in properties]
+            if invalid_params:
+                console.print(f"[yellow]Removing invalid parameters for '{function_name}': {invalid_params}[/yellow]")
+                for param in invalid_params:
+                    arguments.pop(param)
+        
+        validated_calls.append((function_name, arguments))
+    
+    # Add validated calls to the task processor
+    for function_name, arguments in validated_calls:
         if tool_registry.has_tool(function_name):
             func = tool_registry.get_tool(function_name)
             task_id = task_processor.add_task(func, **arguments)
             tasks.append((task_id, function_name, arguments))
-        else:
-            console.print(f"[red]Function {function_name} not found in tool registry[/red]")
+    
+    # Process results with timeout and retry logic
     results = []
+    max_wait_time = 30  # seconds
+    retry_count = 0
+    max_retries = 1
+    
     for task_id, function_name, arguments in tasks:
+        start_time = time.time()
         while True:
             task_result = task_processor.get_result(task_id)
+            
+            # Check if task completed or failed
             if task_result["status"] in ["completed", "failed"]:
-                results.append({"function_name": function_name, "arguments": arguments, "status": task_result["status"], "result": task_result.get("result") if task_result["status"] == "completed" else task_result.get("error")})
+                # If failed and we have retries left, try again with adjusted parameters
+                if task_result["status"] == "failed" and retry_count < max_retries:
+                    retry_count += 1
+                    console.print(f"[yellow]Retrying '{function_name}' after failure: {task_result.get('error')}[/yellow]")
+                    # Try to adjust arguments based on error message
+                    error_msg = str(task_result.get('error', ''))
+                    if "missing" in error_msg.lower() and "required" in error_msg.lower():
+                        # Try to extract parameter name from error
+                        import re
+                        param_match = re.search(r"'([^']+)'", error_msg)
+                        if param_match and param_match.group(1) not in arguments:
+                            arguments[param_match.group(1)] = None  # Add placeholder
+                    
+                    # Add new task with adjusted arguments
+                    func = tool_registry.get_tool(function_name)
+                    new_task_id = task_processor.add_task(func, **arguments)
+                    task_id = new_task_id  # Update task_id for the while loop
+                    continue
+                
+                # Add result to the list
+                results.append({
+                    "function_name": function_name, 
+                    "arguments": arguments, 
+                    "status": task_result["status"], 
+                    "result": task_result.get("result") if task_result["status"] == "completed" else task_result.get("error"),
+                    "execution_time": time.time() - start_time
+                })
                 break
+                
+            # Check for timeout
+            if time.time() - start_time > max_wait_time:
+                console.print(f"[yellow]Timeout waiting for '{function_name}' to complete[/yellow]")
+                results.append({
+                    "function_name": function_name,
+                    "arguments": arguments,
+                    "status": "timeout",
+                    "error": f"Function execution timed out after {max_wait_time} seconds"
+                })
+                break
+                
             time.sleep(0.1)
+    
     task_processor.stop()
+    
+    # Sort results by execution time for reporting
+    results.sort(key=lambda x: x.get("execution_time", float('inf')))
+    
     return results
 
 def batch_process_function_calls(agent, user_message, max_batch_size=5):
-    all_function_calls = get_parallel_function_calls(
-        messages=[{"role": "system", "content": "Identify all operations needed to complete this task. Return them as JSON."},
-                  {"role": "user", "content": user_message}],
-        tools=agent.tool_registry.get_openai_tools_format(),
-        model=agent.model
-    )
-    if not all_function_calls:
-        return agent.chat(user_message)
-    console.print(f"[cyan]Identified {len(all_function_calls)} operations to process in batches[/cyan]")
-    all_results = []
-    for i in range(0, len(all_function_calls), max_batch_size):
-        batch = all_function_calls[i:i+max_batch_size]
-        console.print(f"[cyan]Processing batch {i//max_batch_size + 1} with {len(batch)} operations[/cyan]")
-        batch_results = execute_parallel_functions(batch, agent.tool_registry)
-        all_results.extend(batch_results)
-        result_message = {"role": "function", "content": json.dumps(batch_results, indent=2)}
-        agent.conversation_history.append(result_message)
-    final_prompt = f"""I've completed all the operations you requested. Here's a summary of the results:
-
-{json.dumps(all_results, indent=2)}
-
-Please provide a final summary of all the work completed."""
-    agent.last_user_message = final_prompt
-    agent.add_message("user", final_prompt)
+    """
+    Process multiple function calls in batches with enhanced orchestration, 
+    dependency tracking, and error recovery.
+    
+    Args:
+        agent: The TogetherAgent instance
+        user_message: The original user message
+        max_batch_size: Maximum number of operations to process in parallel
+        
+    Returns:
+        Final response after all batches completed
+    """
+    # First, analyze the task to determine if it needs decomposition
+    task_analysis_prompt = [
+        {"role": "system", "content": """You are an expert task analyzer. 
+        Examine the user's request and determine:
+        1. If it should be broken into multiple subtasks
+        2. If there are dependencies between operations
+        3. The optimal execution strategy (parallel, sequential, or hybrid)
+        
+        Return your analysis as a structured JSON object."""},
+        {"role": "user", "content": user_message}
+    ]
+    
     from together import Together
     together = Together()
-    response = together.chat.completions.create(messages=agent.conversation_history, model=agent.model, tool_choice="none")
-    final_message = response.choices[0].message
-    agent.conversation_history.append(final_message.model_dump())
-    return final_message.content
+    
+    try:
+        analysis_response = together.chat.completions.create(
+            messages=task_analysis_prompt,
+            model=agent.model,
+            temperature=0.2,
+            max_tokens=1000
+        )
+        
+        # Extract all function calls with dependency information if possible
+        all_function_calls = get_parallel_function_calls(
+            messages=[
+                {"role": "system", "content": """Identify all operations needed to complete this task. 
+                For each operation, specify:
+                1. The exact function name
+                2. The precise arguments with correct types
+                3. Any dependencies on other operations
+                4. Priority level (1-5, higher is more important)
+                
+                Return them as a structured JSON array."""},
+                {"role": "user", "content": user_message}
+            ],
+            tools=agent.tool_registry.get_openai_tools_format(),
+            model=agent.model
+        )
+        
+        if not all_function_calls:
+            console.print("[yellow]No function calls identified, falling back to standard chat[/yellow]")
+            return agent.chat(user_message)
+            
+        console.print(f"[cyan]Identified {len(all_function_calls)} operations to process[/cyan]")
+        
+        # Group operations by priority and dependencies
+        operation_groups = []
+        current_group = []
+        
+        # Sort by priority if available
+        sorted_calls = sorted(
+            all_function_calls, 
+            key=lambda x: x.get("priority", 3) if isinstance(x, dict) and "priority" in x else 3,
+            reverse=True
+        )
+        
+        for func_call in sorted_calls:
+            current_group.append(func_call)
+            if len(current_group) >= max_batch_size:
+                operation_groups.append(current_group)
+                current_group = []
+                
+        # Add any remaining operations
+        if current_group:
+            operation_groups.append(current_group)
+            
+        # Process each group of operations
+        all_results = []
+        successful_operations = set()
+        failed_operations = []
+        
+        for group_idx, operation_group in enumerate(operation_groups):
+            console.print(f"[cyan]Processing operation group {group_idx + 1} with {len(operation_group)} operations[/cyan]")
+            
+            # Execute the batch
+            batch_results = execute_parallel_functions(operation_group, agent.tool_registry)
+            
+            # Track results
+            for result in batch_results:
+                all_results.append(result)
+                
+                # Track successful and failed operations for potential retry
+                if result.get("status") == "completed":
+                    successful_operations.add(result.get("function_name"))
+                elif result.get("status") in ["failed", "timeout"]:
+                    failed_operations.append(result)
+            
+            # Add results to conversation history
+            result_message = {"role": "function", "content": json.dumps(batch_results, indent=2)}
+            agent.conversation_history.append(result_message)
+            
+        # Retry failed operations if needed
+        if failed_operations and len(successful_operations) > 0:
+            console.print(f"[yellow]Attempting to retry {len(failed_operations)} failed operations[/yellow]")
+            
+            # Generate recovery strategy using successful operations as context
+            recovery_prompt = [
+                {"role": "system", "content": "You are an expert at recovering from failed operations. Analyze the failures and suggest fixes."},
+                {"role": "user", "content": f"""Some operations failed during task execution. 
+                Successful operations: {list(successful_operations)}
+                
+                Failed operations:
+                {json.dumps(failed_operations, indent=2)}
+                
+                Suggest how to fix these operations or alternative approaches to achieve the same goal."""}
+            ]
+            
+            recovery_response = together.chat.completions.create(
+                messages=recovery_prompt,
+                model=agent.model,
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            # Extract any function calls from the recovery suggestion
+            recovery_calls = parse_function_calls(recovery_response.choices[0].message.content)
+            
+            if recovery_calls:
+                console.print(f"[cyan]Executing {len(recovery_calls)} recovery operations[/cyan]")
+                recovery_results = execute_parallel_functions(recovery_calls, agent.tool_registry)
+                all_results.extend(recovery_results)
+                
+                # Add recovery results to conversation history
+                recovery_message = {"role": "function", "content": json.dumps(recovery_results, indent=2)}
+                agent.conversation_history.append(recovery_message)
+        
+        # Generate a comprehensive final summary with analysis
+        success_count = sum(1 for result in all_results if result.get("status") == "completed")
+        failure_count = len(all_results) - success_count
+        
+        # Create a more structured summary prompt
+        final_prompt = f"""I've completed the operations you requested. Here's a summary:
+
+Operations completed: {success_count}/{len(all_results)} successful
+
+Results:
+{json.dumps(all_results, indent=2)}
+
+Please provide:
+1. A comprehensive summary of all work completed
+2. Analysis of any failures or issues encountered
+3. The final answer or solution to the original request
+4. Any recommendations for follow-up actions"""
+
+        agent.last_user_message = final_prompt
+        agent.add_message("user", final_prompt)
+        
+        # Generate the final response with a focus on completeness
+        response = together.chat.completions.create(
+            messages=agent.conversation_history, 
+            model=agent.model, 
+            tool_choice="none",
+            temperature=0.3,  # Lower temperature for more focused summary
+            max_tokens=2048   # Allow for a comprehensive response
+        )
+        
+        final_message = response.choices[0].message
+        agent.conversation_history.append(final_message.model_dump())
+        
+        # Add execution metrics to memory if available
+        if hasattr(agent, 'memory'):
+            agent.memory.add_memory(
+                f"Batch processed {len(all_results)} operations with {success_count} successes and {failure_count} failures.",
+                {"type": "execution_metrics", "success_rate": success_count/len(all_results) if all_results else 0}
+            )
+            
+        return final_message.content
+        
+    except Exception as e:
+        console.print(f"[red]Error in batch processing: {str(e)}[/red]")
+        console.print(traceback.format_exc())
+        # Fallback to standard chat
+        return agent.chat(user_message)
 
 # =======================
 # Together Agent
