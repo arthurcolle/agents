@@ -115,6 +115,13 @@ if REDIS_AVAILABLE:
         async def init_async_redis():
             global redis_async_client, pubsub, pubsub_listener_task
             try:
+                # Check if redis has asyncio attribute
+                if not hasattr(redis, 'asyncio'):
+                    logger.error("Redis module does not have asyncio attribute. Install redis with 'pip install redis[hiredis]'")
+                    global REDIS_AVAILABLE
+                    REDIS_AVAILABLE = False
+                    return None
+                
                 redis_async_client = await redis.asyncio.from_url(
                     f"redis://{REDIS_HOST}:{REDIS_PORT}",
                     password=REDIS_PASSWORD,
@@ -1370,6 +1377,10 @@ For computationally intensive tasks, use your parallel processing capabilities.
                     "role": "user",
                     "content": message_content
                 })
+                        
+            # Log the current state of messages for debugging
+            if self.debug:
+                print(f"[DEBUG] Current messages state: {json.dumps(self.messages, indent=2)}")
         
         # Prepare request with current model
         current_model = self.model
@@ -1928,8 +1939,17 @@ For computationally intensive tasks, use your parallel processing capabilities.
                 try:
                     # Recursive call with improved prompt
                     continuation_prompt = "Based on the function results above, provide a helpful response that addresses the user's original request. Format your response clearly and do not include any JSON or function call syntax."
-                        
-                    continuation_generator = self.chat(continuation_prompt, stream=True, recursive_call=True)
+                    
+                    # Create an event loop if needed for the recursive call
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    # Properly await the coroutine in the recursive call
+                    continuation_coroutine = self.chat(continuation_prompt, stream=True, recursive_call=True)
+                    continuation_generator = loop.run_until_complete(continuation_coroutine)
                     
                     # Pass through all continuation responses
                     for chunk in continuation_generator:
