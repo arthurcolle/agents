@@ -536,6 +536,18 @@ class ToolRegistry:
     def _register_default_tools(self):
         # Date and time tools
         self.register_function(
+            name="create_pydantic_model",
+            description="Dynamically create a Pydantic model",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "model_name": {"type": "string", "description": "Name of the Pydantic model"},
+                    "fields": {"type": "object", "description": "Fields for the Pydantic model"}
+                },
+                "required": ["model_name", "fields"]
+            },
+            function=self._create_pydantic_model
+        )
             name="add_numbers",
             description="Add two numbers",
             parameters={
@@ -1401,7 +1413,14 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
-    def _create_thread(self, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _create_pydantic_model(self, model_name: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            from pydantic import create_model
+            model = create_model(model_name, **fields)
+            globals()[model_name] = model
+            return {"success": True, "model_name": model_name, "fields": fields}
+        except Exception as e:
+            return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
         try:
             agent = None
             for frame in inspect.stack():
