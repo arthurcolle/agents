@@ -392,6 +392,11 @@ class CoALAAgent:
         })
         # Add result as an observation in working memory
         self.working_memory.add_observation(result, source=f"action:{action_name}")
+        
+        # Special handling for web_search results to potentially trigger follow-up actions
+        if action_name == "web_search" and isinstance(result, dict) and result.get("success"):
+            return self._process_web_search_result(result, arguments.get("query", ""))
+            
         return result # Return raw result for potential further processing
 
     def decision_cycle(self, user_input: Optional[str] = None):
@@ -544,8 +549,13 @@ class CoALAAgent:
                 # If another action was taken, generate a comprehensive summary
                 console.print(f"[bold magenta]Action Result:[/bold magenta]\n{json.dumps(result, indent=2)}")
                 
-                # Enhanced summarization with context awareness
-                summary_response = self._generate_enhanced_action_summary(result)
+                # Check if this is a web search result with a pre-generated summary
+                if (self.working_memory.selected_action.get('action_name') == "web_search" and 
+                    isinstance(result, dict) and "summary" in result):
+                    summary_response = result["summary"]
+                else:
+                    # Enhanced summarization with context awareness for other actions
+                    summary_response = self._generate_enhanced_action_summary(result)
                 
                 # Store the result in memory for future reference
                 if hasattr(self, 'memory'):
@@ -1074,6 +1084,122 @@ class CoALAAgent:
             console.print(f"[yellow]Error generating orchestration summary: {e}[/yellow]")
             # Fallback to simple summary
             return f"Completed {successful_count} out of {total_count} subtasks."
+            
+    def _process_web_search_result(self, result, original_query):
+        """Process web search results, summarize them, and potentially trigger follow-up actions."""
+        try:
+            # Extract search results
+            search_results = result.get("results", [])
+            if not search_results:
+                return {"success": True, "summary": "The web search did not return any results."}
+                
+            # Log the number of results found
+            console.print(f"[cyan]Found {len(search_results)} search results for query: {original_query}[/cyan]")
+            
+            # Prepare data for summarization
+            search_data = []
+            for i, item in enumerate(search_results[:5]):  # Limit to first 5 results
+                title = item.get("title", "No title")
+                snippet = item.get("snippet", "No snippet")
+                url = item.get("link", "No URL")
+                search_data.append(f"Result {i+1}:\nTitle: {title}\nSnippet: {snippet}\nURL: {url}\n")
+                
+            search_content = "\n".join(search_data)
+            
+            # Generate a comprehensive summary using the LLM
+            summary_prompt = [
+                {"role": "system", "content": "You are an AI research assistant that summarizes web search results accurately and comprehensively."},
+                {"role": "user", "content": f"Summarize these web search results for the query: '{original_query}'\n\n{search_content}\n\nProvide a comprehensive summary that captures the key information from all results. If the results contain factual information, include it. If there are different perspectives, mention them. If additional research is needed, suggest specific follow-up queries."}
+            ]
+            
+            summary_response = self.client.chat.completions.create(
+                model=self.model,
+                messages=summary_prompt,
+                max_tokens=800,
+                temperature=0.3  # Lower temperature for more factual summary
+            )
+            
+            summary = summary_response.choices[0].message.content
+            
+            # Analyze if follow-up actions are needed
+            followup_prompt = [
+                {"role": "system", "content": "You are an AI research assistant that identifies necessary follow-up actions based on search results."},
+                {"role": "user", "content": f"Based on these search results for '{original_query}':\n\n{search_content}\n\nDetermine if any follow-up actions are needed. Return a JSON object with these fields:\n- needs_followup: boolean\n- followup_type: string (one of: 'additional_search', 'fact_check', 'read_url', 'none')\n- followup_query: string (if applicable)\n- followup_url: string (if applicable)\n- reasoning: string (brief explanation)"}
+            ]
+            
+            followup_response = self.client.chat.completions.create(
+                model=self.model,
+                messages=followup_prompt,
+                response_format={"type": "json_object"},
+                max_tokens=500,
+                temperature=0.2
+            )
+            
+            followup_data = json.loads(followup_response.choices[0].message.content)
+            
+            # Execute follow-up action if needed
+            if followup_data.get("needs_followup", False) and followup_data.get("followup_type") != "none":
+                followup_type = followup_data.get("followup_type")
+                console.print(f"[cyan]Executing follow-up action: {followup_type}[/cyan]")
+                
+                if followup_type == "additional_search":
+                    followup_query = followup_data.get("followup_query")
+                    if followup_query:
+                        followup_result = self.tool_registry.call_function("web_search", {"query": followup_query})
+                        if followup_result.get("success"):
+                            # Add a note about the follow-up search to the summary
+                            additional_results = followup_result.get("results", [])
+                            if additional_results:
+                                additional_summary = f"\n\n**Additional Information from Follow-up Search**\nI performed a follow-up search for '{followup_query}' and found:\n"
+                                for i, item in enumerate(additional_results[:3]):
+                                    title = item.get("title", "No title")
+                                    snippet = item.get("snippet", "No snippet")
+                                    additional_summary += f"- {title}: {snippet}\n"
+                                summary += additional_summary
+                
+                elif followup_type == "fact_check":
+                    statement = followup_data.get("followup_query")
+                    if statement:
+                        fact_check_result = self.tool_registry.call_function("fact_check", {"query": statement})
+                        if fact_check_result.get("success"):
+                            summary += f"\n\n**Fact Check**\n{fact_check_result.get('result', 'No result')}"
+                
+                elif followup_type == "read_url":
+                    url = followup_data.get("followup_url")
+                    if url:
+                        read_result = self.tool_registry.call_function("read", {"url": url})
+                        if read_result.get("success"):
+                            # Summarize the content from the URL
+                            url_content = read_result.get("content", "")
+                            if url_content:
+                                url_summary_prompt = [
+                                    {"role": "system", "content": "You summarize web content concisely."},
+                                    {"role": "user", "content": f"Summarize this content from {url} in 2-3 sentences:\n\n{url_content[:5000]}"}
+                                ]
+                                url_summary_response = self.client.chat.completions.create(
+                                    model=self.model,
+                                    messages=url_summary_prompt,
+                                    max_tokens=300
+                                )
+                                summary += f"\n\n**Additional Details from {url}**\n{url_summary_response.choices[0].message.content}"
+            
+            # Store the comprehensive result in memory for future reference
+            if hasattr(self, 'memory'):
+                self.memory.add_memory(
+                    f"Web search for '{original_query}': {summary[:200]}...",
+                    {
+                        "type": "web_search_result",
+                        "query": original_query,
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                )
+                
+            return {"success": True, "summary": summary, "followup_data": followup_data}
+            
+        except Exception as e:
+            console.print(f"[red]Error processing web search result: {str(e)}[/red]")
+            console.print(traceback.format_exc())
+            return {"success": False, "error": str(e), "summary": "I encountered an error while processing the search results."}
     
     def run_interactive(self):
         """Starts the interactive command-line loop."""
