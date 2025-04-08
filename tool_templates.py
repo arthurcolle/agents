@@ -1715,6 +1715,160 @@ def database_tool(operation, database_path, query=None, table_name=None,
         "category": "database"
     }
 
+def create_qr_code_tool():
+    """
+    Create a QR code generator tool
+    """
+    code = """
+import qrcode
+import io
+import base64
+import os
+from PIL import Image
+from datetime import datetime
+
+def generate_qr_code(data, output_path=None, error_correction="M", box_size=10, 
+                   border=4, fill_color="black", back_color="white", image_format="PNG"):
+    \"\"\"
+    Generate a QR code from data
+    
+    Args:
+        data: Text or URL to encode in the QR code
+        output_path: Path to save the QR code image (optional)
+        error_correction: Error correction level (L, M, Q, H)
+        box_size: Size of each box in the QR code
+        border: Border size in boxes
+        fill_color: Color of the QR code (name or hex)
+        back_color: Background color (name or hex)
+        image_format: Image format (PNG, JPEG, etc.)
+        
+    Returns:
+        QR code image data
+    \"\"\"
+    try:
+        # Map error correction levels
+        error_levels = {
+            "L": qrcode.constants.ERROR_CORRECT_L,  # 7% error correction
+            "M": qrcode.constants.ERROR_CORRECT_M,  # 15% error correction
+            "Q": qrcode.constants.ERROR_CORRECT_Q,  # 25% error correction
+            "H": qrcode.constants.ERROR_CORRECT_H   # 30% error correction
+        }
+        
+        error_level = error_levels.get(error_correction.upper(), error_levels["M"])
+        
+        # Create QR code instance
+        qr = qrcode.QRCode(
+            version=None,  # Auto-fit version
+            error_correction=error_level,
+            box_size=box_size,
+            border=border
+        )
+        
+        # Add data
+        qr.add_data(data)
+        qr.make(fit=True)
+        
+        # Create image
+        img = qr.make_image(fill_color=fill_color, back_color=back_color)
+        
+        # Save or return image
+        if output_path:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            img.save(output_path, format=image_format)
+            
+            return {
+                "success": True,
+                "message": f"QR code saved to {output_path}",
+                "data": {
+                    "path": output_path,
+                    "encoded_data": data,
+                    "error_correction": error_correction
+                }
+            }
+        else:
+            # Return as base64 encoded image
+            buffer = io.BytesIO()
+            img.save(buffer, format=image_format)
+            buffer.seek(0)
+            
+            img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            return {
+                "success": True,
+                "message": "QR code generated successfully",
+                "data": {
+                    "image_base64": img_str,
+                    "encoded_data": data,
+                    "error_correction": error_correction,
+                    "format": image_format.lower()
+                }
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error generating QR code: {str(e)}",
+            "data": None
+        }
+    """
+    
+    description = "Generate QR codes from text or URLs"
+    
+    parameters = {
+        "type": "object",
+        "properties": {
+            "data": {
+                "type": "string",
+                "description": "Text or URL to encode in the QR code"
+            },
+            "output_path": {
+                "type": "string",
+                "description": "Path to save the QR code image (optional)"
+            },
+            "error_correction": {
+                "type": "string",
+                "description": "Error correction level",
+                "enum": ["L", "M", "Q", "H"],
+                "default": "M"
+            },
+            "box_size": {
+                "type": "integer",
+                "description": "Size of each box in the QR code",
+                "default": 10
+            },
+            "border": {
+                "type": "integer",
+                "description": "Border size in boxes",
+                "default": 4
+            },
+            "fill_color": {
+                "type": "string",
+                "description": "Color of the QR code (name or hex)",
+                "default": "black"
+            },
+            "back_color": {
+                "type": "string",
+                "description": "Background color (name or hex)",
+                "default": "white"
+            },
+            "image_format": {
+                "type": "string",
+                "description": "Image format",
+                "enum": ["PNG", "JPEG", "GIF"],
+                "default": "PNG"
+            }
+        },
+        "required": ["data"]
+    }
+    
+    return {
+        "name": "generate_qr_code",
+        "code": code,
+        "description": description,
+        "parameters": parameters,
+        "category": "utilities"
+    }
+
 def get_all_tool_templates():
     """Get all available tool templates"""
     return [
@@ -1726,5 +1880,6 @@ def get_all_tool_templates():
         create_image_analyzer_tool(),
         create_nlp_tool(),
         create_time_series_tool(),
-        create_database_tool()
+        create_database_tool(),
+        create_qr_code_tool()
     ]
