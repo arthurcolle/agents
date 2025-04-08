@@ -204,6 +204,7 @@ class AsyncTaskProcessor:
         return len(new_urls)
 
     async def _process_image(self, image_url):
+        url = image_url  # Define the url variable
         try:
             # Simulate image processing
             console.print(f"[blue]Processing image: {image_url}[/blue]")
@@ -833,9 +834,6 @@ class ToolRegistry:
         return {"result": a * b, "success": True}
 
     def _decompose_prompt(self, transcript: str) -> Dict[str, Any]:
-        if b == 0:
-            return {"error": "Division by zero is not allowed", "success": False}
-        return {"result": a / b, "success": True}
         # Call the LLM with the JSON schema for MultiPrompt
         extract = self.together.chat.completions.create(
             messages=[
