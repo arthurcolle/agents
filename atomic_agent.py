@@ -1122,14 +1122,6 @@ class ToolRegistry:
 
     def _task_completed(self) -> str:
         return "Task marked as completed."
-        try:
-            path = Path(path).expanduser()
-            if not path.exists():
-                return {"error": f"File '{path}' does not exist", "success": False}
-            path.unlink()
-            return {"path": str(path), "success": True}
-        except Exception as e:
-            return {"error": str(e), "success": False}
         except Exception as e:
             return {"error": str(e), "success": False}
 
