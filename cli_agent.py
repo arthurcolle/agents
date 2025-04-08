@@ -4667,17 +4667,28 @@ class CLIAgent:
                 self.hooks.on_error("CLI Agent", e)
                 return f"Error: {str(e)}"
 
-    def search_interaction_history(self, query: str, limit: int = 5) -> Dict:
+    def search_interaction_history(self, query: str, limit: int = 5, client=None) -> Dict:
         """
         Search through past interactions using semantic search
-        
+
         Args:
             query: Search query
             limit: Maximum number of results to return
-            
+            client: OpenAI client instance for embeddings
+
         Returns:
             Dictionary with search results
         """
+        if client is None:
+            # Try to get the global client if not passed
+            global client
+            if client is None:
+                 return {
+                    "success": False,
+                    "message": "OpenAI client not available for semantic search.",
+                    "data": []
+                 }
+
         try:
             # Search memory
             results = self.perceptual_memory.search_memory(query, limit, client)
