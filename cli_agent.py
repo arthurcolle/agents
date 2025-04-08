@@ -7,6 +7,7 @@ import json
 import requests
 import asyncio
 import time
+import functools
 import random
 import uuid
 import shutil
@@ -2265,10 +2266,13 @@ class CLIAgent:
         
         # Initialize dynamic agent tools
         self._init_dynamic_agent_tools()
-        
+
         # Create initial memory snapshot
         self.create_snapshot("initial_state")
-        
+
+        # Executor for running synchronous blocking code in async context
+        self.executor = None # Initialize later if needed
+
     def _init_dynamic_agent_tools(self):
         """Initialize tools for dynamic agent management"""
         # Create default agents
@@ -3749,9 +3753,10 @@ class CLIAgent:
             # Check if the tool is in the registry
             if self.tool_registry.get_tool(name):
                 result = self.tool_registry.execute_tool(name, arguments)
-            # Handle dynamic agent tools
+            # Handle dynamic agent tools - This needs to be awaited if called from async context
             elif name == "execute_agent_command":
-                result = asyncio.run(self._execute_agent_command(**arguments))
+                # We expect this to be called from an async context now
+                result = await self._execute_agent_command(**arguments)
             # Handle advanced editor tools
             elif name == "analyze_code_advanced" and self.editor:
                 filepath = arguments.get("filepath")
@@ -3823,12 +3828,13 @@ class CLIAgent:
                 
                 from editor import HttpMethod
                 method_enum = getattr(HttpMethod, method)
-                
-                response = asyncio.run(self.editor.network.request(
+
+                # Assuming self.editor.network.request is async
+                response = await self.editor.network.request(
                     method_enum, url, headers=headers, params=params,
                     data=data, json_data=json_data, timeout=timeout
-                ))
-                
+                )
+
                 result = {
                     "success": response.is_success,
                     "message": f"HTTP {response.status_code} {method} {url}",
@@ -3845,47 +3851,52 @@ class CLIAgent:
                 url = arguments.get("url")
                 filepath = arguments.get("filepath")
                 show_progress = arguments.get("show_progress", True)
-                
-                download_result = asyncio.run(self.editor.network.download_file(
+
+                # Assuming self.editor.network.download_file is async
+                download_result = await self.editor.network.download_file(
                     url, filepath, show_progress=show_progress
-                ))
-                
+                )
+
                 result = download_result
             elif name == "ping" and self.editor:
                 host = arguments.get("host")
                 count = arguments.get("count", 4)
                 timeout = arguments.get("timeout", 5)
-                
-                ping_result = asyncio.run(self.editor.network.ping(
+
+                # Assuming self.editor.network.ping is async
+                ping_result = await self.editor.network.ping(
                     host, count=count, timeout=timeout
-                ))
-                
+                )
+
                 result = ping_result
             elif name == "traceroute" and self.editor:
                 host = arguments.get("host")
                 max_hops = arguments.get("max_hops", 30)
                 timeout = arguments.get("timeout", 5)
-                
-                traceroute_result = asyncio.run(self.editor.network.traceroute(
+
+                # Assuming self.editor.network.traceroute is async
+                traceroute_result = await self.editor.network.traceroute(
                     host, max_hops=max_hops, timeout=timeout
-                ))
-                
+                )
+
                 result = traceroute_result
             elif name == "check_port" and self.editor:
                 host = arguments.get("host")
                 port = arguments.get("port")
                 timeout = arguments.get("timeout", 5)
-                
-                port_result = asyncio.run(self.editor.network.check_port(
+
+                # Assuming self.editor.network.check_port is async
+                port_result = await self.editor.network.check_port(
                     host, port, timeout=timeout
-                ))
-                
+                )
+
                 result = port_result
             elif name == "dns_lookup" and self.editor:
                 hostname = arguments.get("hostname")
-                
-                dns_result = asyncio.run(self.editor.network.dns_lookup(hostname))
-                
+
+                # Assuming self.editor.network.dns_lookup is async
+                dns_result = await self.editor.network.dns_lookup(hostname)
+
                 result = dns_result
             # Handle enhanced file system operations
             elif name == "search_files" and self.editor:
@@ -4225,17 +4236,198 @@ class CLIAgent:
                     model=self.model,
                     messages=self.conversation_history,
                     tools=current_tools,
-                    tool_choice="auto"
+                    tool_choice="auto",
+                    # Pass temperature and max_tokens if available in client config
+                    temperature=getattr(client, 'temperature', 0.7),
+                    max_tokens=getattr(client, 'max_tokens', 4096)
                 )
-                
+
                 # Get the response
                 assistant_message = response.choices[0].message
-                
+
                 # Process tool calls if any
                 if assistant_message.tool_calls:
-                    # Add the assistant's message to the conversation
+                    # Add the assistant's message to the conversation history *before* executing tools
+                    # Store the raw tool calls from the model
+                    raw_tool_calls = [
+                        {
+                            "id": tool_call.id,
+                            "type": tool_call.type,
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments
+                            }
+                        } for tool_call in assistant_message.tool_calls
+                    ]
                     self.conversation_history.append({
                         "role": "assistant",
+                        # Include content if the model provided any text alongside tool calls
+                        "content": assistant_message.content or "",
+                        "tool_calls": raw_tool_calls
+                    })
+
+                    # Execute tools in parallel
+                    tool_results = await self._execute_parallel_tools_async(assistant_message.tool_calls)
+
+                    # Add tool results to conversation history
+                    self.conversation_history.extend(tool_results)
+
+                    # Get the final response after tool calls
+                    self.console.print("[bold green]Processing results...[/bold green]")
+                    second_response = client.chat.completions.create(
+                        model=self.model,
+                        messages=self.conversation_history,
+                        # Pass temperature and max_tokens if available in client config
+                        temperature=getattr(client, 'temperature', 0.7),
+                        max_tokens=getattr(client, 'max_tokens', 4096)
+                    )
+
+                    primary_response = second_response.choices[0].message.content
+
+                    # Meta-cognitive reflection (outer model) if enabled
+                    final_response = primary_response
+                    meta_reflection = None
+
+                    if self.enable_meta:
+                        self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
+                        # Get meta-evaluation
+                        reflection = await self.meta_layer.reflect(message, primary_response, client)
+                        meta_reflection = reflection
+
+                        # Improve response based on meta-reflection
+                        if reflection and "evaluation" in reflection:
+                            improved_response = await self.meta_layer.improve(
+                                message,
+                                primary_response,
+                                reflection["evaluation"],
+                                client
+                            )
+                            final_response = improved_response
+
+                            # Add meta-reflection to conversation history as a system note
+                            self.conversation_history.append({
+                                "role": "system",
+                                "content": f"Meta-reflection: {reflection['evaluation']}"
+                            })
+
+                        # Add the final response to the conversation
+                        self.conversation_history.append({
+                            "role": "assistant",
+                            "content": final_response
+                        })
+
+                        # Store interaction in perceptual memory
+                        tool_calls_data = [
+                            {
+                                "name": tool_call.function.name,
+                                "arguments": json.loads(tool_call.function.arguments)
+                            } for tool_call in assistant_message.tool_calls
+                        ]
+
+                        self._store_interaction(
+                            message=message,
+                            response=final_response,
+                            tool_calls=tool_calls_data,
+                            meta_reflection=meta_reflection,
+                            client=client
+                        )
+
+                        # Perform experience replay if enabled and it's time
+                        if (self.enable_experience_replay and
+                            self.interaction_count % self.replay_frequency == 0 and
+                            self.interaction_count > 1):
+                            self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
+                            replay_result = await self._perform_experience_replay(client)
+                            if replay_result["success"] and self.console:
+                                self.console.print(
+                                    f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
+                                    style="dim"
+                                )
+
+                        return final_response
+                else:
+                    # No tool calls, just get the primary response
+                    primary_response = assistant_message.content
+
+                    # Meta-cognitive reflection (outer model) if enabled
+                    final_response = primary_response
+                    meta_reflection = None
+
+                    if self.enable_meta:
+                        self.console.print("[bold cyan]Performing meta-reflection...[/bold cyan]")
+                        # Get meta-evaluation
+                        reflection = await self.meta_layer.reflect(message, primary_response, client)
+                        meta_reflection = reflection
+
+                        # Improve response based on meta-reflection
+                        if reflection and "evaluation" in reflection:
+                            improved_response = await self.meta_layer.improve(
+                                message,
+                                primary_response,
+                                reflection["evaluation"],
+                                client
+                            )
+                            final_response = improved_response
+
+                            # Add meta-reflection to conversation history as a system note
+                            self.conversation_history.append({
+                                "role": "system",
+                                "content": f"Meta-reflection: {reflection['evaluation']}"
+                            })
+
+                    # Add the response to the conversation history
+                    self.conversation_history.append({
+                        "role": "assistant",
+                        "content": final_response
+                    })
+
+                    # Store interaction in perceptual memory
+                    self._store_interaction(
+                        message=message,
+                        response=final_response,
+                        meta_reflection=meta_reflection,
+                        client=client
+                    )
+
+                    # Perform experience replay if enabled and it's time
+                    if (self.enable_experience_replay and
+                        self.interaction_count % self.replay_frequency == 0 and
+                        self.interaction_count > 1):
+                        self.console.print("[bold magenta]Performing experience replay...[/bold magenta]")
+                        replay_result = await self._perform_experience_replay(client)
+                        if replay_result["success"] and self.console:
+                            self.console.print(
+                                f"[dim][Experience replay: analyzed {replay_result.get('frames_analyzed', 0)} past interactions][/dim]",
+                                style="dim"
+                            )
+
+                    # Perform evolutionary optimization if enabled and it's time
+                    if (self.enable_evolution and
+                        self.interaction_count % self.evolution_frequency == 0 and
+                        self.interaction_count > 2):
+                        self.console.print("[bold magenta]Performing evolutionary optimization...[/bold magenta]")
+                        evolution_result = self.evolve_agent()
+                        if evolution_result["success"] and self.console:
+                            self.console.print(
+                                f"[dim][Evolution: optimized agent memory and strategies][/dim]",
+                                style="dim"
+                            )
+
+                    # Check for autonomous tasks
+                    if not autonomous:  # Don't check during autonomous execution to prevent recursion
+                        self.check_autonomous_tasks()
+
+                    # Notify hooks that the agent has completed
+                    agent_name = "Autonomous Agent" if autonomous else "CLI Agent"
+                    self.hooks.on_end(agent_name, final_response)
+                    return final_response
+
+            except Exception as e:
+                logger.error(f"Error in chat: {e}")
+                self.hooks.on_error("CLI Agent", e)
+                return f"Error: {str(e)}"
+
+    def search_interaction_history(self, query: str, limit: int = 5) -> Dict:
                         "content": assistant_message.content,
                         "tool_calls": [
                             {
@@ -5065,9 +5257,9 @@ def main():
                 console.print(patterns_table)
                 continue
             
-            # Process the input
+            # Process the input using asyncio.run
             response = asyncio.run(agent.chat(user_input))
-            
+
             # Display the response
             console.print("\n[bold blue]Assistant[/bold blue]")
             console.print(Markdown(response))
