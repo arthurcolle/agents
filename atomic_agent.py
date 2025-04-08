@@ -2177,9 +2177,9 @@ class ToolRegistry:
             parameters={
                 "type": "object",
                 "properties": {
-                    "response_text": {"type": "string", "description": "The text response to send to the user"}
+                    "message": {"type": "string", "description": "The text response to send to the user"}
                 },
-                "required": ["response_text"]
+                "required": ["message"]
             },
             function=self._respond_to_user
         )
@@ -2707,7 +2707,7 @@ class ToolRegistry:
     # --- Tool Implementations ---
     # Note: These methods now accept an optional 'agent' parameter
 
-    def _respond_to_user(self, response_text: str) -> Dict[str, Any]:
+    def _respond_to_user(self, message: str) -> Dict[str, Any]:
         """Simple tool to respond directly to the user with text"""
         return {
             "success": True,
