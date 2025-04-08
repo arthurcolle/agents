@@ -519,6 +519,58 @@ class ToolRegistry:
     def _register_default_tools(self):
         # Date and time tools
         self.register_function(
+            name="add_numbers",
+            description="Add two numbers",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "a": {"type": "number", "description": "First number"},
+                    "b": {"type": "number", "description": "Second number"}
+                },
+                "required": ["a", "b"]
+            },
+            function=self._add_numbers
+        )
+        self.register_function(
+            name="subtract_numbers",
+            description="Subtract two numbers",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "a": {"type": "number", "description": "First number"},
+                    "b": {"type": "number", "description": "Second number"}
+                },
+                "required": ["a", "b"]
+            },
+            function=self._subtract_numbers
+        )
+        self.register_function(
+            name="multiply_numbers",
+            description="Multiply two numbers",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "a": {"type": "number", "description": "First number"},
+                    "b": {"type": "number", "description": "Second number"}
+                },
+                "required": ["a", "b"]
+            },
+            function=self._multiply_numbers
+        )
+        self.register_function(
+            name="divide_numbers",
+            description="Divide two numbers",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "a": {"type": "number", "description": "Numerator"},
+                    "b": {"type": "number", "description": "Denominator"}
+                },
+                "required": ["a", "b"]
+            },
+            function=self._divide_numbers
+        )
+        self.register_function(
             name="get_current_datetime",
             description="Get the current date and time",
             parameters={
@@ -755,7 +807,19 @@ class ToolRegistry:
             parameters={"type": "object", "properties": {"path": {"type": "string", "description": "File path"}}, "required": ["path"]},
             function=self._delete_file
         )
-    def _decompose_prompt(self, transcript: str) -> Dict[str, Any]:
+    def _add_numbers(self, a: float, b: float) -> Dict[str, Any]:
+        return {"result": a + b, "success": True}
+
+    def _subtract_numbers(self, a: float, b: float) -> Dict[str, Any]:
+        return {"result": a - b, "success": True}
+
+    def _multiply_numbers(self, a: float, b: float) -> Dict[str, Any]:
+        return {"result": a * b, "success": True}
+
+    def _divide_numbers(self, a: float, b: float) -> Dict[str, Any]:
+        if b == 0:
+            return {"error": "Division by zero is not allowed", "success": False}
+        return {"result": a / b, "success": True}
         # Call the LLM with the JSON schema for MultiPrompt
         extract = self.together.chat.completions.create(
             messages=[
