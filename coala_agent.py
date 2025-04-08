@@ -71,7 +71,53 @@ except ImportError:
     from rich.panel import Panel
 
 # --- Initialization ---
-console = Console()
+console = Console() # Initialize console early
+
+# --- Import from atomic_agent ---
+try:
+    from atomic_agent import AgentOrchestrator, ScoutAgent, ToolRegistry as AtomicToolRegistry
+    # Rename imported ToolRegistry to avoid conflict if needed later
+except ImportError as e:
+    console.print(f"[red]Error importing from atomic_agent: {e}[/red]")
+    console.print("[yellow]Please ensure atomic_agent.py is in the same directory or Python path.[/yellow]")
+# --- Dependency Handling ---
+try:
+    import aiohttp
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "aiohttp"])
+    import aiohttp
+
+try:
+    from together import Together
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "together"])
+    from together import Together
+
+try:
+    from rich.console import Console
+    from rich.markdown import Markdown
+    from rich.syntax import Syntax
+    from rich.prompt import Prompt
+    from rich.panel import Panel
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "rich"])
+    from rich.console import Console
+    from rich.markdown import Markdown
+    from rich.syntax import Syntax
+    from rich.prompt import Prompt
+    from rich.panel import Panel
+
+# --- Initialization ---
+console = Console() # Initialize console early
+
+# --- Import from atomic_agent ---
+try:
+    from atomic_agent import AgentOrchestrator, ScoutAgent, ToolRegistry as AtomicToolRegistry
+    # Rename imported ToolRegistry to avoid conflict if needed later
+except ImportError as e:
+    console.print(f"[red]Error importing from atomic_agent: {e}[/red]")
+    console.print("[yellow]Please ensure atomic_agent.py is in the same directory or Python path.[/yellow]")
+    sys.exit(1)
 
 # --- CoALA Core Components ---
 

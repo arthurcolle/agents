@@ -2643,7 +2643,8 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)): # Check for both types
+                    # Check only for TogetherAgent or rely on duck typing (presence of agent_orchestrator)
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -2707,7 +2708,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -2776,7 +2777,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -2811,7 +2812,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -2893,7 +2894,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -2912,7 +2913,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -2952,7 +2953,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -2971,7 +2972,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -3004,7 +3005,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -3035,7 +3036,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -3066,7 +3067,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
@@ -3102,7 +3103,7 @@ class ToolRegistry:
             # Use passed agent instance if available, otherwise try inspect.stack()
             if agent is None:
                 for frame in inspect.stack():
-                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], (TogetherAgent, CoALAAgent)):
+                    if 'self' in frame.frame.f_locals and isinstance(frame.frame.f_locals['self'], TogetherAgent):
                         agent = frame.frame.f_locals['self']
                         break
 
