@@ -11,7 +11,9 @@ import random
 import uuid
 import shutil
 import glob
+import fnmatch
 import subprocess
+import re
 from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.markdown import Markdown
@@ -272,39 +274,130 @@ class ModalIntegration:
 
 class FileSystemTools:
     """
-    Tools for interacting with the file system
+    Advanced tools for interacting with the file system
+    Provides comprehensive file operations with safety checks and detailed metadata
     """
     def __init__(self):
-        logger.info("Initializing file system tools")
-    
-    def list_files(self, path: str = ".", pattern: str = "*") -> Dict:
-        """List files in a directory with optional glob pattern"""
+        logger.info("Initializing advanced file system tools")
+        self.history = []  # Track file operations for potential undo
+        self.safe_mode = True  # Safety mode to prevent destructive operations
+        
+    def list_files(self, path: str = ".", pattern: str = "*", recursive: bool = False, 
+                  include_hidden: bool = False, sort_by: str = "name") -> Dict:
+        """
+        List files in a directory with advanced filtering and sorting options
+        
+        Args:
+            path: Directory path to list files from
+            pattern: Glob pattern to filter files
+            recursive: Whether to recursively list files in subdirectories
+            include_hidden: Whether to include hidden files (starting with .)
+            sort_by: How to sort results (name, size, modified, type)
+        """
         try:
             # Normalize path
             norm_path = os.path.normpath(os.path.expanduser(path))
             
             # Get files matching pattern
-            files = glob.glob(os.path.join(norm_path, pattern))
+            if recursive:
+                matches = []
+                for root, dirnames, filenames in os.walk(norm_path):
+                    for filename in filenames:
+                        if fnmatch.fnmatch(filename, pattern):
+                            if include_hidden or not filename.startswith('.'):
+                                matches.append(os.path.join(root, filename))
+                    # Add directories if requested
+                    for dirname in dirnames:
+                        if fnmatch.fnmatch(dirname, pattern):
+                            if include_hidden or not dirname.startswith('.'):
+                                matches.append(os.path.join(root, dirname))
+                files = matches
+            else:
+                files = glob.glob(os.path.join(norm_path, pattern))
+                if not include_hidden:
+                    files = [f for f in files if not os.path.basename(f).startswith('.')]
             
-            # Get file info
+            # Get detailed file info
             file_info = []
             for file_path in files:
                 try:
                     stat = os.stat(file_path)
+                    is_dir = os.path.isdir(file_path)
+                    
+                    # Get file type and mime type
+                    file_type = "directory" if is_dir else "file"
+                    mime_type = None
+                    if not is_dir:
+                        try:
+                            import magic
+                            mime_type = magic.from_file(file_path, mime=True)
+                        except ImportError:
+                            # Fallback to simple extension-based detection
+                            ext = os.path.splitext(file_path)[1].lower()
+                            mime_map = {
+                                '.txt': 'text/plain', '.py': 'text/x-python',
+                                '.jpg': 'image/jpeg', '.png': 'image/png',
+                                '.pdf': 'application/pdf', '.json': 'application/json'
+                            }
+                            mime_type = mime_map.get(ext, 'application/octet-stream')
+                    
+                    # Calculate human-readable size
+                    size_bytes = stat.st_size
+                    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                        if size_bytes < 1024 or unit == 'TB':
+                            human_size = f"{size_bytes:.2f} {unit}"
+                            break
+                        size_bytes /= 1024
+                    
                     file_info.append({
                         "name": os.path.basename(file_path),
                         "path": file_path,
                         "size": stat.st_size,
+                        "human_size": human_size,
                         "modified": time.ctime(stat.st_mtime),
-                        "is_dir": os.path.isdir(file_path)
+                        "modified_timestamp": stat.st_mtime,
+                        "created": time.ctime(stat.st_ctime),
+                        "created_timestamp": stat.st_ctime,
+                        "accessed": time.ctime(stat.st_atime),
+                        "is_dir": is_dir,
+                        "type": file_type,
+                        "mime_type": mime_type,
+                        "permissions": oct(stat.st_mode)[-3:],
+                        "owner": stat.st_uid,
+                        "group": stat.st_gid
                     })
                 except Exception as e:
                     logger.warning(f"Error getting info for {file_path}: {e}")
             
+            # Sort results
+            if sort_by == "name":
+                file_info.sort(key=lambda x: x["name"])
+            elif sort_by == "size":
+                file_info.sort(key=lambda x: x["size"], reverse=True)
+            elif sort_by == "modified":
+                file_info.sort(key=lambda x: x["modified_timestamp"], reverse=True)
+            elif sort_by == "type":
+                file_info.sort(key=lambda x: (x["is_dir"], x["name"]), reverse=True)
+            
+            # Add summary statistics
+            total_size = sum(item["size"] for item in file_info)
+            dir_count = sum(1 for item in file_info if item["is_dir"])
+            file_count = len(file_info) - dir_count
+            
             return {
                 "success": True,
-                "message": f"Found {len(file_info)} files matching pattern '{pattern}' in '{norm_path}'",
-                "data": file_info
+                "message": f"Found {len(file_info)} items matching pattern '{pattern}' in '{norm_path}'",
+                "data": {
+                    "items": file_info,
+                    "summary": {
+                        "total_items": len(file_info),
+                        "directories": dir_count,
+                        "files": file_count,
+                        "total_size": total_size,
+                        "path": norm_path,
+                        "pattern": pattern
+                    }
+                }
             }
         except Exception as e:
             logger.error(f"Error listing files: {e}")
@@ -314,8 +407,20 @@ class FileSystemTools:
                 "data": None
             }
     
-    def read_file(self, filepath: str, max_size: int = 1024 * 1024) -> Dict:
-        """Read the contents of a file"""
+    def read_file(self, filepath: str, max_size: int = 1024 * 1024, 
+                 encoding: str = 'utf-8', chunk_size: int = None,
+                 line_numbers: bool = False, syntax_highlight: bool = False) -> Dict:
+        """
+        Read the contents of a file with advanced options
+        
+        Args:
+            filepath: Path to the file to read
+            max_size: Maximum file size in bytes
+            encoding: File encoding to use
+            chunk_size: If set, read only this many bytes
+            line_numbers: Whether to include line numbers
+            syntax_highlight: Whether to detect and include syntax highlighting info
+        """
         try:
             # Normalize path
             norm_path = os.path.normpath(os.path.expanduser(filepath))
@@ -328,6 +433,14 @@ class FileSystemTools:
                     "data": None
                 }
             
+            # Check if it's a directory
+            if os.path.isdir(norm_path):
+                return {
+                    "success": False,
+                    "message": f"Cannot read directory as file: {norm_path}",
+                    "data": None
+                }
+            
             # Check file size
             file_size = os.path.getsize(norm_path)
             if file_size > max_size:
@@ -337,9 +450,67 @@ class FileSystemTools:
                     "data": None
                 }
             
-            # Read file
-            with open(norm_path, 'r', encoding='utf-8', errors='replace') as f:
-                content = f.read()
+            # Detect binary file
+            try:
+                is_binary = False
+                with open(norm_path, 'rb') as f:
+                    chunk = f.read(1024)
+                    if b'\0' in chunk:  # Simple binary detection
+                        is_binary = True
+                
+                if is_binary:
+                    # For binary files, return hex dump instead of text content
+                    with open(norm_path, 'rb') as f:
+                        binary_data = f.read(chunk_size or max_size)
+                    
+                    hex_dump = ' '.join(f'{b:02x}' for b in binary_data[:100])  # First 100 bytes
+                    
+                    return {
+                        "success": True,
+                        "message": f"Successfully read binary file: {norm_path} ({file_size} bytes)",
+                        "data": {
+                            "content": f"Binary file: first 100 bytes: {hex_dump}...",
+                            "is_binary": True,
+                            "size": file_size,
+                            "path": norm_path,
+                            "binary_preview": hex_dump
+                        }
+                    }
+            except Exception as e:
+                logger.warning(f"Error detecting binary file: {e}")
+            
+            # Read file content
+            content = ""
+            if chunk_size:
+                with open(norm_path, 'r', encoding=encoding, errors='replace') as f:
+                    content = f.read(chunk_size)
+                    truncated = file_size > chunk_size
+            else:
+                with open(norm_path, 'r', encoding=encoding, errors='replace') as f:
+                    content = f.read()
+                    truncated = False
+            
+            # Process content based on options
+            if line_numbers:
+                lines = content.splitlines()
+                content_with_lines = "\n".join(f"{i+1}: {line}" for i, line in enumerate(lines))
+                content = content_with_lines
+            
+            # Detect file type for syntax highlighting
+            file_type = None
+            if syntax_highlight:
+                ext = os.path.splitext(norm_path)[1].lower()
+                file_type_map = {
+                    '.py': 'python', '.js': 'javascript', '.html': 'html',
+                    '.css': 'css', '.json': 'json', '.md': 'markdown',
+                    '.xml': 'xml', '.yaml': 'yaml', '.yml': 'yaml',
+                    '.sh': 'bash', '.bash': 'bash', '.sql': 'sql',
+                    '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.java': 'java'
+                }
+                file_type = file_type_map.get(ext)
+            
+            # Get file metadata
+            stat = os.stat(norm_path)
             
             return {
                 "success": True,
@@ -347,9 +518,41 @@ class FileSystemTools:
                 "data": {
                     "content": content,
                     "size": file_size,
-                    "path": norm_path
+                    "path": norm_path,
+                    "encoding": encoding,
+                    "truncated": truncated,
+                    "line_count": content.count('\n') + 1,
+                    "modified": time.ctime(stat.st_mtime),
+                    "file_type": file_type,
+                    "is_binary": False
                 }
             }
+        except UnicodeDecodeError:
+            # If we hit a decode error, try to read as binary
+            try:
+                with open(norm_path, 'rb') as f:
+                    binary_data = f.read(100)  # Just read a small preview
+                
+                hex_dump = ' '.join(f'{b:02x}' for b in binary_data)
+                
+                return {
+                    "success": True,
+                    "message": f"File appears to be binary: {norm_path}",
+                    "data": {
+                        "content": f"Binary file: first 100 bytes: {hex_dump}...",
+                        "is_binary": True,
+                        "size": file_size,
+                        "path": norm_path,
+                        "binary_preview": hex_dump
+                    }
+                }
+            except Exception as e:
+                logger.error(f"Error reading binary file: {e}")
+                return {
+                    "success": False,
+                    "message": f"Error reading file: {str(e)}",
+                    "data": None
+                }
         except Exception as e:
             logger.error(f"Error reading file: {e}")
             return {
@@ -358,33 +561,88 @@ class FileSystemTools:
                 "data": None
             }
     
-    def write_file(self, filepath: str, content: str, overwrite: bool = False) -> Dict:
-        """Write content to a file"""
+    def write_file(self, filepath: str, content: str, overwrite: bool = False, 
+                  append: bool = False, encoding: str = 'utf-8', 
+                  create_backup: bool = False, mode: str = None) -> Dict:
+        """
+        Write content to a file with advanced options
+        
+        Args:
+            filepath: Path to the file to write
+            content: Content to write to the file
+            overwrite: Whether to overwrite existing files
+            append: Whether to append to existing files
+            encoding: File encoding to use
+            create_backup: Whether to create a backup of existing file
+            mode: File permissions mode (e.g., '644')
+        """
         try:
             # Normalize path
             norm_path = os.path.normpath(os.path.expanduser(filepath))
             
-            # Check if file exists and overwrite is False
-            if os.path.exists(norm_path) and not overwrite:
+            # Safety check for system directories
+            system_dirs = ['/bin', '/sbin', '/usr/bin', '/usr/sbin', '/etc/passwd', '/etc/shadow']
+            if any(norm_path.startswith(d) for d in system_dirs) and self.safe_mode:
                 return {
                     "success": False,
-                    "message": f"File already exists: {norm_path}. Set overwrite=true to overwrite.",
+                    "message": f"Safety check: Cannot write to system directory: {norm_path}",
                     "data": None
                 }
+            
+            # Check if file exists
+            file_exists = os.path.exists(norm_path)
+            
+            # Handle existing file
+            if file_exists:
+                if not (overwrite or append):
+                    return {
+                        "success": False,
+                        "message": f"File already exists: {norm_path}. Set overwrite=true to overwrite or append=true to append.",
+                        "data": None
+                    }
+                
+                # Create backup if requested
+                if create_backup:
+                    backup_path = f"{norm_path}.bak"
+                    shutil.copy2(norm_path, backup_path)
+                    logger.info(f"Created backup of {norm_path} at {backup_path}")
             
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(os.path.abspath(norm_path)), exist_ok=True)
             
+            # Determine write mode
+            write_mode = 'a' if append else 'w'
+            
             # Write file
-            with open(norm_path, 'w', encoding='utf-8') as f:
+            with open(norm_path, write_mode, encoding=encoding) as f:
                 f.write(content)
+            
+            # Set file mode if specified
+            if mode:
+                try:
+                    mode_int = int(mode, 8)
+                    os.chmod(norm_path, mode_int)
+                except ValueError:
+                    logger.warning(f"Invalid mode format: {mode}. Expected octal (e.g., '644')")
+            
+            # Add to history for potential undo
+            operation = "append" if append else "write"
+            self.history.append({
+                "operation": operation,
+                "path": norm_path,
+                "timestamp": time.time(),
+                "size": len(content),
+                "backup": f"{norm_path}.bak" if create_backup else None
+            })
             
             return {
                 "success": True,
-                "message": f"Successfully wrote {len(content)} bytes to {norm_path}",
+                "message": f"Successfully {operation}ed {len(content)} bytes to {norm_path}",
                 "data": {
                     "path": norm_path,
-                    "size": len(content)
+                    "size": len(content),
+                    "operation": operation,
+                    "backup": f"{norm_path}.bak" if create_backup else None
                 }
             }
         except Exception as e:
@@ -481,45 +739,235 @@ class FileSystemTools:
 
 class CodingTools:
     """
-    Tools for code execution and management
+    Advanced tools for code execution and management with sandboxing and analysis
     """
     def __init__(self):
-        logger.info("Initializing coding tools")
+        logger.info("Initializing advanced coding tools")
         self.temp_dir = os.path.join(os.getcwd(), "temp_code")
-        os.makedirs(self.temp_dir, exist_ok=True)
+        self.sandbox_dir = os.path.join(os.getcwd(), "sandbox")
+        self.history_dir = os.path.join(os.getcwd(), "code_history")
+        
+        # Create necessary directories
+        for directory in [self.temp_dir, self.sandbox_dir, self.history_dir]:
+            os.makedirs(directory, exist_ok=True)
+        
+        # Track execution history
+        self.execution_history = []
+        
+        # Restricted commands that won't be allowed in shell execution
+        self.restricted_commands = [
+            "rm -rf", "mkfs", "dd if=/dev/zero", ":(){ :|:& };:",  # Fork bomb
+            "> /dev/sda", "chmod -R 777 /", "mv /* /dev/null"
+        ]
+        
+        # Default allowed imports for Python code
+        self.allowed_imports = {
+            "safe": ["math", "random", "datetime", "collections", "itertools", 
+                    "functools", "re", "json", "csv", "os.path", "time"],
+            "data_science": ["numpy", "pandas", "matplotlib", "seaborn", "sklearn"],
+            "standard_library": ["os", "sys", "subprocess", "pathlib", "shutil"],
+            "web": ["requests", "bs4", "urllib"],
+            "all": []  # Empty means no restrictions
+        }
+        
+        # Current security level
+        self.security_level = "standard_library"  # Default level
     
-    def execute_python(self, code: str, timeout: int = 10) -> Dict:
-        """Execute Python code in a controlled environment"""
+    def set_security_level(self, level: str) -> Dict:
+        """Set the security level for code execution"""
+        valid_levels = ["safe", "data_science", "standard_library", "web", "all"]
+        
+        if level not in valid_levels:
+            return {
+                "success": False,
+                "message": f"Invalid security level: {level}. Valid levels are: {', '.join(valid_levels)}",
+                "data": None
+            }
+        
+        self.security_level = level
+        return {
+            "success": True,
+            "message": f"Security level set to: {level}",
+            "data": {
+                "level": level,
+                "allowed_imports": self.allowed_imports[level] if level != "all" else "All imports allowed"
+            }
+        }
+    
+    def _check_code_safety(self, code: str) -> Tuple[bool, str]:
+        """Check if Python code is safe to execute"""
+        import ast
+        
+        # Don't restrict if security level is 'all'
+        if self.security_level == "all":
+            return True, "No restrictions applied"
+        
         try:
-            # Create a temporary file
-            temp_file = os.path.join(self.temp_dir, f"code_{uuid.uuid4().hex}.py")
+            # Parse the code
+            tree = ast.parse(code)
             
-            # Write code to file
+            # Check for imports
+            imports = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for name in node.names:
+                        imports.append(name.name.split('.')[0])
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        imports.append(node.module.split('.')[0])
+            
+            # Check if all imports are allowed
+            allowed = self.allowed_imports[self.security_level]
+            disallowed = [imp for imp in imports if imp not in allowed and imp != ""]
+            
+            if disallowed:
+                return False, f"Disallowed imports: {', '.join(disallowed)}"
+            
+            # Check for potentially dangerous operations
+            for node in ast.walk(tree):
+                # Check for exec or eval
+                if isinstance(node, ast.Call) and hasattr(node, 'func') and hasattr(node.func, 'id'):
+                    if node.func.id in ['exec', 'eval']:
+                        return False, "Use of exec() or eval() is not allowed"
+                
+                # Check for __import__
+                if isinstance(node, ast.Call) and hasattr(node, 'func') and hasattr(node.func, 'id'):
+                    if node.func.id == '__import__':
+                        return False, "Use of __import__() is not allowed"
+            
+            return True, "Code passed safety checks"
+        except SyntaxError as e:
+            return False, f"Syntax error in code: {str(e)}"
+        except Exception as e:
+            return False, f"Error checking code safety: {str(e)}"
+    
+    def _check_shell_safety(self, command: str) -> Tuple[bool, str]:
+        """Check if shell command is safe to execute"""
+        # Check for restricted commands
+        for restricted in self.restricted_commands:
+            if restricted in command:
+                return False, f"Command contains restricted pattern: {restricted}"
+        
+        # Check for pipe to shell or command substitution if in safe mode
+        if self.security_level in ["safe", "data_science"]:
+            if "|" in command or ">" in command or "$(" in command or "`" in command:
+                return False, "Command contains pipes, redirections, or command substitution which are not allowed in current security level"
+        
+        return True, "Command passed safety checks"
+    
+    def execute_python(self, code: str, timeout: int = 10, save_history: bool = True,
+                      sandbox: bool = True, allow_imports: List[str] = None,
+                      provide_inputs: List[str] = None, environment: Dict[str, str] = None) -> Dict:
+        """
+        Execute Python code in a controlled environment with advanced options
+        
+        Args:
+            code: Python code to execute
+            timeout: Timeout in seconds
+            save_history: Whether to save execution history
+            sandbox: Whether to run in a sandbox directory
+            allow_imports: Additional imports to allow for this execution
+            provide_inputs: List of inputs to provide to the program
+            environment: Environment variables to set
+        """
+        start_time = time.time()
+        
+        try:
+            # Check code safety
+            is_safe, safety_message = self._check_code_safety(code)
+            if not is_safe and not allow_imports:
+                return {
+                    "success": False,
+                    "message": f"Code safety check failed: {safety_message}",
+                    "data": {
+                        "code": code,
+                        "safety_check": safety_message
+                    }
+                }
+            
+            # Create a unique ID for this execution
+            exec_id = uuid.uuid4().hex
+            
+            # Determine execution directory
+            exec_dir = self.sandbox_dir if sandbox else self.temp_dir
+            temp_file = os.path.join(exec_dir, f"code_{exec_id}.py")
+            
+            # Save code to history if requested
+            if save_history:
+                history_file = os.path.join(self.history_dir, f"python_{exec_id}.py")
+                with open(history_file, 'w', encoding='utf-8') as f:
+                    f.write(f"# Execution ID: {exec_id}\n")
+                    f.write(f"# Timestamp: {time.ctime()}\n")
+                    f.write(f"# Security level: {self.security_level}\n")
+                    f.write(f"# Safety check: {safety_message}\n\n")
+                    f.write(code)
+            
+            # Write code to temporary file
             with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(code)
             
-            # Execute code in a subprocess
-            process = subprocess.Popen(
-                [sys.executable, temp_file],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            # Prepare environment
+            env = os.environ.copy()
+            if environment:
+                env.update(environment)
             
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-                return_code = process.returncode
-            except subprocess.TimeoutExpired:
-                process.kill()
-                return {
-                    "success": False,
-                    "message": f"Code execution timed out after {timeout} seconds",
-                    "data": {
-                        "stdout": "",
-                        "stderr": "Execution timed out",
-                        "return_code": -1
+            # Execute code in a subprocess
+            if provide_inputs:
+                # If inputs are provided, we need to communicate with the process
+                input_text = "\n".join(provide_inputs)
+                process = subprocess.Popen(
+                    [sys.executable, temp_file],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=exec_dir,
+                    env=env
+                )
+                
+                try:
+                    stdout, stderr = process.communicate(input=input_text, timeout=timeout)
+                    return_code = process.returncode
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    return {
+                        "success": False,
+                        "message": f"Code execution timed out after {timeout} seconds",
+                        "data": {
+                            "stdout": "",
+                            "stderr": "Execution timed out",
+                            "return_code": -1,
+                            "execution_time": time.time() - start_time,
+                            "exec_id": exec_id
+                        }
                     }
-                }
+            else:
+                # No inputs needed
+                process = subprocess.Popen(
+                    [sys.executable, temp_file],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=exec_dir,
+                    env=env
+                )
+                
+                try:
+                    stdout, stderr = process.communicate(timeout=timeout)
+                    return_code = process.returncode
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    return {
+                        "success": False,
+                        "message": f"Code execution timed out after {timeout} seconds",
+                        "data": {
+                            "stdout": "",
+                            "stderr": "Execution timed out",
+                            "return_code": -1,
+                            "execution_time": time.time() - start_time,
+                            "exec_id": exec_id
+                        }
+                    }
             
             # Clean up
             try:
@@ -527,13 +975,38 @@ class CodingTools:
             except:
                 pass
             
+            # Record execution in history
+            execution_record = {
+                "id": exec_id,
+                "type": "python",
+                "timestamp": time.time(),
+                "code": code,
+                "return_code": return_code,
+                "execution_time": time.time() - start_time,
+                "security_level": self.security_level,
+                "sandbox": sandbox
+            }
+            self.execution_history.append(execution_record)
+            
+            # Check for syntax errors in stderr
+            syntax_error = None
+            if "SyntaxError" in stderr:
+                for line in stderr.splitlines():
+                    if "SyntaxError" in line:
+                        syntax_error = line
+                        break
+            
             return {
                 "success": return_code == 0,
                 "message": "Code executed successfully" if return_code == 0 else f"Code execution failed with return code {return_code}",
                 "data": {
                     "stdout": stdout,
                     "stderr": stderr,
-                    "return_code": return_code
+                    "return_code": return_code,
+                    "execution_time": time.time() - start_time,
+                    "exec_id": exec_id,
+                    "syntax_error": syntax_error,
+                    "history_file": history_file if save_history else None
                 }
             }
         except Exception as e:
@@ -541,19 +1014,75 @@ class CodingTools:
             return {
                 "success": False,
                 "message": f"Error executing Python code: {str(e)}",
-                "data": None
+                "data": {
+                    "error": str(e),
+                    "execution_time": time.time() - start_time
+                }
             }
     
-    def execute_shell(self, command: str, timeout: int = 10) -> Dict:
-        """Execute a shell command"""
+    def execute_shell(self, command: str, timeout: int = 10, save_history: bool = True,
+                     sandbox: bool = True, environment: Dict[str, str] = None,
+                     working_dir: str = None) -> Dict:
+        """
+        Execute a shell command with advanced options
+        
+        Args:
+            command: Shell command to execute
+            timeout: Timeout in seconds
+            save_history: Whether to save execution history
+            sandbox: Whether to run in a sandbox directory
+            environment: Environment variables to set
+            working_dir: Working directory for command execution
+        """
+        start_time = time.time()
+        
         try:
+            # Check command safety
+            is_safe, safety_message = self._check_shell_safety(command)
+            if not is_safe:
+                return {
+                    "success": False,
+                    "message": f"Command safety check failed: {safety_message}",
+                    "data": {
+                        "command": command,
+                        "safety_check": safety_message
+                    }
+                }
+            
+            # Create a unique ID for this execution
+            exec_id = uuid.uuid4().hex
+            
+            # Determine execution directory
+            if working_dir:
+                exec_dir = os.path.expanduser(working_dir)
+            else:
+                exec_dir = self.sandbox_dir if sandbox else os.getcwd()
+            
+            # Save command to history if requested
+            if save_history:
+                history_file = os.path.join(self.history_dir, f"shell_{exec_id}.sh")
+                with open(history_file, 'w', encoding='utf-8') as f:
+                    f.write(f"# Execution ID: {exec_id}\n")
+                    f.write(f"# Timestamp: {time.ctime()}\n")
+                    f.write(f"# Security level: {self.security_level}\n")
+                    f.write(f"# Safety check: {safety_message}\n")
+                    f.write(f"# Working directory: {exec_dir}\n\n")
+                    f.write(command)
+            
+            # Prepare environment
+            env = os.environ.copy()
+            if environment:
+                env.update(environment)
+            
             # Execute command in a subprocess
             process = subprocess.Popen(
                 command,
                 shell=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                cwd=exec_dir,
+                env=env
             )
             
             try:
@@ -567,9 +1096,24 @@ class CodingTools:
                     "data": {
                         "stdout": "",
                         "stderr": "Execution timed out",
-                        "return_code": -1
+                        "return_code": -1,
+                        "execution_time": time.time() - start_time,
+                        "exec_id": exec_id
                     }
                 }
+            
+            # Record execution in history
+            execution_record = {
+                "id": exec_id,
+                "type": "shell",
+                "timestamp": time.time(),
+                "command": command,
+                "return_code": return_code,
+                "execution_time": time.time() - start_time,
+                "security_level": self.security_level,
+                "working_dir": exec_dir
+            }
+            self.execution_history.append(execution_record)
             
             return {
                 "success": return_code == 0,
@@ -578,7 +1122,11 @@ class CodingTools:
                     "stdout": stdout,
                     "stderr": stderr,
                     "return_code": return_code,
-                    "command": command
+                    "command": command,
+                    "execution_time": time.time() - start_time,
+                    "exec_id": exec_id,
+                    "working_dir": exec_dir,
+                    "history_file": history_file if save_history else None
                 }
             }
         except Exception as e:
@@ -586,6 +1134,237 @@ class CodingTools:
             return {
                 "success": False,
                 "message": f"Error executing shell command: {str(e)}",
+                "data": {
+                    "error": str(e),
+                    "execution_time": time.time() - start_time
+                }
+            }
+    
+    def analyze_code(self, code: str) -> Dict:
+        """
+        Analyze Python code for quality, complexity, and potential issues
+        
+        Args:
+            code: Python code to analyze
+        """
+        try:
+            # Create a temporary file
+            temp_file = os.path.join(self.temp_dir, f"analysis_{uuid.uuid4().hex}.py")
+            
+            # Write code to file
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(code)
+            
+            results = {
+                "syntax_valid": True,
+                "imports": [],
+                "functions": [],
+                "classes": [],
+                "complexity": {},
+                "issues": []
+            }
+            
+            # Check syntax
+            try:
+                import ast
+                ast.parse(code)
+            except SyntaxError as e:
+                results["syntax_valid"] = False
+                results["issues"].append({
+                    "type": "syntax_error",
+                    "message": str(e),
+                    "line": e.lineno,
+                    "offset": e.offset
+                })
+                return {
+                    "success": True,
+                    "message": "Code analysis completed with syntax errors",
+                    "data": results
+                }
+            
+            # Extract imports, functions, and classes
+            try:
+                tree = ast.parse(code)
+                
+                # Find imports
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for name in node.names:
+                            results["imports"].append({
+                                "name": name.name,
+                                "alias": name.asname
+                            })
+                    elif isinstance(node, ast.ImportFrom):
+                        module = node.module or ""
+                        for name in node.names:
+                            results["imports"].append({
+                                "name": f"{module}.{name.name}" if module else name.name,
+                                "alias": name.asname,
+                                "from_import": True,
+                                "module": module
+                            })
+                
+                # Find functions
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.FunctionDef):
+                        args = []
+                        for arg in node.args.args:
+                            args.append(arg.arg)
+                        
+                        results["functions"].append({
+                            "name": node.name,
+                            "args": args,
+                            "line": node.lineno,
+                            "docstring": ast.get_docstring(node)
+                        })
+                
+                # Find classes
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ClassDef):
+                        bases = []
+                        for base in node.bases:
+                            if isinstance(base, ast.Name):
+                                bases.append(base.id)
+                        
+                        methods = []
+                        for child in node.body:
+                            if isinstance(child, ast.FunctionDef):
+                                methods.append(child.name)
+                        
+                        results["classes"].append({
+                            "name": node.name,
+                            "bases": bases,
+                            "methods": methods,
+                            "line": node.lineno,
+                            "docstring": ast.get_docstring(node)
+                        })
+            except Exception as e:
+                results["issues"].append({
+                    "type": "ast_error",
+                    "message": f"Error parsing code structure: {str(e)}"
+                })
+            
+            # Check for potential issues
+            try:
+                # Check for unused imports
+                import_names = set()
+                for imp in results["imports"]:
+                    if imp.get("alias"):
+                        import_names.add(imp["alias"])
+                    else:
+                        name = imp["name"].split(".")[-1] if "." in imp["name"] else imp["name"]
+                        import_names.add(name)
+                
+                # Simple check for unused imports by looking for the name in the code
+                for name in import_names:
+                    # Count occurrences after import statement
+                    if code.count(name) <= 1:  # Only appears in import statement
+                        results["issues"].append({
+                            "type": "unused_import",
+                            "message": f"Potential unused import: {name}"
+                        })
+                
+                # Check for TODO comments
+                todo_pattern = r"#\s*TODO:?\s*(.*)"
+                for i, line in enumerate(code.splitlines()):
+                    match = re.search(todo_pattern, line, re.IGNORECASE)
+                    if match:
+                        results["issues"].append({
+                            "type": "todo",
+                            "message": match.group(1).strip(),
+                            "line": i + 1
+                        })
+            except Exception as e:
+                results["issues"].append({
+                    "type": "analysis_error",
+                    "message": f"Error during code analysis: {str(e)}"
+                })
+            
+            # Calculate code complexity
+            try:
+                # Count lines of code
+                lines = code.splitlines()
+                non_empty_lines = [line for line in lines if line.strip()]
+                comment_lines = [line for line in lines if line.strip().startswith("#")]
+                
+                results["complexity"] = {
+                    "total_lines": len(lines),
+                    "code_lines": len(non_empty_lines) - len(comment_lines),
+                    "comment_lines": len(comment_lines),
+                    "blank_lines": len(lines) - len(non_empty_lines),
+                    "comment_ratio": len(comment_lines) / len(non_empty_lines) if non_empty_lines else 0
+                }
+                
+                # Try to use radon for cyclomatic complexity if available
+                try:
+                    import radon.complexity as cc
+                    import radon.metrics as metrics
+                    
+                    # Calculate cyclomatic complexity
+                    complexity = cc.cc_visit(code)
+                    if complexity:
+                        results["complexity"]["cyclomatic"] = [
+                            {
+                                "name": c.name,
+                                "complexity": c.complexity,
+                                "rank": cc.rank(c.complexity)
+                            } for c in complexity
+                        ]
+                    
+                    # Calculate maintainability index
+                    mi = metrics.mi_visit(code, True)
+                    if mi:
+                        results["complexity"]["maintainability_index"] = mi
+                except ImportError:
+                    # Radon not available
+                    pass
+            except Exception as e:
+                results["issues"].append({
+                    "type": "complexity_error",
+                    "message": f"Error calculating code complexity: {str(e)}"
+                })
+            
+            # Clean up
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+            
+            return {
+                "success": True,
+                "message": "Code analysis completed successfully",
+                "data": results
+            }
+        except Exception as e:
+            logger.error(f"Error analyzing code: {e}")
+            return {
+                "success": False,
+                "message": f"Error analyzing code: {str(e)}",
+                "data": None
+            }
+    
+    def get_execution_history(self, limit: int = 10, execution_type: str = None) -> Dict:
+        """Get the execution history"""
+        try:
+            # Filter by type if specified
+            if execution_type:
+                history = [h for h in self.execution_history if h["type"] == execution_type]
+            else:
+                history = self.execution_history
+            
+            # Sort by timestamp (newest first) and limit
+            sorted_history = sorted(history, key=lambda x: x["timestamp"], reverse=True)[:limit]
+            
+            return {
+                "success": True,
+                "message": f"Retrieved {len(sorted_history)} execution history records",
+                "data": sorted_history
+            }
+        except Exception as e:
+            logger.error(f"Error getting execution history: {e}")
+            return {
+                "success": False,
+                "message": f"Error getting execution history: {str(e)}",
                 "data": None
             }
 
@@ -634,7 +1413,7 @@ class CLIAgent:
                 "type": "function",
                 "function": {
                     "name": "list_files",
-                    "description": "List files in a directory with optional glob pattern",
+                    "description": "List files in a directory with advanced filtering and sorting options",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -645,6 +1424,19 @@ class CLIAgent:
                             "pattern": {
                                 "type": "string",
                                 "description": "Glob pattern to filter files (default: *)"
+                            },
+                            "recursive": {
+                                "type": "boolean",
+                                "description": "Whether to recursively list files in subdirectories (default: false)"
+                            },
+                            "include_hidden": {
+                                "type": "boolean",
+                                "description": "Whether to include hidden files (starting with .) (default: false)"
+                            },
+                            "sort_by": {
+                                "type": "string",
+                                "description": "How to sort results (name, size, modified, type) (default: name)",
+                                "enum": ["name", "size", "modified", "type"]
                             }
                         }
                     }
@@ -654,7 +1446,7 @@ class CLIAgent:
                 "type": "function",
                 "function": {
                     "name": "read_file",
-                    "description": "Read the contents of a file",
+                    "description": "Read the contents of a file with advanced options",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -665,6 +1457,22 @@ class CLIAgent:
                             "max_size": {
                                 "type": "integer",
                                 "description": "Maximum file size in bytes (default: 1MB)"
+                            },
+                            "encoding": {
+                                "type": "string",
+                                "description": "File encoding to use (default: utf-8)"
+                            },
+                            "chunk_size": {
+                                "type": "integer",
+                                "description": "If set, read only this many bytes"
+                            },
+                            "line_numbers": {
+                                "type": "boolean",
+                                "description": "Whether to include line numbers (default: false)"
+                            },
+                            "syntax_highlight": {
+                                "type": "boolean",
+                                "description": "Whether to detect and include syntax highlighting info (default: false)"
                             }
                         },
                         "required": ["filepath"]
@@ -675,7 +1483,7 @@ class CLIAgent:
                 "type": "function",
                 "function": {
                     "name": "write_file",
-                    "description": "Write content to a file",
+                    "description": "Write content to a file with advanced options",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -690,6 +1498,22 @@ class CLIAgent:
                             "overwrite": {
                                 "type": "boolean",
                                 "description": "Whether to overwrite the file if it exists (default: false)"
+                            },
+                            "append": {
+                                "type": "boolean",
+                                "description": "Whether to append to existing files (default: false)"
+                            },
+                            "encoding": {
+                                "type": "string",
+                                "description": "File encoding to use (default: utf-8)"
+                            },
+                            "create_backup": {
+                                "type": "boolean",
+                                "description": "Whether to create a backup of existing file (default: false)"
+                            },
+                            "mode": {
+                                "type": "string",
+                                "description": "File permissions mode (e.g., '644')"
                             }
                         },
                         "required": ["filepath", "content"]
@@ -747,7 +1571,7 @@ class CLIAgent:
                 "type": "function",
                 "function": {
                     "name": "execute_python",
-                    "description": "Execute Python code in a controlled environment",
+                    "description": "Execute Python code in a controlled environment with advanced options",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -758,6 +1582,32 @@ class CLIAgent:
                             "timeout": {
                                 "type": "integer",
                                 "description": "Timeout in seconds (default: 10)"
+                            },
+                            "save_history": {
+                                "type": "boolean",
+                                "description": "Whether to save execution history (default: true)"
+                            },
+                            "sandbox": {
+                                "type": "boolean",
+                                "description": "Whether to run in a sandbox directory (default: true)"
+                            },
+                            "allow_imports": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "Additional imports to allow for this execution"
+                            },
+                            "provide_inputs": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "List of inputs to provide to the program"
+                            },
+                            "environment": {
+                                "type": "object",
+                                "description": "Environment variables to set"
                             }
                         },
                         "required": ["code"]
@@ -768,7 +1618,7 @@ class CLIAgent:
                 "type": "function",
                 "function": {
                     "name": "execute_shell",
-                    "description": "Execute a shell command",
+                    "description": "Execute a shell command with advanced options",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -779,9 +1629,81 @@ class CLIAgent:
                             "timeout": {
                                 "type": "integer",
                                 "description": "Timeout in seconds (default: 10)"
+                            },
+                            "save_history": {
+                                "type": "boolean",
+                                "description": "Whether to save execution history (default: true)"
+                            },
+                            "sandbox": {
+                                "type": "boolean",
+                                "description": "Whether to run in a sandbox directory (default: true)"
+                            },
+                            "environment": {
+                                "type": "object",
+                                "description": "Environment variables to set"
+                            },
+                            "working_dir": {
+                                "type": "string",
+                                "description": "Working directory for command execution"
                             }
                         },
                         "required": ["command"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_code",
+                    "description": "Analyze Python code for quality, complexity, and potential issues",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string",
+                                "description": "Python code to analyze"
+                            }
+                        },
+                        "required": ["code"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_execution_history",
+                    "description": "Get the execution history of code and commands",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of history items to return (default: 10)"
+                            },
+                            "execution_type": {
+                                "type": "string",
+                                "description": "Filter by execution type (python or shell)",
+                                "enum": ["python", "shell"]
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_security_level",
+                    "description": "Set the security level for code execution",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "level": {
+                                "type": "string",
+                                "description": "Security level to set",
+                                "enum": ["safe", "data_science", "standard_library", "web", "all"]
+                            }
+                        },
+                        "required": ["level"]
                     }
                 }
             },
@@ -1037,6 +1959,12 @@ class CLIAgent:
                 result = self.code_tools.execute_python(**arguments)
             elif name == "execute_shell":
                 result = self.code_tools.execute_shell(**arguments)
+            elif name == "analyze_code":
+                result = self.code_tools.analyze_code(**arguments)
+            elif name == "get_execution_history":
+                result = self.code_tools.get_execution_history(**arguments)
+            elif name == "set_security_level":
+                result = self.code_tools.set_security_level(**arguments)
             # Dynamic agent tools
             elif name == "create_agent":
                 result = self._create_agent(**arguments)
