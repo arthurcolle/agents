@@ -1828,19 +1828,67 @@ def extract_python_code(text: str) -> list:
     return [match.strip() for match in re.findall(pattern, text, re.DOTALL)]
 
 def parse_function_calls(text: str) -> List[Dict[str, Any]]:
+    """
+    Advanced function call parser that handles multiple formats and provides better error recovery.
+    Supports:
+    1. OpenAI-style JSON format: {"name": "func_name", "arguments": {...}}
+    2. Bracket format: [func_name(arg1=val1, arg2=val2)]
+    3. Function tag format: <function=func_name>{"arg1": "val1"}</function>
+    4. Python code block format: <|python_start|><function=func_name>...</|python_end|>
+    5. Tool calls format: {"type": "function", "function": {"name": "func_name", "arguments": "{...}"}}
+    """
     function_calls = []
     
-    # Try to find JSON-formatted function calls first
+    # Track if we found any potential function calls for better error reporting
+    potential_function_call_found = False
+    
+    # Try to find OpenAI-style tool calls first (most reliable format)
+    tool_call_pattern = r'\{"type"\s*:\s*"function"\s*,\s*"function"\s*:\s*\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*"(.+?)"\s*\}\s*\}'
+    tool_matches = re.findall(tool_call_pattern, text.replace('\n', ' '))
+    for func_name, args_str in tool_matches:
+        potential_function_call_found = True
+        try:
+            # Handle escaped JSON in the arguments string
+            args_str = args_str.replace('\\"', '"').replace('\\\\', '\\')
+            args = json.loads(args_str)
+            function_calls.append({"name": func_name, "arguments": args})
+            continue
+        except json.JSONDecodeError:
+            console.print(f"[yellow]Warning: Could not parse tool call arguments for {func_name}, trying fallback methods[/yellow]")
+    
+    # Try to find JSON-formatted function calls
     json_pattern = r'\{(?:[^{}]|(?:\{[^{}]*\}))*\}'
     potential_matches = re.findall(json_pattern, text)
     for potential_json in potential_matches:
         try:
             data = json.loads(potential_json)
+            # Handle direct function call format
             if isinstance(data, dict) and "name" in data and "arguments" in data:
+                potential_function_call_found = True
                 function_calls.append({"name": data["name"], "arguments": data["arguments"]})
+                continue
+                
+            # Handle OpenAI-style tool calls format
+            if isinstance(data, dict) and data.get("type") == "function" and "function" in data:
+                potential_function_call_found = True
+                func_data = data["function"]
+                func_name = func_data.get("name")
+                if func_name:
+                    # Arguments might be a JSON string or already parsed
+                    args_data = func_data.get("arguments", {})
+                    if isinstance(args_data, str):
+                        try:
+                            args = json.loads(args_data)
+                        except json.JSONDecodeError:
+                            args = {"raw_arguments": args_data}
+                    else:
+                        args = args_data
+                    function_calls.append({"name": func_name, "arguments": args})
+                    continue
         except json.JSONDecodeError:
-            continue
+            pass
     
+    # If we already found function calls in the preferred formats, return them
     if function_calls:
         return function_calls
     
@@ -1848,6 +1896,7 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
     pattern = r'\[(\w+)\((.*?)\)\]'
     matches = re.findall(pattern, text)
     for match in matches:
+        potential_function_call_found = True
         func_name, args_str = match
         args = {}
         try:
@@ -1855,20 +1904,23 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
             if args_str.startswith("{") and args_str.endswith("}"):
                 args = json.loads(args_str)
             else:
+                # Handle both key=value and key="value with spaces"
                 arg_pairs = re.findall(r'(\w+)=("[^"]*"|\'[^\']*\'|\S+)', args_str)
                 for arg_name, arg_value in arg_pairs:
                     if (arg_value.startswith('"') and arg_value.endswith('"')) or (arg_value.startswith("'") and arg_value.endswith("'")):
                         arg_value = arg_value[1:-1]
                     args[arg_name] = arg_value
         except json.JSONDecodeError:
-            console.print(f"[red]Error parsing arguments for {func_name}: {args_str}[/red]")
-            continue
+            console.print(f"[yellow]Warning: Error parsing arguments for {func_name}: {args_str}[/yellow]")
+            # Still add with empty args for recovery
+            args = {}
         function_calls.append({"name": func_name, "arguments": args})
     
     # Try to find function calls in the format <function=function_name>{"arg1": "val1"}</function>
     function_pattern = r'<function=(\w+)>(.*?)</function>'
     fn_matches = re.findall(function_pattern, text)
     for m in fn_matches:
+        potential_function_call_found = True
         func_name = m[0]
         args_str = m[1].strip()
         try:
@@ -1879,7 +1931,7 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
                 args = json.loads(args_str)
             function_calls.append({"name": func_name, "arguments": args})
         except json.JSONDecodeError:
-            console.print(f"[red]Error parsing arguments for {func_name}: {m[1]}[/red]")
+            console.print(f"[yellow]Warning: Error parsing arguments for {func_name}: {m[1]}[/yellow]")
             # Still add the function call with empty arguments as a fallback
             function_calls.append({"name": func_name, "arguments": {}})
     
@@ -1887,7 +1939,33 @@ def parse_function_calls(text: str) -> List[Dict[str, Any]]:
     python_function_pattern = r'<\|python_start\|><function=(\w+)>'
     python_fn_matches = re.findall(python_function_pattern, text)
     for func_name in python_fn_matches:
+        potential_function_call_found = True
         function_calls.append({"name": func_name, "arguments": {}})
+    
+    # Special case for <|python_start|>{"type": "function", "name": "X", "parameters": {}}
+    python_json_pattern = r'<\|python_start\|>(\{.*?\})<\|python_end'
+    python_json_matches = re.findall(python_json_pattern, text, re.DOTALL)
+    for json_str in python_json_matches:
+        potential_function_call_found = True
+        try:
+            data = json.loads(json_str)
+            if isinstance(data, dict) and "name" in data:
+                # Handle both "parameters" and "arguments" keys
+                args = data.get("parameters", data.get("arguments", {}))
+                function_calls.append({"name": data["name"], "arguments": args})
+        except json.JSONDecodeError:
+            console.print(f"[yellow]Warning: Could not parse JSON in Python block: {json_str[:50]}...[/yellow]")
+    
+    # Special case for "list_functions" or similar common function names if no other matches
+    if not function_calls and "list_functions" in text.lower():
+        function_calls.append({"name": "list_available_functions", "arguments": {}})
+    elif not function_calls and "list tools" in text.lower():
+        function_calls.append({"name": "list_available_functions", "arguments": {}})
+    
+    # If we found potential function calls but couldn't parse any, log a warning
+    if potential_function_call_found and not function_calls:
+        console.print("[red]Warning: Detected potential function calls but failed to parse them[/red]")
+        console.print(f"[dim]Text snippet: {text[:100]}...[/dim]")
     
     return function_calls
 
@@ -2157,6 +2235,90 @@ print("Hello, world!")
         
         return response
     
+    def _find_similar_tool(self, name: str) -> Optional[str]:
+        """Find a similar tool name in the registry using fuzzy matching."""
+        available_tools = self.tool_registry.get_available_tools()
+        
+        # Check for common aliases
+        aliases = {
+            "list_functions": "list_available_functions",
+            "get_time": "get_current_datetime",
+            "get_date": "get_current_datetime",
+            "datetime": "get_current_datetime",
+            "search": "web_search",
+            "weather": "get_weather",
+            "execute": "execute_python",
+            "run_python": "execute_python",
+            "python": "execute_python",
+            "read": "read_file",
+            "write": "write_file",
+            "ls": "list_directory",
+            "dir": "list_directory",
+        }
+        
+        if name.lower() in aliases:
+            alias = aliases[name.lower()]
+            if alias in available_tools:
+                return alias
+        
+        # Try exact match with different casing
+        for tool in available_tools:
+            if tool.lower() == name.lower():
+                return tool
+        
+        # Try prefix match
+        for tool in available_tools:
+            if tool.lower().startswith(name.lower()) or name.lower().startswith(tool.lower()):
+                return tool
+        
+        # Try substring match
+        for tool in available_tools:
+            if name.lower() in tool.lower() or tool.lower() in name.lower():
+                return tool
+        
+        return None
+    
+    def _get_function_suggestion(self, function_name: str, arguments: Dict[str, Any], result: Dict[str, Any]) -> str:
+        """Generate a helpful suggestion for fixing a function call error."""
+        if not self.tool_registry.has_tool(function_name):
+            similar_tool = self._find_similar_tool(function_name)
+            if similar_tool:
+                return f"Use '{similar_tool}' instead of '{function_name}'"
+            else:
+                available = ", ".join(self.tool_registry.get_available_tools()[:5])
+                return f"Function '{function_name}' not found. Available functions include: {available}..."
+        
+        # Get the function spec to check parameters
+        function_spec = None
+        for name, spec in self.tool_registry.functions.items():
+            if name == function_name:
+                function_spec = spec
+                break
+        
+        if not function_spec:
+            return "Unknown function"
+        
+        # Check for missing required parameters
+        required_params = function_spec.parameters.get("required", [])
+        missing_params = [param for param in required_params if param not in arguments]
+        
+        if missing_params:
+            return f"Missing required parameters: {', '.join(missing_params)}"
+        
+        # Check for invalid parameters
+        properties = function_spec.parameters.get("properties", {})
+        invalid_params = [param for param in arguments if param not in properties]
+        
+        if invalid_params:
+            valid_params = list(properties.keys())
+            return f"Invalid parameters: {', '.join(invalid_params)}. Valid parameters are: {', '.join(valid_params)}"
+        
+        # If we have an error message, return it
+        if "error" in result:
+            return f"Error: {result['error']}"
+        
+        return "Unknown error"
+    
     def extract_python_code(self, text: str) -> List[str]:
         return extract_python_code(text)
 
@@ -2239,7 +2401,8 @@ print("Hello, world!")
         # Special handling for tool listing requests
         if isinstance(user_input, str) and user_input.lower().strip() in [
             "list tools", "list your tools", "what tools do you have", 
-            "show tools", "show available tools", "what can you do"
+            "show tools", "show available tools", "what can you do",
+            "list functions", "list available functions", "what functions do you have"
         ]:
             return self._generate_tools_list()
             
@@ -2317,26 +2480,47 @@ print("Hello, world!")
                                 avg_logprob = sum(lp for lp in logprobs_data.token_logprobs if lp is not None) / len(logprobs_data.token_logprobs)
                                 assistant_message["avg_logprob"] = avg_logprob
                         self.conversation_history.append(assistant_message)
-                        if ("[" in assistant_content and "(" in assistant_content and ")" in assistant_content) or "<function=" in assistant_content:
+                        # Check for potential function calls using a more comprehensive detection
+                        has_function_call = (
+                            ("[" in assistant_content and "(" in assistant_content and ")" in assistant_content) or 
+                            "<function=" in assistant_content or 
+                            "\"type\": \"function\"" in assistant_content or
+                            "{\"name\":" in assistant_content or
+                            "<|python_start|>" in assistant_content
+                        )
+                        
+                        if has_function_call:
                             function_calls = parse_function_calls(assistant_content)
                             if function_calls:
                                 results = []
                                 all_successful = True
+                                max_retries = 2  # Allow up to 2 retries for failed function calls
+                                
+                                # First pass: try to execute all functions
                                 for fc in function_calls:
                                     name = fc["name"]
                                     args = fc["arguments"]
+                                    
+                                    # Try to find similar function if exact match not found
+                                    if not self.tool_registry.has_tool(name):
+                                        similar_tool = self._find_similar_tool(name)
+                                        if similar_tool:
+                                            console.print(f"[yellow]Function '{name}' not found, using similar function '{similar_tool}'[/yellow]")
+                                            name = similar_tool
+                                        else:
+                                            error_msg = f"Function '{name}' not found in registry"
+                                            console.print(f"[red]{error_msg}[/red]")
+                                            result = {"error": error_msg, "success": False, "available_tools": self.tool_registry.get_available_tools()[:5]}
+                                            all_successful = False
+                                            self.conversation_history.append({"role": "tool", "name": name, "content": json.dumps(result, indent=2)})
+                                            results.append({"function_name": name, "arguments": args, "result": result})
+                                            continue
+                                    
+                                    # Execute the function
                                     console.print(f"[cyan]Calling function: [bold]{name}[/bold][/cyan]")
                                     console.print(f"[cyan]With arguments:[/cyan] {json.dumps(args, indent=2)}")
+                                    result = self.tool_registry.call_function(name, args)
                                     
-                                    # Check if function exists
-                                    if not self.tool_registry.has_tool(name):
-                                        error_msg = f"Function '{name}' not found in registry"
-                                        console.print(f"[red]{error_msg}[/red]")
-                                        result = {"error": error_msg, "success": False}
-                                        all_successful = False
-                                    else:
-                                        result = self.tool_registry.call_function(name, args)
-                                        
                                     # Check if there was an error
                                     if "error" in result:
                                         all_successful = False
@@ -2344,16 +2528,42 @@ print("Hello, world!")
                                     else:
                                         console.print(f"[green]Result from {name}:[/green]")
                                         console.print(json.dumps(result, indent=2))
-                                        
+                                    
                                     self.conversation_history.append({"role": "tool", "name": name, "content": json.dumps(result, indent=2)})
                                     results.append({"function_name": name, "arguments": args, "result": result})
                                 
-                                # If any function call failed, ask the model to correct itself
-                                if not all_successful:
-                                    correction_prompt = (
-                                        f"There were errors in your function calls: {json.dumps(results)}. "
-                                        f"Please correct your approach and try again with valid function calls."
-                                    )
+                                # If any function call failed, try to recover with increasingly specific guidance
+                                retry_count = 0
+                                while not all_successful and retry_count < max_retries:
+                                    retry_count += 1
+                                    
+                                    # Create a detailed error report
+                                    error_details = []
+                                    for res in results:
+                                        if "error" in res["result"]:
+                                            error_details.append({
+                                                "function": res["function_name"],
+                                                "arguments": res["arguments"],
+                                                "error": res["result"].get("error"),
+                                                "suggestion": self._get_function_suggestion(res["function_name"], res["arguments"], res["result"])
+                                            })
+                                    
+                                    # Generate a correction prompt based on retry count
+                                    if retry_count == 1:
+                                        # First retry: general guidance
+                                        correction_prompt = (
+                                            f"There were errors in your function calls. Please correct your approach and try again with valid function calls.\n\n"
+                                            f"Error details: {json.dumps(error_details, indent=2)}"
+                                        )
+                                    else:
+                                        # Second retry: more specific guidance with available tools
+                                        available_tools = self.tool_registry.get_available_tools()
+                                        correction_prompt = (
+                                            f"Your function calls still have errors. Here are the available tools you can use: "
+                                            f"{', '.join(available_tools[:10])}.\n\n"
+                                            f"Please use one of these tools with the correct parameters. Error details: {json.dumps(error_details, indent=2)}"
+                                        )
+                                    
                                     self.add_message("user", correction_prompt)
                                     corrected_response = self.client.completions.create(
                                         model=self.model,
@@ -2370,20 +2580,55 @@ print("Hello, world!")
                                     if corrected_function_calls:
                                         # Process the corrected function calls
                                         corrected_results = []
+                                        all_successful = True  # Reset success flag for this retry
+                                        
                                         for fc in corrected_function_calls:
                                             name = fc["name"]
                                             args = fc["arguments"]
-                                            if self.tool_registry.has_tool(name):
-                                                console.print(f"[cyan]Retrying function: [bold]{name}[/bold][/cyan]")
-                                                console.print(f"[cyan]With arguments:[/cyan] {json.dumps(args, indent=2)}")
-                                                result = self.tool_registry.call_function(name, args)
-                                                console.print(f"[green]Result from {name}:[/green]")
+                                            
+                                            # Try to find similar function if exact match not found
+                                            if not self.tool_registry.has_tool(name):
+                                                similar_tool = self._find_similar_tool(name)
+                                                if similar_tool:
+                                                    console.print(f"[yellow]Function '{name}' not found, using similar function '{similar_tool}'[/yellow]")
+                                                    name = similar_tool
+                                                else:
+                                                    error_msg = f"Function '{name}' not found in registry"
+                                                    console.print(f"[red]{error_msg}[/red]")
+                                                    result = {"error": error_msg, "success": False}
+                                                    all_successful = False
+                                                    self.conversation_history.append({"role": "tool", "name": name, "content": json.dumps(result, indent=2)})
+                                                    corrected_results.append({"function_name": name, "arguments": args, "result": result})
+                                                    continue
+                                            
+                                            console.print(f"[cyan]Retrying function: [bold]{name}[/bold][/cyan]")
+                                            console.print(f"[cyan]With arguments:[/cyan] {json.dumps(args, indent=2)}")
+                                            result = self.tool_registry.call_function(name, args)
+                                            
+                                            if "error" in result:
+                                                all_successful = False
+                                                console.print(f"[red]Error in retry {retry_count} for {name}: {result.get('error')}[/red]")
+                                            else:
+                                                console.print(f"[green]Result from {name} (retry {retry_count}):[/green]")
                                                 console.print(json.dumps(result, indent=2))
-                                                self.conversation_history.append({"role": "tool", "name": name, "content": json.dumps(result, indent=2)})
-                                                corrected_results.append({"function_name": name, "arguments": args, "result": result})
+                                                
+                                            self.conversation_history.append({"role": "tool", "name": name, "content": json.dumps(result, indent=2)})
+                                            corrected_results.append({"function_name": name, "arguments": args, "result": result})
                                         
                                         if corrected_results:
-                                            results = corrected_results
+                                            # If we got successful results in this retry, use them
+                                            # Otherwise, keep the original results to avoid losing information
+                                            successful_results = [r for r in corrected_results if "error" not in r["result"]]
+                                            if successful_results:
+                                                results = successful_results
+                                            else:
+                                                # Combine original successful results with any new information
+                                                successful_original = [r for r in results if "error" not in r["result"]]
+                                                results = successful_original + corrected_results
+                                    
+                                    # If all functions succeeded in this retry, break the loop
+                                    if all_successful:
+                                        break
                                 
                                 final_prompt = f"Based on these function results: {json.dumps(results)}, provide a direct answer."
                                 final_response = self.client.completions.create(
