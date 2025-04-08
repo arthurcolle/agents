@@ -4320,7 +4320,7 @@ class CLIAgent:
                     self.conversation_history.append({
                         "role": "assistant",
                         # Include content if the model provided any text alongside tool calls
-                        "content": assistant_message.content or "",
+                        "content": assistant_message.content,
                         "tool_calls": raw_tool_calls
                     })
 
