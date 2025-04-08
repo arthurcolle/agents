@@ -119,6 +119,9 @@ except ImportError as e:
     console.print("[yellow]Please ensure atomic_agent.py is in the same directory or Python path.[/yellow]")
     sys.exit(1)
 
+# --- Dependency Handling ---
+# (Keep other dependency imports here if needed)
+
 # --- CoALA Core Components ---
 
 @dataclass
