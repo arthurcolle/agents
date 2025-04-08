@@ -1616,7 +1616,16 @@ class ToolRegistry:
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
-    def _web_search(self, query: str) -> Dict[str, Any]:
+    def search(self, query: str) -> Dict[str, Any]:
+        """
+        Search the web for information using Jina's search API.
+        
+        Args:
+            query: The search query string
+            
+        Returns:
+            Dictionary containing search results or error information
+        """
         if not self.jina_client:
             try:
                 self.jina_client = JinaClient()
@@ -1633,29 +1642,122 @@ class ToolRegistry:
                 asyncio.set_event_loop(loop)
                 
             result = loop.run_until_complete(self.jina_client.search(query))
-            return {"success": True, "query": query, "results": result["results"]}
+            
+            # Process the results to make them more readable
+            processed_results = result["results"]
+            
+            # Extract relevant information if possible
+            try:
+                # Try to parse as JSON if it looks like JSON
+                if processed_results.strip().startswith('{') and processed_results.strip().endswith('}'):
+                    processed_results = json.loads(processed_results)
+            except:
+                # If parsing fails, keep as string
+                pass
+                
+            return {
+                "success": True, 
+                "query": query, 
+                "results": processed_results,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
+    def _web_search(self, query: str) -> Dict[str, Any]:
+        """Legacy wrapper for the search function"""
+        return self.search(query)
 
-    def _web_read(self, url: str) -> Dict[str, Any]:
+    def read(self, url: str) -> Dict[str, Any]:
+        """
+        Read and extract content from a web page using Jina's reader API.
+        
+        Args:
+            url: The URL of the web page to read
+            
+        Returns:
+            Dictionary containing the extracted content or error information
+        """
         if not self.jina_client:
-            return {"error": "Jina client not initialized. Please set JINA_API_KEY environment variable.", "success": False}
+            try:
+                self.jina_client = JinaClient()
+                console.print("[green]Successfully initialized Jina client[/green]")
+            except ValueError:
+                return {"error": "Jina client not initialized. Please set JINA_API_KEY environment variable.", "success": False}
+        
         try:
-            loop = asyncio.get_event_loop()
+            # Create a new event loop for this thread if needed
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
             result = loop.run_until_complete(self.jina_client.read(url))
-            return {"success": True, "url": url, "content": result["results"]}
+            
+            # Process the content to make it more readable
+            content = result["results"]
+            
+            # Extract metadata about the page
+            metadata = {
+                "url": url,
+                "retrieved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "content_length": len(content)
+            }
+            
+            return {
+                "success": True, 
+                "url": url, 
+                "content": content,
+                "metadata": metadata
+            }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
+    def _web_read(self, url: str) -> Dict[str, Any]:
+        """Legacy wrapper for the read function"""
+        return self.read(url)
 
-    def _fact_check(self, query: str) -> Dict[str, Any]:
+    def fact_check(self, query: str) -> Dict[str, Any]:
+        """
+        Verify a statement using Jina's fact checking API.
+        
+        Args:
+            query: The statement to fact check
+            
+        Returns:
+            Dictionary containing fact check results or error information
+        """
         if not self.jina_client:
-            return {"error": "Jina client not initialized. Please set JINA_API_KEY environment variable.", "success": False}
+            try:
+                self.jina_client = JinaClient()
+                console.print("[green]Successfully initialized Jina client[/green]")
+            except ValueError:
+                return {"error": "Jina client not initialized. Please set JINA_API_KEY environment variable.", "success": False}
+        
         try:
-            loop = asyncio.get_event_loop()
+            # Create a new event loop for this thread if needed
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
             result = loop.run_until_complete(self.jina_client.fact_check(query))
-            return {"success": True, "query": query, "fact_check_result": result}
+            
+            # Process the result to provide a more structured response
+            return {
+                "success": True, 
+                "query": query, 
+                "fact_check_result": result,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
+    def _fact_check(self, query: str) -> Dict[str, Any]:
+        """Legacy wrapper for the fact_check function"""
+        return self.fact_check(query)
 
     def _create_planning_session(self, task: str) -> Dict[str, Any]:
         try:
