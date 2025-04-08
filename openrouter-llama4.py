@@ -45,6 +45,10 @@ except ImportError:
 # Redis for PubSub and distributed features
 try:
     import redis
+    # Check if redis has asyncio support
+    if not hasattr(redis, 'asyncio'):
+        print("Warning: Redis installed but missing asyncio support. Install with 'pip install redis[hiredis]'")
+        print("Distributed features will be limited.")
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -195,7 +199,8 @@ if REDIS_AVAILABLE:
         
         # Initialize async Redis in the background
         try:
-            loop = asyncio.get_event_loop()
+            # Use get_running_loop instead of get_event_loop to avoid deprecation warning
+            loop = asyncio.get_running_loop()
         except RuntimeError:
             # Create a new event loop if one doesn't exist
             loop = asyncio.new_event_loop()
@@ -1949,10 +1954,19 @@ For computationally intensive tasks, use your parallel processing capabilities.
                     
                     # Properly await the coroutine in the recursive call
                     continuation_coroutine = self.chat(continuation_prompt, stream=True, recursive_call=True)
-                    continuation_generator = loop.run_until_complete(continuation_coroutine)
+                    
+                    # Use async_generator_to_list to convert the async generator to a list
+                    async def async_generator_to_list(async_gen):
+                        result = []
+                        async for item in async_gen:
+                            result.append(item)
+                        return result
+                    
+                    # Run the async function to get all chunks
+                    continuation_chunks = loop.run_until_complete(async_generator_to_list(continuation_coroutine))
                     
                     # Pass through all continuation responses
-                    for chunk in continuation_generator:
+                    for chunk in continuation_chunks:
                         # Add a flag to indicate this is part of a recursive flow
                         chunk["recursive"] = True
                         yield chunk
@@ -3832,7 +3846,8 @@ if __name__ == "__main__":
                 
                 # Create an event loop if needed
                 try:
-                    loop = asyncio.get_event_loop()
+                    # Use get_running_loop instead of get_event_loop to avoid deprecation warning
+                    loop = asyncio.get_running_loop()
                 except RuntimeError:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
