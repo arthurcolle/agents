@@ -1370,6 +1370,240 @@ class CodingTools:
                 "data": None
             }
 
+class DynamicToolRegistry:
+    """
+    Registry for dynamically adding and managing tools that the agent can use
+    """
+    def __init__(self, console=None):
+        self.console = console or Console()
+        self.tools = {}
+        self.tool_descriptions = {}
+        self.tool_categories = {}
+        self.tool_modules = {}
+        
+    def register_tool(self, name: str, func: Callable, description: str, 
+                     parameters: Dict[str, Any], category: str = "custom") -> Dict:
+        """
+        Register a new tool that the agent can use
+        
+        Args:
+            name: Name of the tool
+            func: Function to call when the tool is invoked
+            description: Description of what the tool does
+            parameters: OpenAI-compatible parameters schema
+            category: Category for organizing tools
+        """
+        if name in self.tools:
+            return {
+                "success": False,
+                "message": f"Tool with name '{name}' already exists",
+                "data": None
+            }
+        
+        self.tools[name] = func
+        self.tool_descriptions[name] = description
+        
+        # Add to category
+        if category not in self.tool_categories:
+            self.tool_categories[category] = []
+        self.tool_categories[category].append(name)
+        
+        # Store the module where this function is defined
+        module = inspect.getmodule(func)
+        if module:
+            self.tool_modules[name] = module.__name__
+        
+        return {
+            "success": True,
+            "message": f"Successfully registered tool '{name}' in category '{category}'",
+            "data": {
+                "name": name,
+                "description": description,
+                "category": category,
+                "parameters": parameters
+            }
+        }
+    
+    def unregister_tool(self, name: str) -> Dict:
+        """Remove a tool from the registry"""
+        if name not in self.tools:
+            return {
+                "success": False,
+                "message": f"Tool with name '{name}' does not exist",
+                "data": None
+            }
+        
+        # Remove from tools and descriptions
+        func = self.tools.pop(name)
+        description = self.tool_descriptions.pop(name)
+        
+        # Remove from categories
+        for category, tools in self.tool_categories.items():
+            if name in tools:
+                tools.remove(name)
+                break
+        
+        # Remove from modules
+        if name in self.tool_modules:
+            module_name = self.tool_modules.pop(name)
+        else:
+            module_name = None
+        
+        return {
+            "success": True,
+            "message": f"Successfully unregistered tool '{name}'",
+            "data": {
+                "name": name,
+                "description": description,
+                "module": module_name
+            }
+        }
+    
+    def get_tool(self, name: str) -> Optional[Callable]:
+        """Get a tool by name"""
+        return self.tools.get(name)
+    
+    def get_tool_description(self, name: str) -> Optional[str]:
+        """Get a tool's description by name"""
+        return self.tool_descriptions.get(name)
+    
+    def list_tools(self, category: str = None) -> List[str]:
+        """List all tools or tools in a specific category"""
+        if category:
+            return self.tool_categories.get(category, [])
+        else:
+            return list(self.tools.keys())
+    
+    def list_categories(self) -> List[str]:
+        """List all tool categories"""
+        return list(self.tool_categories.keys())
+    
+    def get_openai_tools_format(self, category: str = None) -> List[Dict]:
+        """
+        Get tools in OpenAI's tool format for the API
+        
+        Args:
+            category: Optional category to filter tools
+        """
+        tools = []
+        
+        tool_names = self.list_tools(category)
+        for name in tool_names:
+            # Skip if we don't have a description
+            if name not in self.tool_descriptions:
+                continue
+                
+            # Get the function
+            func = self.tools[name]
+            
+            # Get the function signature
+            sig = inspect.signature(func)
+            
+            # Create the tool definition
+            tool = {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": self.tool_descriptions[name],
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            }
+            
+            # Add required parameters
+            required = []
+            for param_name, param in sig.parameters.items():
+                # Skip self parameter for methods
+                if param_name == "self":
+                    continue
+                    
+                # Add to required if no default value
+                if param.default == inspect.Parameter.empty:
+                    required.append(param_name)
+            
+            if required:
+                tool["function"]["parameters"]["required"] = required
+                
+            tools.append(tool)
+            
+        return tools
+    
+    def execute_tool(self, name: str, arguments: Dict) -> Dict:
+        """Execute a tool by name with the given arguments"""
+        if name not in self.tools:
+            return {
+                "success": False,
+                "message": f"Tool with name '{name}' does not exist",
+                "data": None
+            }
+        
+        try:
+            func = self.tools[name]
+            result = func(**arguments)
+            
+            # If the result is already a dict with success/message/data, return it
+            if isinstance(result, dict) and "success" in result and "message" in result:
+                return result
+                
+            # Otherwise, wrap the result
+            return {
+                "success": True,
+                "message": f"Successfully executed tool '{name}'",
+                "data": result
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Error executing tool '{name}': {str(e)}",
+                "data": None
+            }
+    
+    def load_tool_from_code(self, name: str, code: str, description: str, 
+                           parameters: Dict[str, Any], category: str = "custom") -> Dict:
+        """
+        Load a tool from Python code
+        
+        Args:
+            name: Name of the tool
+            code: Python code defining the function
+            description: Description of what the tool does
+            parameters: OpenAI-compatible parameters schema
+            category: Category for organizing tools
+        """
+        try:
+            # Create a temporary module
+            module_name = f"dynamic_tool_{name}"
+            spec = importlib.util.spec_from_loader(module_name, loader=None)
+            module = importlib.util.module_from_spec(spec)
+            
+            # Execute the code in the module's namespace
+            exec(code, module.__dict__)
+            
+            # Find the function in the module
+            func = None
+            for item_name, item in module.__dict__.items():
+                if callable(item) and not item_name.startswith("__"):
+                    func = item
+                    break
+            
+            if not func:
+                return {
+                    "success": False,
+                    "message": "No function found in the provided code",
+                    "data": None
+                }
+            
+            # Register the tool
+            return self.register_tool(name, func, description, parameters, category)
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Error loading tool from code: {str(e)}",
+                "data": None
+            }
+
 class MetaReflectionLayer:
     """
     Meta-cognitive layer for agent self-reflection and oversight
@@ -1490,6 +1724,9 @@ class CLIAgent:
         self.enable_meta = enable_meta
         self.meta_layer = MetaReflectionLayer(model=self.meta_model, console=self.console)
         
+        # Dynamic tool registry
+        self.tool_registry = DynamicToolRegistry(console=self.console)
+        
         # Dynamic agent contexts
         self.agent_contexts = {}
         
@@ -1512,6 +1749,12 @@ class CLIAgent:
             self.console.print("[dim]Initialized dynamic agents: file_agent, data_analysis_agent[/dim]")
         except Exception as e:
             self.console.print(f"[bold red]Error initializing dynamic agents: {e}[/bold red]")
+    
+        # Register built-in tools
+        self._register_builtin_tools()
+        
+        # Define available tools for OpenAI API
+        self.tools = self.tool_registry.get_openai_tools_format() + [
     
         # Register built-in tools
         self._register_builtin_tools()
@@ -2727,11 +2970,14 @@ class CLIAgent:
                 if "```python" in message or "```py" in message or "execute this code" in message.lower():
                     self.console.print("[bold yellow]Warning: Code execution detected in request. Proceeding with caution.[/bold yellow]")
                 
+                # Get the latest tools (in case new ones were registered)
+                current_tools = self.tool_registry.get_openai_tools_format() + self.tools
+                
                 # Primary reasoning with inner model
                 response = client.chat.completions.create(
                     model=self.model,
                     messages=self.conversation_history,
-                    tools=self.tools,
+                    tools=current_tools,
                     tool_choice="auto"
                 )
                 
@@ -2864,6 +3110,8 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.7, help="Temperature for model generation (0.0-2.0)")
     parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum tokens for model response")
     parser.add_argument("--list-agents", action="store_true", help="List available dynamic agents and exit")
+    parser.add_argument("--list-tools", action="store_true", help="List available tools and exit")
+    parser.add_argument("--list-categories", action="store_true", help="List available tool categories and exit")
     args = parser.parse_args()
     
     # Enable tracing if requested
