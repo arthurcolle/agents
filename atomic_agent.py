@@ -1075,9 +1075,6 @@ class ToolRegistry:
             return {"path": str(path), "success": True}
         except Exception as e:
             return {"error": str(e), "success": False}
-        try:
-            process = subprocess.run(command, shell=True, text=True, capture_output=True)
-            return {"command": command, "stdout": process.stdout, "stderr": process.stderr, "return_code": process.returncode, "success": process.returncode == 0}
         except Exception as e:
             return {"error": str(e), "success": False}
 
