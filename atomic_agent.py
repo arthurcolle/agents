@@ -2711,7 +2711,7 @@ class ToolRegistry:
         """Simple tool to respond directly to the user with text"""
         return {
             "success": True,
-            "response_sent": response_text
+            "response_sent": message
         }
         
     def _orchestrate_tasks(self, main_task: str, subtasks: List[str] = None, priority: int = 1, context: Dict[str, Any] = None, agent=None) -> Dict[str, Any]:
