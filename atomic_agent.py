@@ -1431,7 +1431,7 @@ class ToolRegistry:
             if not agent:
                 return {"error": "Could not access the TogetherAgent instance", "success": False}
             thread_id = f"thread_{int(time.time())}"
-            return {"thread_id": thread_id, "created_at": time.strftime("%Y-%m-%d %H:%M:%S"), "metadata": metadata or {}, "success": True}
+            return {"thread_id": thread_id, "created_at": time.strftime("%Y-%m-%d %H:%M:%S"), "metadata": {}, "success": True}
         except Exception as e:
             return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
 
