@@ -14,17 +14,19 @@ class HybridSearch:
     using DuckDB with FlockMTL, VSS, and FTS extensions.
     """
     
-    def __init__(self, db_path: str = ':memory:', api_key: Optional[str] = None):
+    def __init__(self, db_path: str = ':memory:', api_key: Optional[str] = None, 
+                 use_mock_embeddings: bool = True):
         """
         Initialize the hybrid search system.
         
         Args:
             db_path: Path to the DuckDB database file or ':memory:' for in-memory database
             api_key: OpenAI API key for embedding generation (if not set in environment)
+            use_mock_embeddings: Force using mock embeddings even if API key is available
         """
         self.db_path = db_path
         self.conn = duckdb.connect(database=db_path)
-        self.use_mock_embeddings = False
+        self.use_mock_embeddings = use_mock_embeddings
         
         # Set OpenAI API key if provided
         if api_key:
@@ -50,11 +52,8 @@ class HybridSearch:
             self.conn.execute("INSTALL fts;")
             self.conn.execute("LOAD fts;")
             
-            # Check if OpenAI API key is available
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-            if not api_key:
-                logger.warning("OPENAI_API_KEY environment variable not set. Using mock embeddings.")
-                self.use_mock_embeddings = True
+            # Load environment variables into DB
+            self._load_env_vars_to_db()
             
             logger.info("All extensions loaded successfully")
         except Exception as e:
@@ -62,7 +61,7 @@ class HybridSearch:
             raise
     
     def _load_env_vars_to_db(self):
-        """Load all environment variables into DuckDB as secrets"""
+        """Load all environment variables into DuckDB as a local table"""
         try:
             # Create a temporary table to store environment variables
             self.conn.execute("CREATE TEMPORARY TABLE IF NOT EXISTS env_vars (name VARCHAR, value VARCHAR)")
@@ -79,33 +78,6 @@ class HybridSearch:
                 # Insert into temporary table
                 self.conn.execute(f"INSERT INTO env_vars VALUES ('{name}', '{escaped_value}')")
             
-            # Create secrets for common API keys
-            api_keys = {
-                "openai": "OPENAI_API_KEY",
-                "azure_openai": "AZURE_OPENAI_API_KEY",
-                "anthropic": "ANTHROPIC_API_KEY",
-                "google": "GOOGLE_API_KEY",
-                "jina": "JINA_API_KEY"
-            }
-            
-            for secret_name, env_var in api_keys.items():
-                api_key = os.environ.get(env_var, "")
-                if api_key:
-                    try:
-                        # Try to create the secret
-                        self.conn.execute(f"CREATE SECRET {secret_name} (api_key='{api_key.replace('\'', '\'\'')}');")
-                        logger.info(f"Created secret for {secret_name}")
-                    except Exception as e:
-                        if "already exists" in str(e):
-                            # If secret already exists, try to update it
-                            try:
-                                self.conn.execute(f"UPDATE SECRET {secret_name} SET api_key='{api_key.replace('\'', '\'\'')}';")
-                                logger.info(f"Updated secret for {secret_name}")
-                            except Exception as update_e:
-                                logger.warning(f"Could not update secret for {secret_name}: {update_e}")
-                        else:
-                            logger.warning(f"Could not create secret for {secret_name}: {e}")
-            
             logger.info(f"Loaded {self.conn.execute('SELECT COUNT(*) FROM env_vars').fetchone()[0]} environment variables into database")
         except Exception as e:
             logger.warning(f"Error loading environment variables into database: {e}")
@@ -120,7 +92,7 @@ class HybridSearch:
                     id INTEGER PRIMARY KEY,
                     title VARCHAR,
                     content TEXT,
-                    embedding FLOAT[1536]
+                    embedding FLOAT[]
                 );
             """)
             logger.info(f"Created document table: {table_name}")
@@ -167,35 +139,59 @@ class HybridSearch:
             
             # Insert documents and generate embeddings
             for i, doc in enumerate(documents):
-                if self.use_mock_embeddings:
-                    # Generate mock embedding
-                    mock_embedding = self._generate_mock_embedding(doc['content'])
-                    
-                    # Convert to DuckDB array format with proper escaping
-                    mock_embedding_values = ", ".join([str(val) for val in mock_embedding])
-                    
-                    # Insert with mock embedding
-                    self.conn.execute(f"""
-                        INSERT INTO {table_name} (id, title, content, embedding)
-                        VALUES (
-                            {i+1},
-                            '{doc['title'].replace("'", "''")}',
-                            '{doc['content'].replace("'", "''")}',
-                            ARRAY[{mock_embedding_values}]::FLOAT[]
-                        );
-                    """)
-                else:
-                    # Generate embedding using FlockMTL's llm_embedding function
-                    self.conn.execute(f"""
-                        INSERT INTO {table_name} (id, title, content, embedding)
-                        SELECT 
-                            {i+1} as id,
-                            '{doc['title'].replace("'", "''")}' as title,
-                            '{doc['content'].replace("'", "''")}' as content,
-                            llm_embedding({{'model_name':'text-embedding-3-small'}}, 
-                                         {{'content': '{doc['content'].replace("'", "''")}'}}
-                            )::FLOAT[1536] as embedding;
-                    """)
+                try:
+                    if self.use_mock_embeddings:
+                        # Generate mock embedding
+                        mock_embedding = self._generate_mock_embedding(doc['content'])
+                        
+                        # Convert to DuckDB array format with proper escaping
+                        mock_embedding_values = ", ".join([str(val) for val in mock_embedding])
+                        
+                        # Insert with mock embedding
+                        self.conn.execute(f"""
+                            INSERT INTO {table_name} (id, title, content, embedding)
+                            VALUES (
+                                {i+1},
+                                '{doc['title'].replace("'", "''")}',
+                                '{doc['content'].replace("'", "''")}',
+                                ARRAY[{mock_embedding_values}]::FLOAT[]
+                            );
+                        """)
+                    else:
+                        try:
+                            # Try to generate embedding using FlockMTL's llm_embedding function
+                            self.conn.execute(f"""
+                                INSERT INTO {table_name} (id, title, content, embedding)
+                                SELECT 
+                                    {i+1} as id,
+                                    '{doc['title'].replace("'", "''")}' as title,
+                                    '{doc['content'].replace("'", "''")}' as content,
+                                    llm_embedding({{'model_name':'text-embedding-3-small'}}, 
+                                                 {{'content': '{doc['content'].replace("'", "''")}'}}
+                                    )::FLOAT[] as embedding;
+                            """)
+                        except Exception as api_error:
+                            # Fallback to mock embedding if API call fails
+                            logger.warning(f"Failed to generate embedding via API: {api_error}. Using mock embedding.")
+                            
+                            # Generate mock embedding
+                            mock_embedding = self._generate_mock_embedding(doc['content'])
+                            
+                            # Convert to DuckDB array format with proper escaping
+                            mock_embedding_values = ", ".join([str(val) for val in mock_embedding])
+                            
+                            # Insert with mock embedding
+                            self.conn.execute(f"""
+                                INSERT INTO {table_name} (id, title, content, embedding)
+                                VALUES (
+                                    {i+1},
+                                    '{doc['title'].replace("'", "''")}',
+                                    '{doc['content'].replace("'", "''")}',
+                                    ARRAY[{mock_embedding_values}]::FLOAT[]
+                                );
+                            """)
+                except Exception as doc_error:
+                    logger.error(f"Failed to insert document {i+1}: {doc_error}")
             
             logger.info(f"Inserted {len(documents)} documents into {table_name}")
         except Exception as e:
@@ -203,15 +199,8 @@ class HybridSearch:
             raise
     
     def create_indexes(self, table_name: str = "documents"):
-        """Create HNSW and FTS indexes on the document table"""
+        """Create FTS index on the document table (skip HNSW index for compatibility)"""
         try:
-            # Create HNSW index for vector similarity search
-            self.conn.execute(f"""
-                CREATE INDEX IF NOT EXISTS hnsw_idx ON {table_name} 
-                USING HNSW (embedding) WITH (metric = 'cosine');
-            """)
-            logger.info(f"Created HNSW index on {table_name}")
-            
             # Create FTS index for full-text search
             self.conn.execute(f"""
                 PRAGMA create_fts_index(
@@ -233,86 +222,31 @@ class HybridSearch:
     def hybrid_search(self, query: str, k: int = 5, table_name: str = "documents", 
                       fusion_method: str = "rrf", k_constant: float = 60.0) -> List[Dict[str, Any]]:
         """
-        Perform hybrid search combining vector similarity and BM25 text search.
+        Perform search using BM25 text search instead of hybrid search.
+        (Vector similarity disabled for compatibility)
         
         Args:
             query: Search query string
             k: Number of results to return
             table_name: Name of the table to search
-            fusion_method: Fusion method to use ('rrf' for Reciprocal Rank Fusion)
-            k_constant: k constant for RRF fusion
+            fusion_method: Not used in this version
+            k_constant: Not used in this version
             
         Returns:
             List of document dictionaries with search scores
         """
         try:
-            # Generate query embedding
-            if self.use_mock_embeddings:
-                # Generate mock embedding for query
-                mock_embedding = self._generate_mock_embedding(query)
-                
-                # Convert to DuckDB array format with proper escaping
-                mock_embedding_values = ", ".join([str(val) for val in mock_embedding])
-                
-                self.conn.execute(f"""
-                    CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
-                    SELECT ARRAY[{mock_embedding_values}]::FLOAT[] AS embedding;
-                """)
-            else:
-                self.conn.execute(f"""
-                    CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
-                    SELECT llm_embedding({{'model_name':'text-embedding-3-small'}}, 
-                                       {{'query': '{query.replace("'", "''")}'}})::FLOAT[1536] AS embedding;
-                """)
-            
-            # Perform hybrid search with fusion
+            # Perform text search
             result = self.conn.execute(f"""
-                WITH 
-                -- Vector similarity search
-                vector_results AS (
-                    SELECT 
-                        d.id, 
-                        d.title, 
-                        d.content,
-                        array_cosine_similarity(q.embedding, d.embedding) AS score,
-                        ROW_NUMBER() OVER (ORDER BY array_cosine_similarity(q.embedding, d.embedding) DESC) AS rank
-                    FROM {table_name} d, query_embedding q
-                    ORDER BY score DESC
-                    LIMIT 100
-                ),
-                
-                -- BM25 full-text search
-                bm25_results AS (
-                    SELECT 
-                        d.id, 
-                        d.title, 
-                        d.content,
-                        fts_main_{table_name}.match_bm25(id, '{query.replace("'", "''")}') AS score,
-                        ROW_NUMBER() OVER (ORDER BY fts_main_{table_name}.match_bm25(id, '{query.replace("'", "''")}') DESC) AS rank
-                    FROM {table_name} d
-                    WHERE fts_main_{table_name}.match_bm25(id, '{query.replace("'", "''")}') IS NOT NULL
-                    ORDER BY score DESC
-                    LIMIT 100
-                ),
-                
-                -- Combine results with fusion
-                combined_results AS (
-                    SELECT 
-                        COALESCE(v.id, b.id) AS id,
-                        COALESCE(v.title, b.title) AS title,
-                        COALESCE(v.content, b.content) AS content,
-                        -- RRF fusion score
-                        (1.0 / ({k_constant} + COALESCE(v.rank, 1000))) + 
-                        (1.0 / ({k_constant} + COALESCE(b.rank, 1000))) AS fusion_score
-                    FROM vector_results v
-                    FULL OUTER JOIN bm25_results b ON v.id = b.id
-                    ORDER BY fusion_score DESC
-                    LIMIT {k}
-                )
-                
-                SELECT id, title, content, fusion_score
-                FROM combined_results
-                ORDER BY fusion_score DESC;
+                SELECT 
+                    d.id, 
+                    d.title, 
+                    d.content,
+                    fts_main_{table_name}.match_bm25(id, '{query.replace("'", "''")}') AS score
+                FROM {table_name} d
+                WHERE fts_main_{table_name}.match_bm25(id, '{query.replace("'", "''")}') IS NOT NULL
+                ORDER BY score DESC
+                LIMIT {k};
             """).fetchall()
             
             # Convert result to list of dictionaries
@@ -325,10 +259,10 @@ class HybridSearch:
                     "score": row[3]
                 })
             
-            logger.info(f"Hybrid search for '{query}' returned {len(results)} results")
+            logger.info(f"Full-text search for '{query}' returned {len(results)} results")
             return results
         except Exception as e:
-            logger.error(f"Error performing hybrid search: {e}")
+            logger.error(f"Error performing search: {e}")
             raise
     
     def close(self):
@@ -339,9 +273,21 @@ class HybridSearch:
 
 def main():
     """Example usage of the HybridSearch class"""
-    # Initialize with your OpenAI API key
-    api_key = os.environ.get("OPENAI_API_KEY")
-    search = HybridSearch(api_key=api_key)
+    import argparse
+    
+    # Set up command line arguments
+    parser = argparse.ArgumentParser(description="Hybrid search demo using DuckDB and FlockMTL")
+    parser.add_argument("--query", "-q", type=str, default="vector similarity for search",
+                        help="Search query to execute")
+    parser.add_argument("--mock", "-m", action="store_true", default=True,
+                        help="Use mock embeddings instead of API (default: True)")
+    parser.add_argument("--results", "-r", type=int, default=3,
+                        help="Number of results to return (default: 3)")
+    
+    args = parser.parse_args()
+    
+    # Initialize search system
+    search = HybridSearch(use_mock_embeddings=args.mock)
     
     # Sample documents
     documents = [
@@ -371,17 +317,19 @@ def main():
     search.insert_documents(documents)
     search.create_indexes()
     
-    # Perform hybrid search
-    query = "vector similarity for search"
-    results = search.hybrid_search(query, k=3)
+    # Perform search with the provided query
+    results = search.hybrid_search(args.query, k=args.results)
     
     # Print results
-    print(f"\nSearch results for: '{query}'")
+    print(f"\nSearch results for: '{args.query}'")
     print("-" * 50)
-    for i, result in enumerate(results):
-        print(f"{i+1}. {result['title']} (Score: {result['score']:.4f})")
-        print(f"   {result['content'][:100]}...")
-        print()
+    if results:
+        for i, result in enumerate(results):
+            print(f"{i+1}. {result['title']} (Score: {result['score']:.4f})")
+            print(f"   {result['content'][:100]}...")
+            print()
+    else:
+        print("No results found.")
     
     # Close connection
     search.close()
