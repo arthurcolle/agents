@@ -432,23 +432,47 @@ class StructuredOutput:
 class URLExtraction(StructuredOutput):
     urls: List[str] = field(default_factory=list)
 
-@dataclass
-class WeatherData(StructuredOutput):
-    location: str
-    current_condition: str
-    temperature_f: float
-    temperature_c: float
-    humidity: int
-    wind_speed_mph: float
-    forecast: List[Dict[str, Any]] = field(default_factory=list)
-    last_updated: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
-    source: str = ""
+class WeatherData:
+    """Weather data container with structured output capabilities"""
     
-    def __post_init__(self):
-        # Ensure source is initialized properly
-        super().__post_init__()
-        if not hasattr(self, 'source'):
-            self.source = ""
+    def __init__(
+        self,
+        location: str,
+        current_condition: str,
+        temperature_f: float,
+        temperature_c: float,
+        humidity: int,
+        wind_speed_mph: float,
+        forecast: List[Dict[str, Any]] = None,
+        last_updated: str = None,
+        source: str = "",
+        timestamp: float = None
+    ):
+        self.location = location
+        self.current_condition = current_condition
+        self.temperature_f = temperature_f
+        self.temperature_c = temperature_c
+        self.humidity = humidity
+        self.wind_speed_mph = wind_speed_mph
+        self.forecast = forecast or []
+        self.last_updated = last_updated or time.strftime("%Y-%m-%d %H:%M:%S")
+        self.source = source
+        self.timestamp = timestamp or time.time()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization"""
+        return {
+            "location": self.location,
+            "current_condition": self.current_condition,
+            "temperature_f": self.temperature_f,
+            "temperature_c": self.temperature_c,
+            "humidity": self.humidity,
+            "wind_speed_mph": self.wind_speed_mph,
+            "forecast": self.forecast,
+            "last_updated": self.last_updated,
+            "source": self.source,
+            "timestamp": self.timestamp
+        }
 
 @dataclass
 class KnowledgeItem:
@@ -4355,14 +4379,25 @@ class ToolRegistry:
             
             # Parse the extracted data
             try:
-                weather_data = json.loads(extraction_response.choices[0].message.content)
+                weather_json = json.loads(extraction_response.choices[0].message.content)
                 
-                # Add source information and success flag
-                weather_data["source"] = "Jina web search"
-                weather_data["last_updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                weather_data["success"] = True
+                # Create WeatherData object
+                weather_data = WeatherData(
+                    location=weather_json["location"],
+                    current_condition=weather_json["current_condition"],
+                    temperature_f=weather_json["temperature_f"],
+                    temperature_c=weather_json["temperature_c"],
+                    humidity=weather_json["humidity"],
+                    wind_speed_mph=weather_json["wind_speed_mph"],
+                    forecast=weather_json.get("forecast", []),
+                    source="Jina web search"
+                )
                 
-                return weather_data
+                # Convert to dict and add success flag
+                result = weather_data.to_dict()
+                result["success"] = True
+                
+                return result
                 
             except json.JSONDecodeError:
                 # If JSON parsing fails, fall back to a simpler extraction method
@@ -4392,18 +4427,23 @@ class ToolRegistry:
                         "precipitation_chance": 30 + (i * 10) % 70
                     })
                 
-                return {
-                    "location": location,
-                    "current_condition": condition,
-                    "temperature_f": temp_f,
-                    "temperature_c": temp_c,
-                    "humidity": humidity,
-                    "wind_speed_mph": wind_speed,
-                    "forecast": forecast,
-                    "last_updated": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "source": "Jina web search (fallback extraction)",
-                    "success": True
-                }
+                # Create WeatherData object using fallback data
+                weather_data = WeatherData(
+                    location=location,
+                    current_condition=condition,
+                    temperature_f=temp_f,
+                    temperature_c=temp_c,
+                    humidity=humidity,
+                    wind_speed_mph=wind_speed,
+                    forecast=forecast,
+                    source="Jina web search (fallback extraction)"
+                )
+                
+                # Convert to dict and add success flag
+                result = weather_data.to_dict()
+                result["success"] = True
+                
+                return result
                 
         except Exception as e:
             console.print(f"[red]Error retrieving weather data: {str(e)}[/red]")
