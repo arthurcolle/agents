@@ -141,6 +141,7 @@ class AsyncTaskProcessor:
         self.knowledge_base = []
         self.processed_urls = set()
         self.url_pattern = re.compile(r'https?://[^\s<>"\']+|www\.[^\s<>"\']+')
+        self.image_processing_limit = 5
         self.worker_thread.start()
 
     def _worker(self):
@@ -187,11 +188,19 @@ class AsyncTaskProcessor:
             normalized_urls.append(url)
         return URLExtraction(source="text_extraction", urls=normalized_urls)
 
-    def add_urls_to_process(self, urls):
+    def add_urls_to_process(self, urls, process_images=False):
         new_urls = [url for url in urls if url not in self.processed_urls]
+        if process_images:
+            image_urls = [url for url in new_urls if url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
+            for image_url in image_urls[:self.image_processing_limit]:
+                self.processed_urls.add(image_url)
+                self.add_task(self._process_image, image_url)
+            new_urls = [url for url in new_urls if url not in image_urls]
+
         for url in new_urls:
-            self.processed_urls.add(url)
-            self.add_task(self._process_url, url)
+            if url not in self.processed_urls:
+                self.processed_urls.add(url)
+                self.add_task(self._process_url, url)
         return len(new_urls)
 
     async def _process_url(self, url):
