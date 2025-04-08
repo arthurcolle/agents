@@ -3,13 +3,33 @@ import logging
 import asyncio
 import json
 from typing import Dict, List, Any, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException, APIRouter
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import uvicorn
-from openai_agent import AutonomousAgent, TranslationOrchestrator, SYSTEM_GOAL
+
+# Import from openai_agent with error handling
+try:
+    from openai_agent import (
+        AutonomousAgent, TranslationOrchestrator, SYSTEM_GOAL,
+        search_web, fact_check, read_url, JINA_AVAILABLE
+    )
+except ImportError as e:
+    logging.error(f"Error importing from openai_agent: {e}")
+    # Define fallbacks
+    SYSTEM_GOAL = "Build a cool web app with dynamic generative UI"
+    JINA_AVAILABLE = False
+    
+    async def search_web(query: str):
+        return {"error": "Search functionality not available"}
+    
+    async def fact_check(statement: str):
+        return {"error": "Fact check functionality not available"}
+    
+    async def read_url(url: str):
+        return {"error": "URL reading functionality not available"}
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -299,9 +319,282 @@ class ConnectionManager:
             "content": html_content
         })
         
+    def _format_search_results_html(self, results: Dict[str, Any], query: str) -> str:
+        """Format search results as HTML"""
+        if results.get("error"):
+            return f"""
+            <div class="error-container">
+                <h3>Error searching for "{query}"</h3>
+                <p>{results.get("message", "Unknown error")}</p>
+                <p>Make sure you have set the JINA_API_KEY environment variable.</p>
+            </div>
+            """
+        
+        if results.get("mock", False):
+            mock_notice = """
+            <div class="notice" style="background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin-bottom: 15px;">
+                <p><strong>Note:</strong> These are mock results. For real results, please set the JINA_API_KEY environment variable.</p>
+            </div>
+            """
+        else:
+            mock_notice = ""
+        
+        result_items = ""
+        search_results = results.get("results", [])
+        
+        if isinstance(search_results, list):
+            for item in search_results:
+                title = item.get("title", "No title")
+                url = item.get("url", "#")
+                snippet = item.get("snippet", "No description available")
+                
+                result_items += f"""
+                <div class="search-result">
+                    <h4><a href="{url}" target="_blank">{title}</a></h4>
+                    <p class="url">{url}</p>
+                    <p class="snippet">{snippet}</p>
+                </div>
+                """
+        else:
+            result_items = f"<p>Unexpected result format: {search_results}</p>"
+        
+        return f"""
+        <div class="search-results-container">
+            <h3>Search Results for "{query}"</h3>
+            {mock_notice}
+            <div class="search-results">
+                {result_items if result_items else "<p>No results found</p>"}
+            </div>
+            <style>
+                .search-results-container {{
+                    font-family: Arial, sans-serif;
+                }}
+                .search-result {{
+                    margin-bottom: 20px;
+                    padding-bottom: 10px;
+                    border-bottom: 1px solid #eee;
+                }}
+                .search-result h4 {{
+                    margin-bottom: 5px;
+                }}
+                .search-result .url {{
+                    color: #006621;
+                    font-size: 0.8em;
+                    margin-bottom: 5px;
+                }}
+                .search-result .snippet {{
+                    color: #545454;
+                    font-size: 0.9em;
+                }}
+            </style>
+        </div>
+        """
+    
+    def _format_fact_check_html(self, results: Dict[str, Any], statement: str) -> str:
+        """Format fact check results as HTML"""
+        if results.get("error"):
+            return f"""
+            <div class="error-container">
+                <h3>Error fact-checking "{statement}"</h3>
+                <p>{results.get("message", "Unknown error")}</p>
+                <p>Make sure you have set the JINA_API_KEY environment variable.</p>
+            </div>
+            """
+        
+        if results.get("mock", False):
+            mock_notice = """
+            <div class="notice" style="background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin-bottom: 15px;">
+                <p><strong>Note:</strong> These are mock results. For real results, please set the JINA_API_KEY environment variable.</p>
+            </div>
+            """
+        else:
+            mock_notice = ""
+        
+        fact_check = results.get("factCheck", {})
+        verdict = fact_check.get("verdict", "UNKNOWN")
+        confidence = fact_check.get("confidence", 0)
+        explanation = fact_check.get("explanation", "No explanation available")
+        
+        # Determine verdict color
+        verdict_color = "#6c757d"  # Default gray
+        if verdict == "TRUE":
+            verdict_color = "#28a745"  # Green
+        elif verdict == "FALSE":
+            verdict_color = "#dc3545"  # Red
+        elif verdict == "PARTIALLY_TRUE":
+            verdict_color = "#fd7e14"  # Orange
+        
+        # Format sources
+        sources_html = ""
+        sources = results.get("sources", [])
+        if sources:
+            sources_items = ""
+            for source in sources:
+                title = source.get("title", "Unnamed Source")
+                url = source.get("url", "#")
+                relevance = source.get("relevance", 0)
+                
+                sources_items += f"""
+                <li>
+                    <a href="{url}" target="_blank">{title}</a>
+                    <span class="relevance">Relevance: {relevance:.2f}</span>
+                </li>
+                """
+            
+            sources_html = f"""
+            <div class="sources">
+                <h4>Sources:</h4>
+                <ul>
+                    {sources_items}
+                </ul>
+            </div>
+            """
+        
+        return f"""
+        <div class="fact-check-container">
+            <h3>Fact Check: "{statement}"</h3>
+            {mock_notice}
+            <div class="verdict" style="background-color: {verdict_color}; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">
+                <strong>Verdict: {verdict}</strong>
+                <span class="confidence">Confidence: {confidence:.2f}</span>
+            </div>
+            <div class="explanation">
+                <h4>Explanation:</h4>
+                <p>{explanation}</p>
+            </div>
+            {sources_html}
+            <style>
+                .fact-check-container {{
+                    font-family: Arial, sans-serif;
+                }}
+                .confidence {{
+                    float: right;
+                    font-size: 0.9em;
+                }}
+                .sources {{
+                    margin-top: 20px;
+                }}
+                .sources ul {{
+                    padding-left: 20px;
+                }}
+                .relevance {{
+                    font-size: 0.8em;
+                    color: #6c757d;
+                    margin-left: 10px;
+                }}
+            </style>
+        </div>
+        """
+    
+    def _format_read_url_html(self, results: Dict[str, Any], url: str) -> str:
+        """Format URL reading results as HTML"""
+        if results.get("error"):
+            return f"""
+            <div class="error-container">
+                <h3>Error reading URL: {url}</h3>
+                <p>{results.get("message", "Unknown error")}</p>
+                <p>Make sure you have set the JINA_API_KEY environment variable.</p>
+            </div>
+            """
+        
+        if results.get("mock", False):
+            mock_notice = """
+            <div class="notice" style="background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin-bottom: 15px;">
+                <p><strong>Note:</strong> These are mock results. For real results, please set the JINA_API_KEY environment variable.</p>
+            </div>
+            """
+        else:
+            mock_notice = ""
+        
+        title = results.get("title", "No title")
+        content = results.get("content", "No content available")
+        summary = results.get("summary", "No summary available")
+        
+        return f"""
+        <div class="url-content-container">
+            <h3>Content from: <a href="{url}" target="_blank">{url}</a></h3>
+            {mock_notice}
+            <div class="url-title">
+                <h4>{title}</h4>
+            </div>
+            <div class="url-summary">
+                <h4>Summary:</h4>
+                <p>{summary}</p>
+            </div>
+            <div class="url-content">
+                <h4>Content:</h4>
+                <div class="content-box">
+                    {content}
+                </div>
+            </div>
+            <style>
+                .url-content-container {{
+                    font-family: Arial, sans-serif;
+                }}
+                .url-title {{
+                    margin-bottom: 15px;
+                }}
+                .url-summary {{
+                    margin-bottom: 20px;
+                }}
+                .content-box {{
+                    max-height: 300px;
+                    overflow-y: auto;
+                    padding: 10px;
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    background-color: #f9f9f9;
+                }}
+            </style>
+        </div>
+        """
+        
     async def process_message(self, websocket: WebSocket, message: str):
         # Send thinking indicator
         await self.send_thinking(websocket, "Thinking...")
+        
+        # Check for special commands
+        if message.startswith("/search "):
+            query = message[8:].strip()
+            results = await search_web(query)
+            
+            # Format results for display
+            response = {
+                "conversation_response": f"Here are the search results for '{query}':",
+                "ui_elements": self._format_search_results_html(results, query)
+            }
+            
+            await self.send_message(websocket, response["conversation_response"])
+            await self.send_ui_update(websocket, response["ui_elements"])
+            return
+            
+        elif message.startswith("/fact-check "):
+            statement = message[12:].strip()
+            results = await fact_check(statement)
+            
+            # Format results for display
+            response = {
+                "conversation_response": f"Fact check results for '{statement}':",
+                "ui_elements": self._format_fact_check_html(results, statement)
+            }
+            
+            await self.send_message(websocket, response["conversation_response"])
+            await self.send_ui_update(websocket, response["ui_elements"])
+            return
+            
+        elif message.startswith("/read-url "):
+            url = message[10:].strip()
+            results = await read_url(url)
+            
+            # Format results for display
+            response = {
+                "conversation_response": f"Content analysis for {url}:",
+                "ui_elements": self._format_read_url_html(results, url)
+            }
+            
+            await self.send_message(websocket, response["conversation_response"])
+            await self.send_ui_update(websocket, response["ui_elements"])
+            return
         
         # Process with autonomous agent
         enhanced_prompt = f"""
@@ -309,6 +602,11 @@ class ConnectionManager:
         Based on their request, provide:
         1. A conversational response
         2. Any UI elements that would help them accomplish their task
+        
+        Available special commands:
+        - /search [query]: Search the web
+        - /fact-check [statement]: Fact check a statement
+        - /read-url [url]: Read and analyze content from a URL
         
         User request: {message}
         
@@ -356,9 +654,43 @@ manager = ConnectionManager()
 class SystemGoal(BaseModel):
     goal: str
 
-@app.get("/api/system-goal", response_model=SystemGoal)
+class SearchQuery(BaseModel):
+    query: str
+
+class FactCheckQuery(BaseModel):
+    statement: str
+
+class ReadUrlQuery(BaseModel):
+    url: str
+
+# Create API router
+api_router = APIRouter(prefix="/api")
+
+@api_router.get("/system-goal", response_model=SystemGoal)
 async def get_system_goal():
     return {"goal": SYSTEM_GOAL}
+
+@api_router.post("/search")
+async def api_search(query: SearchQuery):
+    results = await search_web(query.query)
+    return results
+
+@api_router.post("/fact-check")
+async def api_fact_check(query: FactCheckQuery):
+    results = await fact_check(query.statement)
+    return results
+
+@api_router.post("/read-url")
+async def api_read_url(query: ReadUrlQuery):
+    results = await read_url(query.url)
+    return results
+
+@api_router.get("/jina-status")
+async def get_jina_status():
+    return {"available": JINA_AVAILABLE}
+
+# Register API router
+app.include_router(api_router)
 
 # WebSocket endpoint
 @app.websocket("/ws")

@@ -3,11 +3,23 @@ import logging
 import asyncio
 import json
 from typing import Dict, List, Any, Optional
-from agents import Agent, Runner, ItemHelpers, MessageOutputItem, trace
+import aiohttp
+from pydantic import BaseModel
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openai-agent")
+
+# Import Jina client (with fallback for import errors)
+try:
+    from jina_client import JinaClient
+    jina_client = JinaClient()
+    JINA_AVAILABLE = True
+    logger.info("Jina client initialized successfully")
+except (ImportError, Exception) as e:
+    logger.warning(f"Jina client initialization failed: {e}")
+    jina_client = None
+    JINA_AVAILABLE = False
 
 # Global configuration
 SYSTEM_GOAL = """
@@ -380,6 +392,67 @@ async def main_async():
     print("\nTranslation results:")
     print(translation_result)
 
+# Jina search functions
+async def search_web(query: str) -> Dict[str, Any]:
+    """
+    Search the web using Jina.ai
+    Args:
+        query: Search query
+    Returns:
+        Search results
+    """
+    if not JINA_AVAILABLE or not jina_client:
+        logger.warning("Jina client not available, returning mock results")
+        if jina_client:
+            return jina_client.get_mock_search_results(query)
+        return {
+            "error": True,
+            "message": "Jina client not available"
+        }
+    
+    logger.info(f"Searching web for: {query}")
+    return await jina_client.search(query)
+
+async def fact_check(statement: str) -> Dict[str, Any]:
+    """
+    Fact check a statement using Jina.ai
+    Args:
+        statement: Statement to fact check
+    Returns:
+        Fact check results
+    """
+    if not JINA_AVAILABLE or not jina_client:
+        logger.warning("Jina client not available, returning mock results")
+        if jina_client:
+            return jina_client.get_mock_fact_check(statement)
+        return {
+            "error": True,
+            "message": "Jina client not available"
+        }
+    
+    logger.info(f"Fact checking: {statement}")
+    return await jina_client.fact_check(statement)
+
+async def read_url(url: str) -> Dict[str, Any]:
+    """
+    Read and analyze content from a URL using Jina.ai
+    Args:
+        url: URL to read
+    Returns:
+        Content analysis
+    """
+    if not JINA_AVAILABLE or not jina_client:
+        logger.warning("Jina client not available, returning mock results")
+        if jina_client:
+            return jina_client.get_mock_read_results(url)
+        return {
+            "error": True,
+            "message": "Jina client not available"
+        }
+    
+    logger.info(f"Reading URL: {url}")
+    return await jina_client.read(url)
+
 if __name__ == "__main__":
     # Create a simple menu to choose between examples
     print("Choose an example to run:")
@@ -387,8 +460,9 @@ if __name__ == "__main__":
     print("2. Translation orchestration")
     print("3. Run both examples")
     print("4. Start web app with dynamic generative UI")
+    print("5. Test Jina.ai integration")
     
-    choice = input("Enter your choice (1-4): ")
+    choice = input("Enter your choice (1-5): ")
     
     if choice == "1":
         # Run the autonomous agent example synchronously
@@ -412,3 +486,35 @@ if __name__ == "__main__":
             run_app()
         except ImportError:
             print("Web app module not found. Make sure web_app.py is in the current directory.")
+    elif choice == "5":
+        # Test Jina.ai integration
+        print("\n=== Testing Jina.ai Integration ===")
+        
+        if not JINA_AVAILABLE:
+            print("Jina client is not available. Make sure jina_client.py is in the current directory.")
+            print("Note: You'll need a Jina API key for real results. Set it as JINA_API_KEY environment variable.")
+            print("Without an API key, mock results will be returned.")
+        
+        async def run_jina_tests():
+            # Test search
+            query = input("\nEnter a search query: ")
+            print("Searching...")
+            search_results = await search_web(query)
+            print("\nSearch Results:")
+            print(json.dumps(search_results, indent=2))
+            
+            # Test fact check
+            statement = input("\nEnter a statement to fact check: ")
+            print("Fact checking...")
+            fact_check_results = await fact_check(statement)
+            print("\nFact Check Results:")
+            print(json.dumps(fact_check_results, indent=2))
+            
+            # Test URL reading
+            url = input("\nEnter a URL to read: ")
+            print("Reading URL...")
+            read_results = await read_url(url)
+            print("\nURL Reading Results:")
+            print(json.dumps(read_results, indent=2))
+        
+        asyncio.run(run_jina_tests())
