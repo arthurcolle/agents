@@ -4317,10 +4317,16 @@ class CLIAgent:
                             }
                         } for tool_call in assistant_message.tool_calls
                     ]
+                    
+                    # Explicitly assign values before creating the dictionary
+                    role_val = "assistant"
+                    content_val = assistant_message.content
+                    tool_calls_val = raw_tool_calls
+                    
                     history_entry = {
-                        "role": "assistant",
-                        "content": assistant_message.content,
-                        "tool_calls": raw_tool_calls
+                        "role": role_val,
+                        "content": content_val,
+                        "tool_calls": tool_calls_val
                     }
                     self.conversation_history.append(history_entry)
 
