@@ -139,6 +139,7 @@ if REDIS_AVAILABLE:
                 return redis_async_client
             except Exception as e:
                 logger.error(f"Failed to initialize async Redis client: {e}")
+                # Global declaration must come before assignment
                 global REDIS_AVAILABLE
                 REDIS_AVAILABLE = False
                 return None
