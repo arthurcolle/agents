@@ -1624,12 +1624,15 @@ class PerceptualMemory:
     Enables experience replay and semantic search across past interactions
     Features temporal snapshotting for evolutionary optimization
     Includes realtime cognition for enhanced contextual awareness
+    Supports knowledge base integration for specialized domain expertise
     """
-    def __init__(self, max_frames=1000, embedding_dim=1536, vector_db_path="perceptual_memory.pkl"):
+    def __init__(self, max_frames=1000, embedding_dim=1536, vector_db_path="perceptual_memory.pkl", 
+                knowledge_base_dir="knowledge_bases_async_advanced"):
         self.frames = deque(maxlen=max_frames)  # Store recent frames in memory
         self.frame_embeddings = deque(maxlen=max_frames)  # Store embeddings for semantic search
         self.vector_db_path = vector_db_path
         self.embedding_dim = embedding_dim
+        self.knowledge_base_dir = knowledge_base_dir
         
         # Temporal snapshots for evolutionary strategies
         self.snapshots = {}  # Dictionary of timestamped memory snapshots
@@ -1642,8 +1645,16 @@ class PerceptualMemory:
         self.temporal_patterns = []  # Detected patterns over time
         self.cognitive_state = "normal"  # Current cognitive processing state
         
+        # Knowledge base components
+        self.knowledge_bases = {}  # Dictionary of loaded knowledge bases
+        self.kb_embeddings = {}  # Embeddings for knowledge base entries
+        self.kb_stats = {}  # Statistics for knowledge base usage
+        
         # Load existing memory if available
         self._load_memory()
+        
+        # Initialize knowledge bases
+        self._init_knowledge_bases()
         
         # Track statistics
         self.stats = {
@@ -1653,7 +1664,10 @@ class PerceptualMemory:
             "total_snapshots": 0,
             "total_evolutions": 0,
             "total_realtime_inferences": 0,
-            "cognitive_state_changes": 0
+            "cognitive_state_changes": 0,
+            "kb_retrievals": 0,
+            "kb_updates": 0,
+            "kb_evolutions": 0
         }
     
     def _load_memory(self):
@@ -1665,9 +1679,83 @@ class PerceptualMemory:
                     self.frames = saved_data.get('frames', deque(maxlen=self.frames.maxlen))
                     self.frame_embeddings = saved_data.get('embeddings', deque(maxlen=self.frames.maxlen))
                     self.stats = saved_data.get('stats', self.stats)
+                    self.kb_stats = saved_data.get('kb_stats', self.kb_stats)
                     logging.info(f"Loaded {len(self.frames)} perceptual frames from disk")
         except Exception as e:
             logging.error(f"Error loading perceptual memory: {e}")
+    
+    def _init_knowledge_bases(self):
+        """Initialize knowledge bases from the knowledge base directory"""
+        try:
+            if not os.path.exists(self.knowledge_base_dir):
+                logging.warning(f"Knowledge base directory not found: {self.knowledge_base_dir}")
+                return
+                
+            # Scan for knowledge base directories
+            kb_dirs = [d for d in os.listdir(self.knowledge_base_dir) 
+                      if os.path.isdir(os.path.join(self.knowledge_base_dir, d))]
+            
+            for kb_name in kb_dirs:
+                kb_path = os.path.join(self.knowledge_base_dir, kb_name)
+                
+                # Look for index files or content files
+                index_file = os.path.join(kb_path, "index.json")
+                if os.path.exists(index_file):
+                    try:
+                        with open(index_file, 'r', encoding='utf-8') as f:
+                            kb_data = json.load(f)
+                            self.knowledge_bases[kb_name] = {
+                                "data": kb_data,
+                                "path": kb_path,
+                                "type": "indexed",
+                                "last_updated": os.path.getmtime(index_file),
+                                "entries": len(kb_data)
+                            }
+                            logging.info(f"Loaded indexed knowledge base: {kb_name} with {len(kb_data)} entries")
+                    except Exception as e:
+                        logging.error(f"Error loading knowledge base index {kb_name}: {e}")
+                else:
+                    # Look for content files
+                    content_files = glob.glob(os.path.join(kb_path, "*.txt")) + \
+                                   glob.glob(os.path.join(kb_path, "*.md")) + \
+                                   glob.glob(os.path.join(kb_path, "*.json"))
+                    
+                    if content_files:
+                        kb_data = []
+                        for file_path in content_files:
+                            try:
+                                with open(file_path, 'r', encoding='utf-8') as f:
+                                    content = f.read()
+                                    kb_data.append({
+                                        "content": content,
+                                        "source": os.path.basename(file_path),
+                                        "last_updated": os.path.getmtime(file_path)
+                                    })
+                            except Exception as e:
+                                logging.error(f"Error loading knowledge base file {file_path}: {e}")
+                        
+                        self.knowledge_bases[kb_name] = {
+                            "data": kb_data,
+                            "path": kb_path,
+                            "type": "files",
+                            "last_updated": max(os.path.getmtime(f) for f in content_files) if content_files else 0,
+                            "entries": len(kb_data)
+                        }
+                        logging.info(f"Loaded file-based knowledge base: {kb_name} with {len(kb_data)} entries")
+            
+            # Initialize statistics for each knowledge base
+            for kb_name in self.knowledge_bases:
+                if kb_name not in self.kb_stats:
+                    self.kb_stats[kb_name] = {
+                        "retrievals": 0,
+                        "updates": 0,
+                        "last_accessed": None,
+                        "relevance_score": 0.5  # Initial neutral relevance
+                    }
+            
+            logging.info(f"Initialized {len(self.knowledge_bases)} knowledge bases")
+        except Exception as e:
+            logging.error(f"Error initializing knowledge bases: {e}")
     
     def _save_memory(self):
         """Save memory to disk"""
@@ -1676,7 +1764,8 @@ class PerceptualMemory:
                 pickle.dump({
                     'frames': self.frames,
                     'embeddings': self.frame_embeddings,
-                    'stats': self.stats
+                    'stats': self.stats,
+                    'kb_stats': self.kb_stats
                 }, f)
             logging.info(f"Saved {len(self.frames)} perceptual frames to disk")
         except Exception as e:
@@ -1731,7 +1820,7 @@ class PerceptualMemory:
             logging.error(f"Error getting embedding: {e}")
             return np.zeros(self.embedding_dim)
     
-    def search_memory(self, query: str, limit: int = 5, client=None) -> List[Dict]:
+    def search_memory(self, query: str, limit: int = 5, client=None, include_kb: bool = True) -> List[Dict]:
         """
         Search memory for relevant frames using semantic similarity
         
@@ -1739,11 +1828,12 @@ class PerceptualMemory:
             query: Search query
             limit: Maximum number of results to return
             client: OpenAI client for computing embeddings
+            include_kb: Whether to include knowledge base results
             
         Returns:
             List of relevant frames
         """
-        if not self.frames:
+        if not self.frames and not include_kb:
             return []
         
         if client is None:
@@ -1753,28 +1843,192 @@ class PerceptualMemory:
         # Get query embedding
         query_embedding = self.get_embedding(query, client)
         
-        # Calculate similarity scores
+        # Calculate similarity scores for memory frames
         similarities = []
         for i, embedding in enumerate(self.frame_embeddings):
             # Cosine similarity
             similarity = np.dot(query_embedding, embedding) / (
                 np.linalg.norm(query_embedding) * np.linalg.norm(embedding) + 1e-10
             )
-            similarities.append((i, similarity))
+            similarities.append((i, similarity, "memory"))
+        
+        # Include knowledge base results if requested
+        if include_kb:
+            kb_results = self.search_knowledge_bases(query, query_embedding, limit)
+            for kb_name, entries in kb_results.items():
+                for entry in entries:
+                    similarities.append((entry["index"], entry["similarity"], kb_name))
+                    
+                    # Update KB stats
+                    if kb_name in self.kb_stats:
+                        self.kb_stats[kb_name]["retrievals"] += 1
+                        self.kb_stats[kb_name]["last_accessed"] = time.time()
+                        # Increase relevance score based on usage
+                        self.kb_stats[kb_name]["relevance_score"] = min(
+                            1.0, self.kb_stats[kb_name]["relevance_score"] + 0.01
+                        )
+            
+            # Update overall stats
+            self.stats["kb_retrievals"] += 1
         
         # Sort by similarity (descending)
         similarities.sort(key=lambda x: x[1], reverse=True)
         
         # Get top results
         results = []
-        for i, _ in similarities[:limit]:
-            if i < len(self.frames):
-                results.append(self.frames[i])
+        for i, similarity, source in similarities[:limit]:
+            if source == "memory" and i < len(self.frames):
+                # Add source information to the frame
+                frame = copy.deepcopy(self.frames[i])
+                frame["source"] = "memory"
+                frame["similarity"] = similarity
+                results.append(frame)
+            elif source != "memory":
+                # This is a knowledge base result
+                kb = self.knowledge_bases.get(source)
+                if kb:
+                    if kb["type"] == "indexed":
+                        entry = kb["data"][i]
+                    else:
+                        entry = kb["data"][i]
+                    
+                    # Format as a frame
+                    kb_frame = {
+                        "id": f"kb_{source}_{i}",
+                        "timestamp": time.time(),
+                        "datetime": datetime.now().isoformat(),
+                        "source": f"kb_{source}",
+                        "similarity": similarity,
+                        "kb_entry": entry
+                    }
+                    results.append(kb_frame)
         
         # Update stats
         self.stats["total_retrievals"] += 1
         
         return results
+    
+    def search_knowledge_bases(self, query: str, query_embedding=None, limit: int = 3) -> Dict[str, List]:
+        """
+        Search across all knowledge bases for relevant information
+        
+        Args:
+            query: Search query
+            query_embedding: Pre-computed query embedding
+            limit: Maximum number of results per knowledge base
+            
+        Returns:
+            Dictionary mapping knowledge base names to lists of relevant entries
+        """
+        results = {}
+        
+        # Skip if no knowledge bases
+        if not self.knowledge_bases:
+            return results
+            
+        # Compute embeddings for knowledge bases if not already done
+        for kb_name, kb in self.knowledge_bases.items():
+            if kb_name not in self.kb_embeddings:
+                self._compute_kb_embeddings(kb_name)
+        
+        # Search each knowledge base
+        for kb_name, kb in self.knowledge_bases.items():
+            if kb_name not in self.kb_embeddings or not self.kb_embeddings[kb_name]:
+                continue
+                
+            # Calculate similarity scores
+            similarities = []
+            for i, embedding in enumerate(self.kb_embeddings[kb_name]):
+                if embedding is None:
+                    continue
+                    
+                # Cosine similarity
+                similarity = np.dot(query_embedding, embedding) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(embedding) + 1e-10
+                )
+                
+                # Apply relevance weighting from KB stats
+                if kb_name in self.kb_stats:
+                    relevance_weight = self.kb_stats[kb_name]["relevance_score"]
+                    similarity *= (0.5 + 0.5 * relevance_weight)  # Scale between 50-100% of original
+                
+                similarities.append((i, similarity))
+            
+            # Sort by similarity (descending)
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            
+            # Get top results
+            kb_results = []
+            for i, similarity in similarities[:limit]:
+                kb_results.append({
+                    "index": i,
+                    "similarity": similarity,
+                    "content": kb["data"][i]
+                })
+            
+            if kb_results:
+                results[kb_name] = kb_results
+        
+        return results
+    
+    def _compute_kb_embeddings(self, kb_name: str, client=None) -> bool:
+        """
+        Compute embeddings for a knowledge base
+        
+        Args:
+            kb_name: Name of the knowledge base
+            client: OpenAI client for computing embeddings
+            
+        Returns:
+            Success flag
+        """
+        if kb_name not in self.knowledge_bases:
+            return False
+            
+        if client is None:
+            # Try to get the global client
+            global_client = globals().get('client')
+            client = global_client
+            
+            if client is None:
+                logging.error("OpenAI client not available for computing KB embeddings")
+                return False
+        
+        kb = self.knowledge_bases[kb_name]
+        embeddings = []
+        
+        try:
+            for i, entry in enumerate(kb["data"]):
+                # Extract text content based on KB type
+                if kb["type"] == "indexed":
+                    if isinstance(entry, dict) and "content" in entry:
+                        text = entry["content"]
+                    elif isinstance(entry, dict) and "text" in entry:
+                        text = entry["text"]
+                    elif isinstance(entry, str):
+                        text = entry
+                    else:
+                        text = str(entry)
+                else:
+                    if isinstance(entry, dict) and "content" in entry:
+                        text = entry["content"]
+                    else:
+                        text = str(entry)
+                
+                # Compute embedding
+                embedding = self.get_embedding(text[:8000], client)  # Limit to 8000 chars
+                embeddings.append(embedding)
+                
+                # Log progress for large KBs
+                if (i + 1) % 50 == 0:
+                    logging.info(f"Computed {i + 1}/{len(kb['data'])} embeddings for {kb_name}")
+            
+            self.kb_embeddings[kb_name] = embeddings
+            logging.info(f"Computed {len(embeddings)} embeddings for knowledge base: {kb_name}")
+            return True
+        except Exception as e:
+            logging.error(f"Error computing embeddings for knowledge base {kb_name}: {e}")
+            return False
     
     def sample_for_replay(self, batch_size: int = 3, strategy: str = "random") -> List[Dict]:
         """
@@ -1891,13 +2145,15 @@ class PerceptualMemory:
         
         return comparison
     
-    def evolve_memory(self, fitness_function: Callable, population_size: int = 5) -> str:
+    def evolve_memory(self, fitness_function: Callable, population_size: int = 5, 
+                     evolve_kb: bool = True) -> str:
         """
-        Apply evolutionary strategies to optimize memory
+        Apply evolutionary strategies to optimize memory and knowledge bases
         
         Args:
             fitness_function: Function to evaluate fitness of a memory state
             population_size: Number of variations to create
+            evolve_kb: Whether to evolve knowledge base relevance
             
         Returns:
             best_snapshot_id: ID of the best evolved snapshot
@@ -1924,6 +2180,20 @@ class PerceptualMemory:
                         if isinstance(frames[idx], dict) and "importance" in frames[idx]:
                             frames[idx]["importance"] *= random.uniform(0.5, 1.5)
             
+            # Evolve knowledge base relevance if requested
+            if evolve_kb and self.knowledge_bases:
+                kb_stats_copy = copy.deepcopy(self.kb_stats)
+                
+                # Randomly adjust relevance scores
+                for kb_name in kb_stats_copy:
+                    # Apply random adjustment between -0.2 and +0.2
+                    adjustment = random.uniform(-0.2, 0.2)
+                    kb_stats_copy[kb_name]["relevance_score"] = max(0.0, min(1.0, 
+                        kb_stats_copy[kb_name]["relevance_score"] + adjustment))
+                
+                # Store in snapshot
+                self.snapshots[var_snapshot_id]["kb_stats"] = kb_stats_copy
+            
             variations.append(var_snapshot_id)
         
         # Evaluate fitness of each variation
@@ -1932,6 +2202,7 @@ class PerceptualMemory:
             # Temporarily restore this variation
             original_frames = copy.deepcopy(list(self.frames))
             original_embeddings = copy.deepcopy(list(self.frame_embeddings))
+            original_kb_stats = copy.deepcopy(self.kb_stats)
             
             self.restore_snapshot(var_id)
             
@@ -1942,6 +2213,7 @@ class PerceptualMemory:
             # Restore original state
             self.frames = deque(original_frames, maxlen=self.frames.maxlen)
             self.frame_embeddings = deque(original_embeddings, maxlen=self.frame_embeddings.maxlen)
+            self.kb_stats = original_kb_stats
         
         # Find the best variation
         best_snapshot_id = max(fitness_scores, key=fitness_scores.get)
@@ -1952,11 +2224,14 @@ class PerceptualMemory:
             "base_snapshot": base_snapshot_id,
             "variations": variations,
             "fitness_scores": fitness_scores,
-            "best_snapshot": best_snapshot_id
+            "best_snapshot": best_snapshot_id,
+            "evolved_kb": evolve_kb
         })
         
         # Update stats
         self.stats["total_evolutions"] += 1
+        if evolve_kb:
+            self.stats["kb_evolutions"] += 1
         
         logging.info(f"Evolved memory: best snapshot is {best_snapshot_id} with fitness {fitness_scores[best_snapshot_id]}")
         return best_snapshot_id
@@ -2094,6 +2369,15 @@ class PerceptualMemory:
     
     def get_memory_stats(self) -> Dict:
         """Get memory statistics"""
+        kb_stats = {}
+        for kb_name, stats in self.kb_stats.items():
+            kb_stats[kb_name] = {
+                "retrievals": stats.get("retrievals", 0),
+                "updates": stats.get("updates", 0),
+                "relevance_score": stats.get("relevance_score", 0.5),
+                "last_accessed": stats.get("last_accessed")
+            }
+            
         return {
             "current_size": len(self.frames),
             "max_size": self.frames.maxlen,
@@ -2105,7 +2389,12 @@ class PerceptualMemory:
             "total_realtime_inferences": self.stats.get("total_realtime_inferences", 0),
             "cognitive_state_changes": self.stats.get("cognitive_state_changes", 0),
             "current_cognitive_state": self.cognitive_state,
-            "snapshots": list(self.snapshots.keys())
+            "snapshots": list(self.snapshots.keys()),
+            "knowledge_bases": list(self.knowledge_bases.keys()),
+            "kb_stats": kb_stats,
+            "kb_retrievals": self.stats.get("kb_retrievals", 0),
+            "kb_updates": self.stats.get("kb_updates", 0),
+            "kb_evolutions": self.stats.get("kb_evolutions", 0)
         }
 
 class MetaReflectionLayer:
@@ -2222,7 +2511,8 @@ class CLIAgent:
     """
     def __init__(self, model="gpt-4o", meta_model=None, console=None, enable_meta=True, 
                 max_memory_frames=1000, enable_experience_replay=True, 
-                enable_evolution=True, autonomous_mode=True):
+                enable_evolution=True, autonomous_mode=True,
+                knowledge_base_dir="knowledge_bases_async_advanced"):
         # Primary reasoning layer
         self.model = model
         self.meta_model = meta_model or model  # Use same model for meta layer if not specified
@@ -2241,14 +2531,22 @@ class CLIAgent:
         # Dynamic tool registry
         self.tool_registry = DynamicToolRegistry(console=self.console)
         
-        # Perceptual memory system with evolutionary capabilities
-        self.perceptual_memory = PerceptualMemory(max_frames=max_memory_frames)
+        # Perceptual memory system with evolutionary capabilities and knowledge bases
+        self.perceptual_memory = PerceptualMemory(
+            max_frames=max_memory_frames,
+            knowledge_base_dir=knowledge_base_dir
+        )
         self.enable_experience_replay = enable_experience_replay
         self.enable_evolution = enable_evolution
         self.replay_batch_size = 3
         self.replay_frequency = 5
         self.evolution_frequency = 10  # How often to evolve memory (in interactions)
         self.interaction_count = 0
+        
+        # Knowledge base settings
+        self.knowledge_base_dir = knowledge_base_dir
+        self.kb_agents = {}  # Track specialized KB agents
+        self.active_kb = set()  # Currently active knowledge bases
         
         # Autonomous mode settings
         self.autonomous_mode = autonomous_mode
@@ -3649,6 +3947,64 @@ class CLIAgent:
             "tool_management"
         )
         
+        # Register knowledge base tools
+        self.tool_registry.register_tool(
+            "list_knowledge_bases", 
+            self._list_knowledge_bases,
+            "List all available knowledge bases",
+            {
+                "type": "object",
+                "properties": {}
+            },
+            "knowledge_base"
+        )
+        
+        self.tool_registry.register_tool(
+            "search_knowledge_base", 
+            self._search_knowledge_base,
+            "Search a specific knowledge base for information",
+            {
+                "type": "object",
+                "properties": {
+                    "kb_name": {
+                        "type": "string",
+                        "description": "Name of the knowledge base to search"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 3)"
+                    }
+                },
+                "required": ["kb_name", "query"]
+            },
+            "knowledge_base"
+        )
+        
+        self.tool_registry.register_tool(
+            "create_kb_agent", 
+            self._create_kb_agent,
+            "Create a specialized agent from a knowledge base",
+            {
+                "type": "object",
+                "properties": {
+                    "kb_name": {
+                        "type": "string",
+                        "description": "Name of the knowledge base to use"
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Optional ID for the new agent"
+                    }
+                },
+                "required": ["kb_name"]
+            },
+            "knowledge_base"
+        )
+        
         self.tool_registry.register_tool(
             "unregister_tool", 
             self._unregister_tool,
@@ -4359,6 +4715,50 @@ class CLIAgent:
                 "content": f"The conversation has been focusing on: {inference_results['dominant_topic']}. User sentiment appears to be: {inference_results['sentiment']}."
             })
         
+        # Check if we should use knowledge bases
+        if hasattr(self.perceptual_memory, 'knowledge_bases') and self.perceptual_memory.knowledge_bases:
+            # Search memory and knowledge bases
+            global client
+            if client:
+                # Search across all knowledge bases
+                kb_results = self.perceptual_memory.search_memory(
+                    message, limit=3, client=client, include_kb=True
+                )
+                
+                # Filter for KB results
+                kb_entries = [entry for entry in kb_results if entry.get("source", "").startswith("kb_")]
+                
+                if kb_entries:
+                    # Format KB results for the conversation
+                    kb_context = "I've found some relevant information from my knowledge bases:\n\n"
+                    
+                    for i, entry in enumerate(kb_entries):
+                        kb_name = entry.get("source", "").replace("kb_", "")
+                        
+                        # Extract content
+                        if "kb_entry" in entry:
+                            kb_entry = entry["kb_entry"]
+                            if isinstance(kb_entry, dict) and "content" in kb_entry:
+                                content = kb_entry["content"]
+                            elif isinstance(kb_entry, dict) and "text" in kb_entry:
+                                content = kb_entry["text"]
+                            else:
+                                content = str(kb_entry)
+                        else:
+                            content = "No content available"
+                            
+                        # Add to context
+                        kb_context += f"[Knowledge Base: {kb_name}]\n{content}\n\n"
+                        
+                        # Add this KB to active KBs
+                        self.active_kb.add(kb_name)
+                    
+                    # Add KB context to conversation
+                    self.conversation_history.append({
+                        "role": "system",
+                        "content": kb_context
+                    })
+        
         # Run the primary reasoning layer (inner model)
         with self.console.status("[bold green]Thinking..."):
             try:
@@ -4910,6 +5310,10 @@ def main():
     parser.add_argument("--list-categories", action="store_true", help="List available tool categories and exit")
     parser.add_argument("--list-templates", action="store_true", help="List available tool templates and exit")
     parser.add_argument("--list-snapshots", action="store_true", help="List available agent snapshots and exit")
+    parser.add_argument("--list-kb", action="store_true", help="List available knowledge bases and exit")
+    parser.add_argument("--kb-dir", type=str, default="knowledge_bases_async_advanced", 
+                       help="Directory containing knowledge bases")
+    parser.add_argument("--create-kb-agent", type=str, help="Create a specialized agent from a knowledge base")
     parser.add_argument("--restore-snapshot", type=str, help="Restore agent from a snapshot ID")
     parser.add_argument("--task", type=str, help="Add an autonomous task to execute")
     parser.add_argument("--task-priority", type=int, default=1, help="Priority for the autonomous task (higher is more important)")
@@ -4931,7 +5335,8 @@ def main():
         max_memory_frames=args.memory_size,
         enable_experience_replay=not args.disable_replay,
         enable_evolution=not args.disable_evolution,
-        autonomous_mode=not args.disable_autonomous
+        autonomous_mode=not args.disable_autonomous,
+        knowledge_base_dir=args.kb_dir
     )
     
     
@@ -4982,6 +5387,64 @@ def main():
             console.print(table)
         else:
             console.print("[yellow]No snapshots available yet.[/yellow]")
+        
+        return
+    
+    # If --list-kb flag is provided, list knowledge bases and exit
+    if args.list_kb:
+        kb_result = agent._list_knowledge_bases()
+        
+        if kb_result["success"]:
+            kb_info = kb_result["data"]["knowledge_bases"]
+            active_kb = kb_result["data"]["active_kb"]
+            kb_agents = kb_result["data"]["kb_agents"]
+            
+            console.print(Panel.fit(
+                f"[bold]Available Knowledge Bases:[/bold] {len(kb_info)} knowledge bases\n"
+                f"[bold]Active Knowledge Bases:[/bold] {len(active_kb)}\n"
+                f"[bold]Knowledge Base Agents:[/bold] {len(kb_agents)}\n",
+                title="Knowledge Bases",
+                border_style="green"
+            ))
+            
+            if kb_info:
+                table = Table(show_header=True, header_style="bold magenta")
+                table.add_column("Name")
+                table.add_column("Type")
+                table.add_column("Entries")
+                table.add_column("Retrievals")
+                table.add_column("Relevance")
+                table.add_column("Active")
+                
+                for kb in kb_info:
+                    name = kb["name"]
+                    kb_type = kb["type"]
+                    entries = str(kb["entries"])
+                    retrievals = str(kb["retrievals"])
+                    relevance = f"{kb['relevance_score']:.2f}"
+                    is_active = "✓" if name in active_kb else ""
+                    
+                    table.add_row(name, kb_type, entries, retrievals, relevance, is_active)
+                
+                console.print(table)
+            else:
+                console.print("[yellow]No knowledge bases available.[/yellow]")
+        else:
+            console.print(f"[bold red]Error listing knowledge bases: {kb_result['message']}[/bold red]")
+        
+        return
+    
+    # If --create-kb-agent flag is provided, create a KB agent and exit
+    if args.create_kb_agent:
+        kb_name = args.create_kb_agent
+        result = agent._create_kb_agent(kb_name)
+        
+        if result["success"]:
+            console.print(f"[bold green]Successfully created KB agent: {result['data']['agent_id']}[/bold green]")
+            console.print(f"Knowledge base: {result['data']['kb_name']}")
+            console.print(f"Entries: {result['data']['kb_entries']}")
+        else:
+            console.print(f"[bold red]Error creating KB agent: {result['message']}[/bold red]")
         
         return
     
@@ -5128,6 +5591,11 @@ def main():
     autonomous_status = "enabled" if not args.disable_autonomous else "disabled"
     memory_size = args.memory_size
     
+    # Get knowledge base count
+    kb_count = 0
+    if hasattr(agent.perceptual_memory, 'knowledge_bases'):
+        kb_count = len(agent.perceptual_memory.knowledge_bases)
+    
     console.print(Panel.fit(
         "[bold blue]Welcome to the Autonomous Agent with Evolutionary Capabilities![/bold blue]\n"
         "This agent can autonomously execute tasks, evolve its memory and strategies over time, "
@@ -5137,6 +5605,7 @@ def main():
         f"[bold cyan]Evolutionary optimization:[/bold cyan] {evolution_status}\n"
         f"[bold cyan]Autonomous mode:[/bold cyan] {autonomous_status}\n"
         f"[bold cyan]Realtime cognition:[/bold cyan] enabled\n"
+        f"[bold cyan]Knowledge bases:[/bold cyan] {kb_count} available\n"
         "[bold cyan]Dynamic Agents:[/bold cyan] You can create and use specialized agents for specific tasks.\n"
         "[bold cyan]Commands:[/bold cyan]\n"
         "  [bold green]/snapshot[/bold green] - Create a new snapshot of the current agent state\n"
@@ -5145,6 +5614,8 @@ def main():
         "  [bold green]/task [description][/bold green] - Add an autonomous task\n"
         "  [bold green]/stats[/bold green] - Show agent statistics\n"
         "  [bold green]/cognition[/bold green] - Show realtime cognition status\n"
+        "  [bold green]/kb[/bold green] - List knowledge bases\n"
+        "  [bold green]/kb-agent [name][/bold green] - Create a specialized agent from a knowledge base\n"
         "  [bold green]/exit[/bold green] - Exit the program",
         title="Autonomous Agent",
         border_style="blue"
@@ -5188,6 +5659,14 @@ def main():
             elif user_input.lower() == "/stats":
                 stats = agent.get_memory_stats()
                 
+                # Format KB stats if available
+                kb_stats_text = ""
+                if "knowledge_bases" in stats and stats["knowledge_bases"]:
+                    kb_stats_text = f"\nKnowledge bases: {len(stats['knowledge_bases'])}\n"
+                    kb_stats_text += f"Active knowledge bases: {len(stats.get('kb_stats', {}))}\n"
+                    kb_stats_text += f"KB retrievals: {stats.get('kb_retrievals', 0)}\n"
+                    kb_stats_text += f"KB evolutions: {stats.get('kb_evolutions', 0)}\n"
+                
                 console.print(Panel.fit(
                     f"[bold]Agent Statistics:[/bold]\n\n"
                     f"Memory: {stats['current_size']}/{stats['max_size']} frames\n"
@@ -5199,7 +5678,8 @@ def main():
                     f"Evolutionary optimizations: {stats['total_evolutions']}\n"
                     f"Cognitive state: {stats['cognitive_state']}\n"
                     f"Realtime inferences: {stats['total_realtime_inferences']}\n"
-                    f"Cognitive state changes: {stats['cognitive_state_changes']}",
+                    f"Cognitive state changes: {stats['cognitive_state_changes']}"
+                    f"{kb_stats_text}",
                     title="Agent Status",
                     border_style="green"
                 ))
@@ -5233,6 +5713,60 @@ def main():
                 
                 console.print(patterns_table)
                 continue
+            elif user_input.lower() == "/kb":
+                # List knowledge bases
+                kb_result = agent._list_knowledge_bases()
+                
+                if kb_result["success"]:
+                    kb_info = kb_result["data"]["knowledge_bases"]
+                    active_kb = kb_result["data"]["active_kb"]
+                    kb_agents = kb_result["data"]["kb_agents"]
+                    
+                    console.print(Panel.fit(
+                        f"[bold]Available Knowledge Bases:[/bold] {len(kb_info)} knowledge bases\n"
+                        f"[bold]Active Knowledge Bases:[/bold] {len(active_kb)}\n"
+                        f"[bold]Knowledge Base Agents:[/bold] {len(kb_agents)}\n",
+                        title="Knowledge Bases",
+                        border_style="green"
+                    ))
+                    
+                    if kb_info:
+                        table = Table(show_header=True, header_style="bold magenta")
+                        table.add_column("Name")
+                        table.add_column("Type")
+                        table.add_column("Entries")
+                        table.add_column("Retrievals")
+                        table.add_column("Relevance")
+                        table.add_column("Active")
+                        
+                        for kb in kb_info:
+                            name = kb["name"]
+                            kb_type = kb["type"]
+                            entries = str(kb["entries"])
+                            retrievals = str(kb["retrievals"])
+                            relevance = f"{kb['relevance_score']:.2f}"
+                            is_active = "✓" if name in active_kb else ""
+                            
+                            table.add_row(name, kb_type, entries, retrievals, relevance, is_active)
+                        
+                        console.print(table)
+                    else:
+                        console.print("[yellow]No knowledge bases available.[/yellow]")
+                else:
+                    console.print(f"[bold red]Error listing knowledge bases: {kb_result['message']}[/bold red]")
+                continue
+            elif user_input.lower().startswith("/kb-agent "):
+                # Create a KB agent
+                kb_name = user_input[10:].strip()
+                result = agent._create_kb_agent(kb_name)
+                
+                if result["success"]:
+                    console.print(f"[bold green]Successfully created KB agent: {result['data']['agent_id']}[/bold green]")
+                    console.print(f"Knowledge base: {result['data']['kb_name']}")
+                    console.print(f"Entries: {result['data']['kb_entries']}")
+                else:
+                    console.print(f"[bold red]Error creating KB agent: {result['message']}[/bold red]")
+                continue
             
             # Process the input using asyncio.run
             response = asyncio.run(agent.chat(user_input))
@@ -5254,3 +5788,209 @@ def main():
 
 if __name__ == "__main__":
     main()
+    def create_kb_agent(self, kb_name: str, agent_id: str = None) -> Dict:
+        """
+        Create a specialized agent from a knowledge base
+        
+        Args:
+            kb_name: Name of the knowledge base to use
+            agent_id: Optional ID for the new agent
+            
+        Returns:
+            Agent creation result
+        """
+        if kb_name not in self.knowledge_bases:
+            return {
+                "success": False,
+                "message": f"Knowledge base not found: {kb_name}",
+                "data": None
+            }
+            
+        # Generate agent ID if not provided
+        if agent_id is None:
+            agent_id = f"kb_{kb_name}_{uuid.uuid4().hex[:8]}"
+            
+        try:
+            # Get knowledge base data
+            kb = self.knowledge_bases[kb_name]
+            
+            # Create a specialized agent
+            from dynamic_agents import registry, AgentContext
+            
+            # Create the agent
+            agent = registry.create_agent(agent_id, "knowledge_base")
+            
+            # Create a context for the agent
+            context = AgentContext(agent_id=agent_id)
+            
+            # Add knowledge base data to the context
+            context.set_variable("kb_name", kb_name)
+            context.set_variable("kb_path", kb["path"])
+            context.set_variable("kb_type", kb["type"])
+            context.set_variable("kb_entries", kb["entries"])
+            
+            # Update KB stats
+            if kb_name in self.kb_stats:
+                self.kb_stats[kb_name]["updates"] += 1
+                self.stats["kb_updates"] += 1
+            
+            return {
+                "success": True,
+                "message": f"Created specialized agent for knowledge base: {kb_name}",
+                "data": {
+                    "agent_id": agent_id,
+                    "kb_name": kb_name,
+                    "kb_entries": kb["entries"]
+                }
+            }
+        except Exception as e:
+            logging.error(f"Error creating KB agent: {e}")
+            return {
+                "success": False,
+                "message": f"Error creating KB agent: {str(e)}",
+                "data": None
+            }
+    def _list_knowledge_bases(self) -> Dict:
+        """List all available knowledge bases"""
+        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
+            return {
+                "success": False,
+                "message": "Knowledge base functionality not available",
+                "data": None
+            }
+            
+        kb_info = []
+        for kb_name, kb in self.perceptual_memory.knowledge_bases.items():
+            # Get stats if available
+            stats = self.perceptual_memory.kb_stats.get(kb_name, {})
+            
+            kb_info.append({
+                "name": kb_name,
+                "type": kb.get("type", "unknown"),
+                "entries": kb.get("entries", 0),
+                "path": kb.get("path", ""),
+                "last_updated": kb.get("last_updated", 0),
+                "retrievals": stats.get("retrievals", 0),
+                "relevance_score": stats.get("relevance_score", 0.5)
+            })
+            
+        return {
+            "success": True,
+            "message": f"Found {len(kb_info)} knowledge bases",
+            "data": {
+                "knowledge_bases": kb_info,
+                "active_kb": list(self.active_kb),
+                "kb_agents": list(self.kb_agents.keys())
+            }
+        }
+    
+    def _search_knowledge_base(self, kb_name: str, query: str, limit: int = 3) -> Dict:
+        """Search a specific knowledge base for information"""
+        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
+            return {
+                "success": False,
+                "message": "Knowledge base functionality not available",
+                "data": None
+            }
+            
+        if kb_name not in self.perceptual_memory.knowledge_bases:
+            return {
+                "success": False,
+                "message": f"Knowledge base not found: {kb_name}",
+                "data": None
+            }
+            
+        try:
+            # Get query embedding
+            global client
+            if client is None:
+                return {
+                    "success": False,
+                    "message": "OpenAI client not available for semantic search",
+                    "data": None
+                }
+                
+            query_embedding = self.perceptual_memory.get_embedding(query, client)
+            
+            # Search the knowledge base
+            results = self.perceptual_memory.search_knowledge_bases(
+                query, query_embedding, limit
+            )
+            
+            if kb_name not in results or not results[kb_name]:
+                return {
+                    "success": True,
+                    "message": f"No relevant information found in knowledge base: {kb_name}",
+                    "data": []
+                }
+                
+            # Format results
+            formatted_results = []
+            for result in results[kb_name]:
+                content = result["content"]
+                
+                # Format based on content type
+                if isinstance(content, dict):
+                    # Extract relevant fields
+                    if "content" in content:
+                        text = content["content"]
+                    elif "text" in content:
+                        text = content["text"]
+                    else:
+                        text = str(content)
+                        
+                    # Add metadata if available
+                    metadata = {}
+                    for key, value in content.items():
+                        if key not in ["content", "text"]:
+                            metadata[key] = value
+                            
+                    formatted_results.append({
+                        "text": text,
+                        "similarity": result["similarity"],
+                        "metadata": metadata
+                    })
+                else:
+                    formatted_results.append({
+                        "text": str(content),
+                        "similarity": result["similarity"]
+                    })
+            
+            # Add this KB to active KBs
+            self.active_kb.add(kb_name)
+            
+            return {
+                "success": True,
+                "message": f"Found {len(formatted_results)} relevant entries in knowledge base: {kb_name}",
+                "data": formatted_results
+            }
+        except Exception as e:
+            logging.error(f"Error searching knowledge base: {e}")
+            return {
+                "success": False,
+                "message": f"Error searching knowledge base: {str(e)}",
+                "data": None
+            }
+    
+    def _create_kb_agent(self, kb_name: str, agent_id: str = None) -> Dict:
+        """Create a specialized agent from a knowledge base"""
+        if not hasattr(self.perceptual_memory, 'knowledge_bases'):
+            return {
+                "success": False,
+                "message": "Knowledge base functionality not available",
+                "data": None
+            }
+            
+        result = self.perceptual_memory.create_kb_agent(kb_name, agent_id)
+        
+        if result["success"]:
+            # Track the KB agent
+            self.kb_agents[result["data"]["agent_id"]] = {
+                "kb_name": kb_name,
+                "created": time.time()
+            }
+            
+            # Add this KB to active KBs
+            self.active_kb.add(kb_name)
+            
+        return result
