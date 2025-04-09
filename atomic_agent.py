@@ -2607,7 +2607,19 @@ class ToolRegistry:
             },
             function=self._search_code
         )
-        # Weather functions
+        # Stock data retrieval
+        self.register_function(
+            name="get_stock_data",
+            description="Retrieve current stock market data",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Stock symbol (e.g., AAPL, MSFT, TSLA)"}
+                },
+                "required": ["symbol"]
+            },
+            function=self._get_stock_price
+        )
         self.register_function(
             name="get_weather",
             description="Get current weather information for a location",
