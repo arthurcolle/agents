@@ -1991,15 +1991,68 @@ class AgentOrchestrator:
         # Start the orchestrator thread
         self.orchestrator_thread.start()
         
-        # Initialize agents if requested
-        if num_scouts > 0:
-            self._init_scout_agents(num_scouts)
-        if num_societal_agents > 0:
-            self._init_societal_agents(num_societal_agents)
+        self.agent_performance_history = {}  # Track agent performance by task type
+        self.collaboration_graph = {}  # Graph of agent collaborations
+        self.skill_registry = {  # Registry of skills and which agents have them
+            # Technical skills
+            "research": set(),
+            "code": set(),
+            "planning": set(),
+            "creative": set(),
+            "critical": set(),
             
-        # Start an initial simulation if requested
-        if initial_simulation and num_societal_agents > 0:
-            self.simulate_society()
+            # Societal domain skills
+            "governance": set(),
+            "economic": set(),
+            "educational": set(),
+            "healthcare": set(),
+            "technological": set(),
+            "environmental": set(),
+            "cultural": set(),
+            "media": set(),
+            "security": set(),
+            "ethical": set(),
+            "innovation": set(),
+            "diplomatic": set(),
+            "planning": set(),
+            "creative": set(),
+            "critical": set(),
+            "data_analysis": set(),
+            "summarization": set(),
+            "translation": set(),
+            "mathematical": set()
+        }
+        self.adaptive_scheduling = True  # Enable adaptive task scheduling
+        self.learning_enabled = True  # Enable learning from task execution
+        
+        # Initialize Redis for orchestrator
+        try:
+            self.redis_client = redis.Redis(host='localhost', port=6379, db=0)
+            self.pubsub = self.redis_client.pubsub()
+            self.pubsub.subscribe('agent_broadcast')
+            self.pubsub.subscribe('orchestrator')
+            self.pubsub_thread = threading.Thread(target=self._listen_for_messages, daemon=True)
+            self.pubsub_thread.start()
+            print(f"[green]Orchestrator subscribed to Redis channels[/green]")
+        except Exception as e:
+            print(f"[yellow]Warning: Redis PubSub initialization failed for orchestrator: {e}[/yellow]")
+            self.redis_client = None
+            self.pubsub = None
+        
+        # Create scouts with different specializations
+        specializations = ["research", "code", "planning", "creative", "critical"]
+        for i in range(min(num_scouts, len(specializations))):
+            agent_id = f"scout_{i+1}"
+            specialization = specializations[i]
+            self.scouts[agent_id] = ScoutAgent(agent_id, specialization, model)
+            
+        # Initialize additional scouts if needed
+        for i in range(len(specializations), num_scouts):
+            agent_id = f"scout_{i+1}"
+            specialization = "general"
+            self.scouts[agent_id] = ScoutAgent(agent_id, specialization, model)
+            
+        self.orchestrator_thread.start()
         self.agent_performance_history = {}  # Track agent performance by task type
         self.collaboration_graph = {}  # Graph of agent collaborations
         self.skill_registry = {  # Registry of skills and which agents have them
@@ -2736,6 +2789,30 @@ class AgentOrchestrator:
                         })
             except Exception as e:
                 print(f"[yellow]Error in pubsub listener for orchestrator: {e}[/yellow]")
+                time.sleep(1)
+                
+    def _listen_for_simulation_events(self):
+        """Listen for simulation events from the Redis pubsub channel"""
+        if not hasattr(self, "simulation_pubsub") or not self.simulation_pubsub:
+            return
+            
+        while not self.stop_event.is_set():
+            try:
+                message = self.simulation_pubsub.get_message(timeout=1)
+                if message and message["type"] == "message":
+                    data = json.loads(message["data"].decode("utf-8"))
+                    event_type = data.get("type")
+                    
+                    if event_type == "policy_proposal":
+                        pass  # Handle policy proposal
+                    elif event_type == "coalition_formation":
+                        pass  # Handle coalition formation
+                    elif event_type == "crisis_report":
+                        pass  # Handle crisis report
+                    elif event_type == "simulation_metrics":
+                        pass  # Handle simulation metrics update
+            except Exception as e:
+                console.print(f"[yellow]Error in simulation event listener: {e}[/yellow]")
                 time.sleep(1)
                 
     def send_message_to_agent(self, agent_id, message_type, content):
