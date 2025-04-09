@@ -4745,8 +4745,8 @@ def load_config(config_path):
         logger.error(f"Unexpected error loading configuration from {config_path}: {e}")
         return {}
 
-def main():
-    """Main function for the CLI agent"""
+async def main():
+    """Async main function for the CLI agent"""
     # Lifecycle Management Hint: For production, run this script using a process manager
     # like systemd, supervisor, or pm2 to handle restarts and monitoring.
     # Scaling Hint: To run hundreds of agents, you'll typically run multiple instances
