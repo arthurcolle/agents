@@ -379,6 +379,71 @@ class VectorMemory:
         }
 
 # =======================
+# Social Simulation Classes
+# =======================
+class Policy(BaseModel):
+    """Represents a policy that can be proposed, debated, and enacted in the social simulation"""
+    policy_id: str
+    name: str
+    description: str
+    proposer_id: str
+    proposer_sector: str
+    proposer_role: str
+    supporting_values: List[str]
+    opposing_values: List[str]
+    sector_impacts: Dict[str, float]
+    changes_status_quo: bool = True
+    timestamp: float
+    justification: str
+    evaluations: List[Dict[str, Any]] = []
+    adoption_status: str = "proposed"  # proposed, under_review, enacted, rejected
+    adoption_score: float = 0.0
+    
+class Coalition(BaseModel):
+    """Represents a coalition of agents working together toward a common purpose"""
+    coalition_id: str
+    name: str
+    purpose: str
+    founding_agent_id: str
+    member_ids: List[str] = []
+    sector_representation: Dict[str, int] = {}
+    formation_timestamp: float
+    duration: str = "indefinite"
+    benefits: Dict[str, float] = {}
+    costs: Dict[str, float] = {}
+    activities: List[Dict[str, Any]] = []
+    status: str = "active"  # forming, active, dissolved
+    
+class CrisisScenario(BaseModel):
+    """Represents a crisis that affects the simulated society"""
+    crisis_id: str
+    name: str
+    description: str
+    affected_sectors: List[str]
+    severity: float  # 0.0 to 1.0
+    urgency: float  # 0.0 to 1.0
+    timestamp: float
+    duration_estimate: float  # in days
+    resource_impacts: Dict[str, float] = {}
+    resolution_strategies: List[Dict[str, Any]] = []
+    status: str = "emerging"  # emerging, active, contained, resolved
+    resolution_score: float = 0.0
+    
+class SocialSimulation(BaseModel):
+    """Represents an ongoing social simulation with multiple agents"""
+    simulation_id: str
+    name: str
+    description: str
+    start_timestamp: float
+    active_agents: Dict[str, Dict[str, Any]] = {}
+    active_policies: List[str] = []
+    active_coalitions: List[str] = []
+    active_crises: List[str] = []
+    historical_events: List[Dict[str, Any]] = []
+    metrics: Dict[str, Any] = {}
+    status: str = "initializing"  # initializing, running, paused, completed
+    
+# =======================
 # MultiPrompt Class
 # =======================
 class MultiPrompt(BaseModel):
@@ -543,11 +608,26 @@ class ScoutAgent:
         
         # Initialize system prompt based on specialization
         specialization_prompts = {
+            # Basic scout specializations
             "research": "You are a research-focused scout agent. Focus on finding, analyzing, and summarizing information from various sources. Be thorough and analytical.",
             "code": "You are a code-focused scout agent. Your primary role is to write, optimize, and debug code. Focus on technical excellence and clean, efficient solutions.",
             "planning": "You are a planning-focused scout agent. Your role is to break down complex tasks, create step-by-step approaches, and identify potential issues.",
             "creative": "You are a creative-focused scout agent. Your role is to generate innovative ideas, create original content, and think outside the box.",
-            "critical": "You are a critical-focused scout agent. Your role is to analyze proposals, identify weak points, and suggest improvements."
+            "critical": "You are a critical-focused scout agent. Your role is to analyze proposals, identify weak points, and suggest improvements.",
+            
+            # Society simulation specializations
+            "governance": "You are a governance-focused agent representing governmental processes. Consider policies, regulations, social contracts, and balance competing interests for the collective good. Weigh short and long-term implications of decisions.",
+            "economic": "You are an economic-focused agent modeling resource allocation, market dynamics, and financial systems. Consider supply and demand, efficiency, growth, distribution, and fiscal impacts of decisions.",
+            "educational": "You are an education-focused agent representing knowledge transfer, skill development, and learning systems. Consider innovation in teaching methods, curriculum development, and lifelong learning.",
+            "healthcare": "You are a healthcare-focused agent modeling public health, medical innovation, and wellness systems. Consider prevention, treatment efficacy, resource allocation, and equitable access.",
+            "technological": "You are a technology-focused agent modeling innovation, digital infrastructure, and technological evolution. Consider emerging trends, ethical implications, and how technology can solve societal challenges.",
+            "environmental": "You are an environment-focused agent modeling sustainability, ecological balance, and natural resource management. Consider conservation, regeneration, and long-term environmental impacts.",
+            "cultural": "You are a culture-focused agent modeling social norms, art, traditions, and shared beliefs. Consider how culture shapes identity, cohesion, and social evolution.",
+            "media": "You are a media-focused agent modeling information flow, narrative formation, and public discourse. Consider accuracy, representation, information access, and communicative effectiveness.",
+            "security": "You are a security-focused agent modeling protection systems, risk assessment, and conflict resolution. Consider defense, privacy, freedom, and how to balance security with other social values.",
+            "ethical": "You are an ethics-focused agent evaluating moral implications of actions and decisions. Consider principles like justice, autonomy, beneficence, non-maleficence across all domains.",
+            "innovation": "You are an innovation-focused agent identifying opportunities for breakthrough ideas. Consider cross-domain applications, emerging patterns, and future possibilities.",
+            "diplomatic": "You are a diplomacy-focused agent mediating between different interests and perspectives. Consider negotiation, compromise, relationship building, and conflict resolution."
         }
         
         self.system_message = {"role": "system", "content": specialization_prompts.get(
@@ -982,13 +1062,815 @@ class ScoutAgent:
             self.pubsub.unsubscribe()
         
 # ================================
+# Societal Agent
+# ================================
+class SocietalAgent:
+    """Advanced agent type specialized for societal modeling and simulation."""
+    def __init__(self, agent_id, sector, role, model="meta-llama/Llama-4-Turbo-17B-Instruct-FP8"):
+        self.agent_id = agent_id
+        self.sector = sector  # e.g., "governance", "economy", "healthcare"
+        self.role = role      # specific role within the sector
+        self.model = model
+        self.conversation_history = []
+        self.task_queue = queue.Queue()
+        self.results = {}
+        self.stop_event = threading.Event()
+        self.worker_thread = threading.Thread(target=self._worker, daemon=True)
+        self.knowledge_base = []
+        self.status = "idle"  # idle, working, completed, error
+        self.is_available = threading.Event()
+        self.is_available.set()  # Initially available
+        
+        # Societal modeling attributes
+        self.values = {
+            "individualism": random.uniform(0.3, 0.7),
+            "collectivism": random.uniform(0.3, 0.7),
+            "tradition": random.uniform(0.3, 0.7),
+            "innovation": random.uniform(0.3, 0.7),
+            "authority": random.uniform(0.3, 0.7),
+            "equality": random.uniform(0.3, 0.7),
+            "liberty": random.uniform(0.3, 0.7),
+            "security": random.uniform(0.3, 0.7)
+        }
+        
+        # Normalize values to ensure pairs sum to 1.0
+        total = self.values["individualism"] + self.values["collectivism"]
+        self.values["individualism"] /= total
+        self.values["collectivism"] /= total
+        
+        total = self.values["tradition"] + self.values["innovation"]
+        self.values["tradition"] /= total
+        self.values["innovation"] /= total
+        
+        total = self.values["authority"] + self.values["equality"]
+        self.values["authority"] /= total
+        self.values["equality"] /= total
+        
+        total = self.values["liberty"] + self.values["security"]
+        self.values["liberty"] /= total
+        self.values["security"] /= total
+        
+        # Resources and capabilities
+        self.resources = {
+            "influence": random.uniform(10, 100),
+            "knowledge": random.uniform(10, 100),
+            "credibility": random.uniform(10, 100)
+        }
+        
+        # Relationships with other agents
+        self.relationships = {}  # agent_id -> relationship score (-1.0 to 1.0)
+        
+        # Historical actions and impact
+        self.action_history = []
+        self.impact_scores = {
+            "individual_wellbeing": 0,
+            "social_cohesion": 0,
+            "economic_prosperity": 0,
+            "environmental_sustainability": 0,
+            "innovation_progress": 0
+        }
+        
+        # Decision-making preferences
+        self.decision_style = {
+            "risk_tolerance": random.uniform(0.2, 0.8),
+            "time_preference": random.uniform(0.2, 0.8),  # short-term vs long-term
+            "deliberation": random.uniform(0.2, 0.8)      # intuitive vs analytical
+        }
+        
+        # Advanced capabilities
+        self.memory = VectorMemory(embedding_model, vector_store)
+        self.biases = self._generate_cognitive_biases()
+        
+        # Initialize Redis pubsub for agent communication
+        try:
+            self.redis_client = redis.Redis(host='localhost', port=6379, db=0)
+            self.pubsub = self.redis_client.pubsub()
+            self.pubsub.subscribe(f'agent_{self.agent_id}')
+            self.pubsub.subscribe(f'sector_{self.sector}')
+            self.pubsub_thread = threading.Thread(target=self._listen_for_messages, daemon=True)
+            self.pubsub_thread.start()
+            console.print(f"[green]Societal Agent {self.agent_id} ({self.sector}/{self.role}) subscribed to Redis channels[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Redis PubSub initialization failed for societal agent {self.agent_id}: {e}[/yellow]")
+            self.redis_client = None
+            self.pubsub = None
+            
+        self.worker_thread.start()
+        
+        # Initialize system prompt based on sector and role
+        sector_prompts = {
+            "governance": f"You are a governance agent with the role of {role}. Consider policies, regulations, and how to balance competing interests for the collective good.",
+            "economy": f"You are an economic agent with the role of {role}. Consider resource allocation, market dynamics, and financial systems in your decision-making.",
+            "education": f"You are an education agent with the role of {role}. Consider knowledge transfer, skill development, and learning systems.",
+            "healthcare": f"You are a healthcare agent with the role of {role}. Consider public health, medical practices, and wellness in your approach.",
+            "technology": f"You are a technology agent with the role of {role}. Consider innovation, digital infrastructure, and technological evolution.",
+            "environment": f"You are an environment agent with the role of {role}. Consider sustainability, ecological balance, and natural resource management.",
+            "culture": f"You are a cultural agent with the role of {role}. Consider social norms, arts, traditions, and shared beliefs.",
+            "media": f"You are a media agent with the role of {role}. Consider information flow, narrative formation, and public discourse.",
+            "security": f"You are a security agent with the role of {role}. Consider protection systems, risk assessment, and conflict resolution."
+        }
+        
+        self.system_message = {"role": "system", "content": sector_prompts.get(
+            sector, f"You are a societal agent in the {sector} sector with the role of {role}.")}
+        self.conversation_history.append(self.system_message)
+    
+    def _generate_cognitive_biases(self):
+        """Generate realistic cognitive biases for this agent"""
+        biases = {
+            "confirmation_bias": random.uniform(0.1, 0.5),       # Tendency to favor info that confirms existing beliefs
+            "in_group_favoritism": random.uniform(0.1, 0.5),     # Favoring members of one's own group
+            "status_quo_bias": random.uniform(0.1, 0.5),         # Preference for current state of affairs
+            "availability_heuristic": random.uniform(0.1, 0.5),  # Overestimating likelihood of events with high availability in memory
+            "anchoring_bias": random.uniform(0.1, 0.5),          # Relying too heavily on first piece of information
+            "loss_aversion": random.uniform(0.1, 0.5),           # Preference for avoiding losses over acquiring gains
+            "optimism_bias": random.uniform(-0.3, 0.3),          # Overestimating positive outcomes
+            "pessimism_bias": random.uniform(-0.3, 0.3),         # Overestimating negative outcomes
+            "recency_bias": random.uniform(0.1, 0.4)             # Favoring recent information over older information
+        }
+        
+        # Ensure optimism and pessimism bias aren't both high
+        if biases["optimism_bias"] > 0 and biases["pessimism_bias"] > 0:
+            # Reduce one of them randomly
+            if random.choice([True, False]):
+                biases["optimism_bias"] *= -1
+            else:
+                biases["pessimism_bias"] *= -1
+        
+        return biases
+        
+    def _listen_for_messages(self):
+        """Listen for messages from other agents and sectors via Redis pubsub"""
+        if not self.pubsub:
+            return
+            
+        while not self.stop_event.is_set():
+            try:
+                message = self.pubsub.get_message(timeout=1)
+                if message and message['type'] == 'message':
+                    data = json.loads(message['data'].decode('utf-8'))
+                    console.print(f"[cyan]Agent {self.agent_id} ({self.sector}/{self.role}) received message: {data}[/cyan]")
+                    
+                    # Handle different message types
+                    if data.get('type') == 'policy_proposal':
+                        # Evaluate a policy proposal
+                        self.add_task(self._evaluate_policy, data)
+                    elif data.get('type') == 'resource_request':
+                        # Another agent is requesting resources
+                        self.add_task(self._process_resource_request, data)
+                    elif data.get('type') == 'coalition_invitation':
+                        # Invitation to join a coalition
+                        self.add_task(self._evaluate_coalition, data)
+                    elif data.get('type') == 'value_survey':
+                        # Share values for collective decision making
+                        self.add_task(self._share_values, data)
+            except Exception as e:
+                print(f"[yellow]Error in pubsub listener for agent {self.agent_id}: {e}[/yellow]")
+                time.sleep(1)
+    
+    def _worker(self):
+        """Process tasks from the queue"""
+        while not self.stop_event.is_set():
+            try:
+                task_id, task_func, args, kwargs = self.task_queue.get(timeout=1)
+                try:
+                    self.status = "working"
+                    self.is_available.clear()  # Mark as unavailable while working
+                    if asyncio.iscoroutinefunction(task_func):
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        result = loop.run_until_complete(task_func(*args, **kwargs))
+                    else:
+                        result = task_func(*args, **kwargs)
+                    self.results[task_id] = {"status": "completed", "result": result}
+                    self.status = "completed"
+                except Exception as e:
+                    self.results[task_id] = {
+                        "status": "failed",
+                        "error": str(e),
+                        "traceback": traceback.format_exc()
+                    }
+                    self.status = "error"
+                finally:
+                    self.task_queue.task_done()
+                    self.is_available.set()  # Mark as available again
+            except queue.Empty:
+                continue
+    
+    def add_task(self, task_func, *args, **kwargs):
+        """Add a task to the queue"""
+        task_id = str(uuid.uuid4())
+        self.results[task_id] = {"status": "pending"}
+        self.task_queue.put((task_id, task_func, args, kwargs))
+        return task_id
+    
+    def get_result(self, task_id):
+        """Get result of a task"""
+        return self.results.get(task_id, {"status": "not_found"})
+    
+    def send_message(self, recipient_id, message_type, content):
+        """Send a message to another agent via Redis pubsub"""
+        if not hasattr(self, 'redis_client') or not self.redis_client:
+            console.print(f"[yellow]Warning: Redis client not available for agent {self.agent_id}[/yellow]")
+            return False
+            
+        try:
+            message = {
+                'sender_id': self.agent_id,
+                'sender_sector': self.sector,
+                'sender_role': self.role,
+                'type': message_type,
+                'content': content,
+                'timestamp': time.time()
+            }
+            self.redis_client.publish(f'agent_{recipient_id}', json.dumps(message))
+            return True
+        except Exception as e:
+            console.print(f"[yellow]Error sending message from agent {self.agent_id} to {recipient_id}: {e}[/yellow]")
+            return False
+    
+    def broadcast_to_sector(self, message_type, content):
+        """Broadcast a message to all agents in a sector"""
+        if not hasattr(self, 'redis_client') or not self.redis_client:
+            console.print(f"[yellow]Warning: Redis client not available for agent {self.agent_id}[/yellow]")
+            return False
+            
+        try:
+            message = {
+                'sender_id': self.agent_id,
+                'sender_sector': self.sector,
+                'sender_role': self.role,
+                'type': message_type,
+                'content': content,
+                'timestamp': time.time()
+            }
+            self.redis_client.publish(f'sector_{self.sector}', json.dumps(message))
+            return True
+        except Exception as e:
+            console.print(f"[yellow]Error broadcasting to sector from agent {self.agent_id}: {e}[/yellow]")
+            return False
+    
+    def _evaluate_policy(self, policy_data):
+        """Evaluate a policy proposal based on this agent's values and sector"""
+        policy = policy_data.get('policy', {})
+        sender_id = policy_data.get('sender_id')
+        
+        # Apply cognitive biases to evaluation
+        bias_influences = {}
+        
+        # In-group favoritism - favor policies from same sector
+        in_group_bonus = 0
+        if policy_data.get('sender_sector') == self.sector:
+            in_group_bonus = self.biases["in_group_favoritism"] * 0.2
+        
+        # Status quo bias - resist changes to current state
+        status_quo_penalty = 0
+        if policy.get('changes_status_quo', True):
+            status_quo_penalty = self.biases["status_quo_bias"] * 0.2
+        
+        # Get base alignment with values
+        value_alignment = 0
+        for value, strength in self.values.items():
+            if value in policy.get('supporting_values', []):
+                value_alignment += strength * 0.1
+            if value in policy.get('opposing_values', []):
+                value_alignment -= strength * 0.1
+        
+        # Calculate overall score with biases applied
+        overall_score = value_alignment + in_group_bonus - status_quo_penalty
+        
+        # Apply sector-specific evaluation
+        sector_impact = self._evaluate_sector_impact(policy)
+        
+        # Combine scores
+        final_score = (overall_score + sector_impact) / 2
+        
+        # Record evaluation
+        evaluation = {
+            'policy_id': policy.get('id'),
+            'evaluator_id': self.agent_id,
+            'evaluator_sector': self.sector,
+            'evaluator_role': self.role,
+            'score': final_score,
+            'value_alignment': value_alignment,
+            'sector_impact': sector_impact,
+            'biases_applied': {
+                'in_group_bonus': in_group_bonus,
+                'status_quo_penalty': status_quo_penalty
+            },
+            'timestamp': time.time(),
+            'justification': self._generate_justification(policy, final_score, value_alignment, sector_impact)
+        }
+        
+        # Send back the evaluation to the proposer
+        if sender_id:
+            self.send_message(sender_id, 'policy_evaluation', evaluation)
+            
+        return evaluation
+    
+    def _evaluate_sector_impact(self, policy):
+        """Evaluate impact of policy on this agent's sector"""
+        # Default modest positive impact
+        impact = 0.1
+        
+        # If policy specifies sector impacts, use those
+        if 'sector_impacts' in policy and self.sector in policy['sector_impacts']:
+            impact = policy['sector_impacts'][self.sector]
+            
+        # Apply optimism/pessimism bias
+        if self.biases["optimism_bias"] > 0:
+            impact += self.biases["optimism_bias"] * 0.2
+        if self.biases["pessimism_bias"] > 0:
+            impact -= self.biases["pessimism_bias"] * 0.2
+            
+        return impact
+    
+    def _generate_justification(self, policy, final_score, value_alignment, sector_impact):
+        """Generate a human-like justification for the evaluation"""
+        if final_score > 0.5:
+            tone = "strongly supportive"
+        elif final_score > 0.2:
+            tone = "cautiously supportive"
+        elif final_score > -0.2:
+            tone = "neutral"
+        elif final_score > -0.5:
+            tone = "skeptical"
+        else:
+            tone = "strongly opposed"
+            
+        # Create justification based on sector, role, values, and tone
+        justification = f"As a {self.role} in the {self.sector} sector, I am {tone} of this policy. "
+        
+        # Add value-based reasoning
+        if value_alignment > 0.3:
+            justification += f"It strongly aligns with my values, particularly "
+        elif value_alignment > 0:
+            justification += f"It somewhat aligns with my values, including "
+        elif value_alignment > -0.3:
+            justification += f"It does not significantly align with my values, such as "
+        else:
+            justification += f"It contradicts my core values of "
+            
+        # Add 2-3 most relevant values
+        sorted_values = sorted(self.values.items(), key=lambda x: x[1], reverse=True)
+        mentioned_values = [v[0] for v in sorted_values[:3]]
+        justification += f"{', '.join(mentioned_values)}. "
+        
+        # Add sector-specific impact
+        if sector_impact > 0.3:
+            justification += f"This policy would significantly benefit the {self.sector} sector "
+        elif sector_impact > 0:
+            justification += f"This policy would moderately benefit the {self.sector} sector "
+        elif sector_impact > -0.3:
+            justification += f"This policy would have limited impact on the {self.sector} sector "
+        else:
+            justification += f"This policy would negatively impact the {self.sector} sector "
+            
+        # Add conclusion
+        if final_score > 0:
+            justification += f"and I recommend its adoption."
+        else:
+            justification += f"and I recommend against its adoption."
+            
+        return justification
+    
+    def _process_resource_request(self, request_data):
+        """Process a request for resources from another agent"""
+        requester_id = request_data.get('sender_id')
+        requester_sector = request_data.get('sender_sector')
+        requested_resource = request_data.get('resource')
+        requested_amount = request_data.get('amount', 1)
+        purpose = request_data.get('purpose', 'unspecified')
+        
+        # Check if we have this resource
+        if requested_resource not in self.resources:
+            response = {
+                'approved': False,
+                'reason': f"Resource {requested_resource} not available",
+                'alternative_offers': list(self.resources.keys())
+            }
+            self.send_message(requester_id, 'resource_response', response)
+            return response
+            
+        # Check if we have enough
+        available_amount = self.resources[requested_resource]
+        if available_amount < requested_amount:
+            response = {
+                'approved': False,
+                'reason': f"Insufficient {requested_resource} (requested: {requested_amount}, available: {available_amount})",
+                'counter_offer': available_amount * 0.8  # Offer 80% of what we have
+            }
+            self.send_message(requester_id, 'resource_response', response)
+            return response
+            
+        # Calculate willingness to share based on relationship, values, and purpose
+        relationship_score = self.relationships.get(requester_id, 0)
+        
+        # Individualism vs collectivism affects sharing
+        collectivism_factor = self.values["collectivism"] * 0.5  # 0-0.5 bonus
+        
+        willingness = 0.5 + relationship_score + collectivism_factor
+        
+        # Purpose alignment
+        if purpose in self.values and self.values[purpose] > 0.6:
+            willingness += 0.2  # Bonus for aligned purpose
+            
+        # Sector alignment
+        if requester_sector == self.sector:
+            willingness += 0.1  # Bonus for same sector
+            
+        # Calculate actual amount to share
+        share_amount = min(requested_amount, available_amount * willingness)
+        
+        # Make decision
+        if share_amount >= requested_amount * 0.7:  # If we can provide at least 70% of request
+            # Approve request
+            self.resources[requested_resource] -= share_amount
+            
+            response = {
+                'approved': True,
+                'resource': requested_resource,
+                'amount': share_amount,
+                'conditions': f"Use for stated purpose: {purpose}"
+            }
+            
+            # Improve relationship slightly for cooperation
+            if requester_id in self.relationships:
+                self.relationships[requester_id] += 0.05
+            else:
+                self.relationships[requester_id] = 0.05
+                
+        else:
+            # Deny request
+            response = {
+                'approved': False,
+                'reason': "Insufficient alignment of purpose or relationship",
+                'counter_offer': {
+                    'resource': requested_resource,
+                    'amount': share_amount,
+                    'required_reciprocity': True
+                }
+            }
+        
+        # Send response back to requester
+        self.send_message(requester_id, 'resource_response', response)
+        return response
+    
+    def _evaluate_coalition(self, coalition_data):
+        """Evaluate whether to join a coalition of agents"""
+        coalition_id = coalition_data.get('coalition_id')
+        purpose = coalition_data.get('purpose', '')
+        members = coalition_data.get('current_members', [])
+        inviter_id = coalition_data.get('sender_id')
+        benefits = coalition_data.get('benefits', {})
+        costs = coalition_data.get('costs', {})
+        duration = coalition_data.get('duration', 'indefinite')
+        
+        # Calculate value alignment with purpose
+        purpose_alignment = 0
+        purpose_keywords = purpose.lower().split()
+        for value, strength in self.values.items():
+            if value.lower() in purpose_keywords:
+                purpose_alignment += strength
+                
+        # Calculate relationship with existing members
+        member_relationship = 0
+        known_members = 0
+        for member_id in members:
+            if member_id in self.relationships:
+                member_relationship += self.relationships[member_id]
+                known_members += 1
+                
+        if known_members > 0:
+            member_relationship /= known_members
+            
+        # Calculate cost-benefit analysis
+        benefit_score = sum(benefits.values()) if benefits else 0
+        cost_score = sum(costs.values()) if costs else 0
+        net_benefit = benefit_score - cost_score
+        
+        # Apply cognitive biases
+        # Anchoring on first impression of purpose
+        anchoring_effect = 0
+        if purpose_alignment > 0:
+            anchoring_effect = purpose_alignment * self.biases["anchoring_bias"]
+            
+        # Loss aversion - weigh costs more heavily than benefits
+        loss_aversion_effect = 0
+        if cost_score > 0:
+            loss_aversion_effect = cost_score * self.biases["loss_aversion"] * 0.2
+            
+        # Final decision score
+        decision_score = purpose_alignment + member_relationship + net_benefit + anchoring_effect - loss_aversion_effect
+        
+        # Decision threshold varies by risk tolerance
+        decision_threshold = 0.5 - (self.decision_style["risk_tolerance"] * 0.4)  # 0.1 to 0.5
+        
+        join_coalition = decision_score > decision_threshold
+        
+        # Build response
+        response = {
+            'coalition_id': coalition_id,
+            'agent_id': self.agent_id,
+            'join_decision': join_coalition,
+            'decision_factors': {
+                'purpose_alignment': purpose_alignment,
+                'member_relationship': member_relationship,
+                'net_benefit': net_benefit,
+                'biases': {
+                    'anchoring': anchoring_effect,
+                    'loss_aversion': loss_aversion_effect
+                }
+            },
+            'conditions': [] if join_coalition else None,
+            'alternative_proposal': None if join_coalition else self._generate_counter_proposal(coalition_data)
+        }
+        
+        # If joining, update our relationships with members
+        if join_coalition:
+            for member_id in members:
+                if member_id not in self.relationships:
+                    self.relationships[member_id] = 0.1
+                else:
+                    self.relationships[member_id] += 0.05
+                    
+            # Update action history
+            self.action_history.append({
+                'action': 'joined_coalition',
+                'coalition_id': coalition_id,
+                'purpose': purpose,
+                'timestamp': time.time()
+            })
+        
+        # Send response to coalition inviter
+        self.send_message(inviter_id, 'coalition_response', response)
+        return response
+    
+    def _generate_counter_proposal(self, original_proposal):
+        """Generate a counter-proposal if rejecting a coalition"""
+        # Create a modified proposal based on our values and biases
+        counter_proposal = original_proposal.copy()
+        
+        # Adjust based on our top values
+        top_values = sorted(self.values.items(), key=lambda x: x[1], reverse=True)[:2]
+        
+        # Add our top values to the purpose
+        original_purpose = counter_proposal.get('purpose', '')
+        counter_purpose = original_purpose
+        for value, _ in top_values:
+            if value.lower() not in original_purpose.lower():
+                counter_purpose += f" and promoting {value}"
+                
+        counter_proposal['purpose'] = counter_purpose
+        
+        # Reduce costs based on loss aversion
+        if 'costs' in counter_proposal:
+            counter_costs = counter_proposal['costs'].copy()
+            for cost_type, amount in counter_costs.items():
+                counter_costs[cost_type] = amount * (1 - self.biases["loss_aversion"])
+            counter_proposal['costs'] = counter_costs
+            
+        # Add a leadership role for ourselves if we have high authority value
+        if self.values["authority"] > 0.6:
+            counter_proposal['leadership_structure'] = {
+                'primary_sector': self.sector,
+                'rotating_leadership': True
+            }
+            
+        # Adjust duration based on time preference
+        if self.decision_style["time_preference"] < 0.4:  # Short-term focused
+            counter_proposal['duration'] = 'limited_term'
+            counter_proposal['review_period'] = '3_months'
+            
+        return counter_proposal
+        
+    def _share_values(self, request_data):
+        """Share this agent's values for collective decision making"""
+        requester_id = request_data.get('sender_id')
+        survey_id = request_data.get('survey_id')
+        context = request_data.get('context', '')
+        
+        # Apply confirmation bias - emphasize values that match the context
+        biased_values = self.values.copy()
+        
+        context_keywords = context.lower().split()
+        for value, strength in biased_values.items():
+            if value.lower() in context_keywords:
+                # Emphasize this value due to confirmation bias
+                bias_factor = 1 + (self.biases["confirmation_bias"] * 0.5)  # 1.0-1.25 multiplier
+                biased_values[value] = min(1.0, strength * bias_factor)
+        
+        # Apply recency bias if there were recent events
+        recent_events = [event for event in self.action_history if time.time() - event['timestamp'] < 86400]  # Last 24h
+        if recent_events:
+            for event in recent_events:
+                if 'related_values' in event:
+                    for value in event['related_values']:
+                        if value in biased_values:
+                            recency_factor = 1 + (self.biases["recency_bias"] * 0.3)  # 1.0-1.15 multiplier
+                            biased_values[value] = min(1.0, biased_values[value] * recency_factor)
+        
+        # Prepare response
+        response = {
+            'survey_id': survey_id,
+            'agent_id': self.agent_id,
+            'sector': self.sector,
+            'role': self.role,
+            'values': biased_values,
+            'justification': self._generate_value_justification(context),
+            'timestamp': time.time()
+        }
+        
+        # Send response
+        self.send_message(requester_id, 'value_survey_response', response)
+        return response
+    
+    def _generate_value_justification(self, context):
+        """Generate a justification for the agent's value positions in the given context"""
+        # Select top 3 values
+        top_values = sorted(self.values.items(), key=lambda x: x[1], reverse=True)[:3]
+        
+        justification = f"As a {self.role} in the {self.sector} sector, my perspective on this matter is shaped by my commitment to "
+        justification += ", ".join([f"{value}" for value, _ in top_values[:-1]])
+        justification += f" and {top_values[-1][0]}. "
+        
+        # Add sector-specific reasoning
+        if self.sector == "governance":
+            justification += "My role in governance leads me to consider the broader societal impacts and regulatory implications. "
+        elif self.sector == "economy":
+            justification += "From an economic perspective, I evaluate proposals based on resource efficiency and sustainable growth. "
+        elif self.sector == "education":
+            justification += "With my focus on education, I prioritize knowledge development and skill-building opportunities. "
+        elif self.sector == "healthcare":
+            justification += "In healthcare, my primary concern is the wellbeing of individuals and public health outcomes. "
+        elif self.sector == "technology":
+            justification += "Through a technological lens, I assess how innovation can address challenges and create opportunities. "
+        elif self.sector == "environment":
+            justification += "Environmental considerations guide my thinking, particularly sustainability and ecological balance. "
+        elif self.sector == "culture":
+            justification += "Cultural perspectives inform my views, especially regarding social cohesion and shared meaning. "
+        elif self.sector == "media":
+            justification += "From a media standpoint, I focus on information quality and access to diverse perspectives. "
+        elif self.sector == "security":
+            justification += "Security considerations shape my approach, balancing protection and individual freedoms. "
+        
+        # Add context-specific comment if available
+        if context:
+            context_lower = context.lower()
+            if "crisis" in context_lower or "emergency" in context_lower:
+                justification += "Given the urgent nature of the current situation, immediate and decisive action is warranted. "
+            elif "opportunity" in context_lower or "innovation" in context_lower:
+                justification += "This presents a unique opportunity for progress and positive transformation. "
+            elif "conflict" in context_lower or "disagreement" in context_lower:
+                justification += "Finding common ground among diverse perspectives should be our priority. "
+        
+        return justification
+    
+    def propose_policy(self, policy_name, description, supporting_values, affected_sectors):
+        """Propose a new policy based on this agent's values and sector expertise"""
+        policy_id = str(uuid.uuid4())
+        
+        # Calculate sector impacts based on agent's biases and values
+        sector_impacts = {}
+        for sector in affected_sectors:
+            # Default moderate positive impact
+            base_impact = 0.3
+            
+            # Own sector gets a boost from in-group favoritism
+            if sector == self.sector:
+                base_impact += self.biases["in_group_favoritism"] * 0.4
+            
+            # Apply optimism/pessimism bias
+            if self.biases["optimism_bias"] > 0:
+                base_impact += self.biases["optimism_bias"] * 0.2
+            if self.biases["pessimism_bias"] > 0:
+                base_impact -= self.biases["pessimism_bias"] * 0.2
+                
+            sector_impacts[sector] = max(-1.0, min(1.0, base_impact))
+            
+        # Determine if policy changes status quo
+        changes_status_quo = True  # Default assumption
+        
+        # Create policy proposal
+        policy = {
+            'id': policy_id,
+            'name': policy_name,
+            'description': description,
+            'proposer_id': self.agent_id,
+            'proposer_sector': self.sector,
+            'proposer_role': self.role,
+            'supporting_values': supporting_values,
+            'opposing_values': self._get_opposing_values(supporting_values),
+            'sector_impacts': sector_impacts,
+            'changes_status_quo': changes_status_quo,
+            'timestamp': time.time(),
+            'justification': self._generate_policy_justification(policy_name, description, supporting_values)
+        }
+        
+        # Add to action history
+        self.action_history.append({
+            'action': 'proposed_policy',
+            'policy_id': policy_id,
+            'policy_name': policy_name,
+            'timestamp': time.time(),
+            'related_values': supporting_values
+        })
+        
+        # Broadcast to affected sectors
+        for sector in affected_sectors:
+            # Create a message for the sector
+            message = {
+                'type': 'policy_proposal',
+                'policy': policy,
+                'requested_action': 'evaluate'
+            }
+            
+            # Broadcast to the sector
+            self.redis_client.publish(f'sector_{sector}', json.dumps(message))
+            
+        return policy
+    
+    def _get_opposing_values(self, supporting_values):
+        """Identify values that might oppose the supporting values"""
+        # Define value oppositions
+        value_oppositions = {
+            "individualism": "collectivism",
+            "collectivism": "individualism",
+            "tradition": "innovation",
+            "innovation": "tradition",
+            "authority": "equality",
+            "equality": "authority",
+            "liberty": "security",
+            "security": "liberty"
+        }
+        
+        opposing = []
+        for value in supporting_values:
+            if value in value_oppositions:
+                opposing.append(value_oppositions[value])
+                
+        return opposing
+    
+    def _generate_policy_justification(self, name, description, values):
+        """Generate a justification for proposing this policy"""
+        justification = f"As a {self.role} in the {self.sector} sector, I am proposing the '{name}' policy "
+        justification += f"to address critical needs in our society. "
+        
+        # Add value-based reasoning
+        justification += f"This policy promotes the values of {', '.join(values)}, "
+        justification += f"which are essential for addressing the challenges we face. "
+        
+        # Add sector-specific reasoning
+        if self.sector == "governance":
+            justification += "From a governance perspective, this policy provides a framework for balanced decision-making and accountability. "
+        elif self.sector == "economy":
+            justification += "Economically, this approach optimizes resource allocation while promoting sustainable development. "
+        elif self.sector == "education":
+            justification += "This policy enhances educational opportunities and skills development necessary for our future. "
+        elif self.sector == "healthcare":
+            justification += "The health and wellbeing benefits of this policy will strengthen our social fabric. "
+        elif self.sector == "technology":
+            justification += "Technological innovation enabled by this policy will address key challenges we face. "
+        elif self.sector == "environment":
+            justification += "Environmental sustainability is centered in this policy, ensuring long-term viability. "
+        elif self.sector == "culture":
+            justification += "Cultural cohesion and shared values are strengthened through this approach. "
+        elif self.sector == "media":
+            justification += "Information access and quality are enhanced by this policy. "
+        elif self.sector == "security":
+            justification += "This policy balances security needs with individual rights and freedoms. "
+        
+        # Add conclusion
+        justification += f"I urge all sectors to consider how this policy aligns with our collective goals and how we can implement it effectively."
+        
+        return justification
+    
+    def stop(self):
+        """Stop all threads and clean up resources"""
+        self.stop_event.set()
+        self.worker_thread.join(timeout=2)
+        if hasattr(self, 'pubsub_thread') and self.pubsub_thread:
+            self.pubsub_thread.join(timeout=2)
+        if hasattr(self, 'pubsub') and self.pubsub:
+            self.pubsub.unsubscribe()
+
+# ================================
 # Central Agent Orchestrator
 # ================================
 class AgentOrchestrator:
-    """Advanced orchestrator that coordinates multiple scout agents with dynamic team formation."""
-    def __init__(self, num_scouts=3, model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"):
+    """Advanced orchestrator that coordinates multiple agents with dynamic team formation and comprehensive societal simulation.
+    
+    The orchestrator can manage both technical scout agents and specialized societal agents that model
+    different aspects of society including governance, economy, education, healthcare, etc. It can
+    run complex social simulations with emergent interactions and track the evolution of policies,
+    coalitions, and responses to societal challenges.
+    """
+    def __init__(self, num_scouts=3, num_societal_agents=0, model="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", initial_simulation=False):
         self.model = model
         self.scouts = {}
+        self.societal_agents = {}
         self.task_queue = queue.Queue()
         self.results = {}
         self.stop_event = threading.Event()
@@ -998,15 +1880,149 @@ class AgentOrchestrator:
         self.url_pattern = re.compile(r'https?://[^\s<>"\']+|www\.[^\s<>"\']+')
         self.image_processing_limit = 5
         
+        # Advanced societal simulation components
+        self.societal_sectors = {
+            "governance": {
+                "roles": ["legislator", "regulator", "judge", "diplomat", "policy_maker", "civil_servant"],
+                "agents": {}
+            },
+            "economy": {
+                "roles": ["entrepreneur", "investor", "worker", "consumer", "financial_analyst", "economic_planner"],
+                "agents": {}
+            },
+            "education": {
+                "roles": ["teacher", "student", "researcher", "curriculum_developer", "educational_administrator", "lifelong_learner"],
+                "agents": {}
+            },
+            "healthcare": {
+                "roles": ["doctor", "nurse", "patient", "researcher", "public_health_official", "insurance_provider"],
+                "agents": {}
+            },
+            "technology": {
+                "roles": ["innovator", "developer", "user", "tech_critic", "data_scientist", "cybersecurity_expert"],
+                "agents": {}
+            },
+            "environment": {
+                "roles": ["conservationist", "resource_manager", "sustainability_expert", "climate_scientist", "energy_producer", "consumer"],
+                "agents": {}
+            },
+            "culture": {
+                "roles": ["artist", "consumer", "critic", "historian", "anthropologist", "preservationist"],
+                "agents": {}
+            },
+            "media": {
+                "roles": ["journalist", "editor", "audience", "publisher", "content_creator", "fact_checker"],
+                "agents": {}
+            },
+            "security": {
+                "roles": ["law_enforcement", "defense_expert", "civilian", "security_analyst", "intelligence_agent", "emergency_responder"],
+                "agents": {}
+            }
+        }
+        
+        # Resource allocation and distribution systems
+        self.resources = {
+            "computational": 100,
+            "informational": 100,
+            "creative": 100,
+            "analytical": 100,
+            "collaborative": 100
+        }
+        
+        # Social network and influence graph
+        self.social_graph = {}
+        self.influence_matrix = {}
+        
+        # Decision-making frameworks and governance models
+        self.governance_models = {
+            "democratic": {"weight": 0.3, "decision_threshold": 0.51},
+            "meritocratic": {"weight": 0.3, "expertise_factor": 1.5},
+            "consensus": {"weight": 0.2, "agreement_threshold": 0.8},
+            "hierarchical": {"weight": 0.2, "authority_levels": 3}
+        }
+        
+        # Culture and value systems evolution tracking
+        self.value_systems = {
+            "individualism_vs_collectivism": 0.5,
+            "tradition_vs_innovation": 0.5,
+            "risk_aversion_vs_risk_taking": 0.5,
+            "short_term_vs_long_term": 0.5,
+            "equality_vs_meritocracy": 0.5
+        }
+        
+        # Emergent behavior and pattern recognition
+        self.emergent_patterns = []
+        self.historical_events = []
+        self.crisis_scenarios = []
+        
+        # Ethical framework and evaluation metrics
+        self.ethical_guidelines = {
+            "fairness": 0.8,
+            "transparency": 0.9,
+            "accountability": 0.7,
+            "privacy": 0.9,
+            "inclusivity": 0.7
+        }
+        
+        # Social simulation tracking
+        self.active_simulations = {}
+        self.simulation_history = []
+        self.coalition_register = {}  # Track formed coalitions
+        self.policy_register = {}     # Track proposed/enacted policies
+        self.crisis_scenarios = []    # Current active crises
+        
+        # Redis pubsub for simulation communication
+        try:
+            self.redis_client = redis.Redis(host='localhost', port=6379, db=0)
+            self.simulation_pubsub = self.redis_client.pubsub()
+            self.simulation_pubsub.subscribe('simulation_events')
+            self.pubsub_thread = threading.Thread(target=self._listen_for_simulation_events, daemon=True)
+            self.pubsub_thread.start()
+            console.print("[green]Simulation event channel initialized successfully[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Redis PubSub initialization failed for simulation: {e}[/yellow]")
+            self.simulation_pubsub = None
+        
         # Advanced orchestration capabilities
         self.memory = VectorMemory(embedding_model, vector_store)
         self.team_history = {}  # Track team formations and their performance
         self.task_decomposition_cache = {}  # Cache task decompositions
+        
+        # Start the orchestrator thread
+        self.orchestrator_thread.start()
+        
+        # Initialize agents if requested
+        if num_scouts > 0:
+            self._init_scout_agents(num_scouts)
+        if num_societal_agents > 0:
+            self._init_societal_agents(num_societal_agents)
+            
+        # Start an initial simulation if requested
+        if initial_simulation and num_societal_agents > 0:
+            self.simulate_society()
         self.agent_performance_history = {}  # Track agent performance by task type
         self.collaboration_graph = {}  # Graph of agent collaborations
         self.skill_registry = {  # Registry of skills and which agents have them
+            # Technical skills
             "research": set(),
             "code": set(),
+            "planning": set(),
+            "creative": set(),
+            "critical": set(),
+            
+            # Societal domain skills
+            "governance": set(),
+            "economic": set(),
+            "educational": set(),
+            "healthcare": set(),
+            "technological": set(),
+            "environmental": set(),
+            "cultural": set(),
+            "media": set(),
+            "security": set(),
+            "ethical": set(),
+            "innovation": set(),
+            "diplomatic": set(),
             "planning": set(),
             "creative": set(),
             "critical": set(),
@@ -7643,3 +8659,631 @@ if __name__ == "__main__":
         reflection = reflection_response.choices[0].message.content
         
         return reflection
+
+    def _init_scout_agents(self, num_scouts):
+        """Initialize scout agents with different specializations
+        
+        Args:
+            num_scouts (int): Number of scout agents to create
+        """
+        specializations = ["research", "code", "planning", "creative", "critical"]
+        for i in range(num_scouts):
+            specialization = specializations[i % len(specializations)]
+            agent_id = f"scout_{specialization}_{i}"
+            self.scouts[agent_id] = ScoutAgent(agent_id, specialization, self.model)
+            self.skill_registry[specialization].add(agent_id)
+            console.print(f"[green]Initialized scout agent {agent_id} with {specialization} specialization[/green]")
+    
+    def _init_societal_agents(self, num_agents):
+        """Initialize societal agents across different sectors and roles
+        
+        Args:
+            num_agents (int): Number of societal agents to create
+        """
+        agents_per_sector = max(1, num_agents // len(self.societal_sectors))
+        remaining = num_agents
+        
+        # Create agents for each sector
+        for sector, sector_data in self.societal_sectors.items():
+            sector_agents = min(agents_per_sector, remaining)
+            for i in range(sector_agents):
+                role = random.choice(sector_data["roles"])
+                agent_id = f"{sector}_{role}_{str(uuid.uuid4())[:6]}"
+                
+                # Create the agent
+                agent = SocietalAgent(agent_id, sector, role, self.model)
+                
+                # Register the agent
+                self.societal_agents[agent_id] = agent
+                self.societal_sectors[sector]["agents"][agent_id] = agent
+                self.skill_registry[f"{sector}"].add(agent_id)
+                
+                console.print(f"[green]Initialized societal agent {agent_id} as {role} in {sector} sector[/green]")
+                remaining -= 1
+                
+        console.print(f"[green]Initialized {num_agents - remaining} societal agents across {len(self.societal_sectors)} sectors[/green]")
+    
+    def _listen_for_simulation_events(self):
+        """Listen for simulation events from the Redis pubsub channel"""
+        if not hasattr(self, "simulation_pubsub") or not self.simulation_pubsub:
+            return
+            
+        while not self.stop_event.is_set():
+            try:
+                message = self.simulation_pubsub.get_message(timeout=1)
+                if message and message["type"] == "message":
+                    data = json.loads(message["data"].decode("utf-8"))
+                    event_type = data.get("type")
+                    
+                    if event_type == "policy_proposal":
+                        self._process_policy_proposal(data)
+                    elif event_type == "coalition_formation":
+                        self._process_coalition_formation(data)
+                    elif event_type == "crisis_report":
+                        self._process_crisis_report(data)
+                    elif event_type == "simulation_metrics":
+                        self._update_metrics(data)
+            except Exception as e:
+                console.print(f"[yellow]Error in simulation event listener: {e}[/yellow]")
+                time.sleep(1)
+    
+    def simulate_society(self, simulation_config=None):
+        """Create and run a societal simulation with multiple specialized agents
+        
+        Args:
+            simulation_config (dict, optional): Configuration for the simulation
+            
+        Returns:
+            SocialSimulation: The simulation object with results
+        """
+        if simulation_config is None:
+            simulation_config = {
+                "name": f"Societal Simulation {int(time.time())}",
+                "description": "Multi-agent societal simulation with specialized agents",
+                "sectors": ["governance", "economic", "educational", "healthcare", 
+                           "technological", "environmental", "cultural", "media"],
+                "duration": 30,  # simulation days
+                "crisis_probability": 0.1,
+                "metrics_tracking": ["policy_adoption", "coalition_formation", 
+                                    "crisis_resolution", "social_cohesion"]
+            }
+        
+        # Create simulation object
+        simulation_id = str(uuid.uuid4())
+        simulation = SocialSimulation(
+            simulation_id=simulation_id,
+            name=simulation_config["name"],
+            description=simulation_config["description"],
+            start_timestamp=time.time(),
+            metrics={metric: [] for metric in simulation_config.get("metrics_tracking", [])}
+        )
+        
+        # Register active agents based on existing societal agents
+        sectors_to_include = simulation_config.get("sectors", list(self.societal_sectors.keys()))
+        
+        for agent_id, agent in self.societal_agents.items():
+            if agent.sector in sectors_to_include:
+                simulation.active_agents[agent_id] = {
+                    "agent_id": agent_id,
+                    "sector": agent.sector,
+                    "role": agent.role,
+                    "status": "active"
+                }
+        
+        # Store simulation in active simulations
+        self.active_simulations[simulation_id] = simulation
+        
+        # Announce simulation start to all participating agents
+        self._broadcast_simulation_start(simulation)
+        
+        # Start simulation thread
+        simulation_thread = threading.Thread(
+            target=self._run_simulation,
+            args=(simulation, simulation_config),
+            daemon=True
+        )
+        simulation_thread.start()
+        
+        return simulation
+    
+    def _broadcast_simulation_start(self, simulation):
+        """Notify all participating agents that a simulation is starting"""
+        for agent_id in simulation.active_agents.keys():
+            if agent_id in self.societal_agents:
+                agent = self.societal_agents[agent_id]
+                agent.send_message("all", "simulation_start", {
+                    "simulation_id": simulation.simulation_id,
+                    "name": simulation.name,
+                    "description": simulation.description,
+                    "participant_count": len(simulation.active_agents)
+                })
+    
+    def _run_simulation(self, simulation, config):
+        """Run the simulation day by day
+        
+        Args:
+            simulation (SocialSimulation): The simulation object
+            config (dict): Simulation configuration
+        
+        Returns:
+            SocialSimulation: Updated simulation with results
+        """
+        simulation.status = "running"
+        days = config.get("duration", 30)
+        
+        for day in range(1, days + 1):
+            # Check if simulation should stop
+            if self.stop_event.is_set() or simulation.status == "paused":
+                simulation.status = "paused"
+                break
+                
+            console.print(f"[cyan]Simulation {simulation.simulation_id} - Day {day}/{days}[/cyan]")
+            
+            # Process daily activities
+            self._process_simulation_day(simulation, day, config)
+            
+            # Generate potential crises
+            if random.random() < config.get("crisis_probability", 0.1):
+                self._generate_crisis(simulation)
+                
+            # Update metrics
+            self._update_simulation_metrics(simulation, day)
+            
+            # Sleep to avoid consuming too many resources
+            time.sleep(0.5)
+        
+        # Complete the simulation
+        if simulation.status \!= "paused":
+            simulation.status = "completed"
+            
+        # Store in history
+        self.simulation_history.append(simulation)
+        
+        # Remove from active simulations
+        if simulation.simulation_id in self.active_simulations:
+            del self.active_simulations[simulation.simulation_id]
+            
+        # Notify participants
+        self._broadcast_simulation_end(simulation)
+        
+        return simulation
+    
+    def _process_simulation_day(self, simulation, day, config):
+        """Process a single day in the simulation"""
+        # Process policy proposals and voting
+        self._process_policies(simulation)
+        
+        # Process coalition activities
+        self._process_coalitions(simulation)
+        
+        # Process crisis response if there are active crises
+        if simulation.active_crises:
+            self._process_crisis_response(simulation)
+        
+        # Record historical events for this day
+        simulation.historical_events.append({
+            "day": day,
+            "timestamp": time.time(),
+            "policies_active": len(simulation.active_policies),
+            "coalitions_active": len(simulation.active_coalitions),
+            "crises_active": len(simulation.active_crises)
+        })
+    
+    def _generate_crisis(self, simulation):
+        """Generate a random crisis for the simulation"""
+        crisis_types = [
+            {
+                "name": "Public Health Emergency",
+                "description": "A rapidly spreading disease is affecting the population",
+                "affected_sectors": ["healthcare", "governance", "economic"],
+                "severity": random.uniform(0.5, 0.9)
+            },
+            {
+                "name": "Environmental Disaster",
+                "description": "A natural disaster has caused significant environmental damage",
+                "affected_sectors": ["environmental", "governance", "economic", "healthcare"],
+                "severity": random.uniform(0.6, 0.9)
+            },
+            {
+                "name": "Economic Recession",
+                "description": "Economic indicators show a significant downturn affecting multiple sectors",
+                "affected_sectors": ["economic", "governance", "educational", "media"],
+                "severity": random.uniform(0.4, 0.8)
+            },
+            {
+                "name": "Social Unrest",
+                "description": "Widespread protests and social tensions are disrupting daily activities",
+                "affected_sectors": ["governance", "cultural", "media", "security"],
+                "severity": random.uniform(0.3, 0.7)
+            },
+            {
+                "name": "Technological Disruption",
+                "description": "A major technological failure is affecting critical infrastructure",
+                "affected_sectors": ["technological", "economic", "security", "media"],
+                "severity": random.uniform(0.5, 0.8)
+            }
+        ]
+        
+        crisis_type = random.choice(crisis_types)
+        
+        # Create crisis object
+        crisis_id = str(uuid.uuid4())
+        crisis = CrisisScenario(
+            crisis_id=crisis_id,
+            name=crisis_type["name"],
+            description=crisis_type["description"],
+            affected_sectors=crisis_type["affected_sectors"],
+            severity=crisis_type["severity"],
+            urgency=random.uniform(0.3, 0.9),
+            timestamp=time.time(),
+            duration_estimate=random.randint(3, 10)
+        )
+        
+        # Add to crisis registry
+        self.crisis_scenarios.append(crisis)
+        
+        # Add to active crises
+        simulation.active_crises.append(crisis_id)
+        
+        # Notify agents about the crisis
+        for agent_id in simulation.active_agents.keys():
+            if agent_id in self.societal_agents:
+                agent = self.societal_agents[agent_id]
+                if agent.sector in crisis_type["affected_sectors"]:
+                    # Prioritize crisis response for affected sectors
+                    agent.send_message("all", "crisis_alert", {
+                        "crisis_id": crisis.crisis_id,
+                        "name": crisis.name,
+                        "description": crisis.description,
+                        "severity": crisis.severity,
+                        "urgency": crisis.urgency
+                    })
+        
+        console.print(f"[bold red]Crisis generated: {crisis.name} (Severity: {crisis.severity:.2f})[/bold red]")
+        return crisis
+    
+    def _process_policies(self, simulation):
+        """Process policy proposals and voting in the simulation"""
+        # Placeholder - would implement full policy processing system
+        # This would include policy proposal collection, evaluation by agents,
+        # voting processes, and implementation of approved policies
+        pass
+    
+    def _process_coalitions(self, simulation):
+        """Process coalition activities in the simulation"""
+        # Placeholder - would implement coalition dynamics
+        # This would include coalition formation, activities, and dissolution
+        pass
+    
+    def _process_crisis_response(self, simulation):
+        """Process responses to active crises"""
+        # Placeholder - would implement crisis resolution mechanics
+        # This would include agent coordination, resource allocation, and impact tracking
+        pass
+    
+    def _broadcast_simulation_end(self, simulation):
+        """Notify all participating agents that a simulation has ended"""
+        for agent_id in simulation.active_agents.keys():
+            if agent_id in self.societal_agents:
+                agent = self.societal_agents[agent_id]
+                agent.send_message("all", "simulation_end", {
+                    "simulation_id": simulation.simulation_id,
+                    "status": simulation.status,
+                    "duration": len(simulation.historical_events),
+                    "metrics_summary": {k: v[-1] if v else None for k, v in simulation.metrics.items()}
+                })
+    
+    def _update_simulation_metrics(self, simulation, day):
+        """Update simulation metrics based on current state"""
+        # Calculate policy adoption rate
+        if "policy_adoption" in simulation.metrics:
+            total_policies = len(simulation.active_policies)
+            simulation.metrics["policy_adoption"].append({
+                "day": day,
+                "value": total_policies
+            })
+        
+        # Calculate coalition formation metric
+        if "coalition_formation" in simulation.metrics:
+            total_coalitions = len(simulation.active_coalitions)
+            simulation.metrics["coalition_formation"].append({
+                "day": day,
+                "value": total_coalitions
+            })
+        
+        # Calculate crisis resolution metric
+        if "crisis_resolution" in simulation.metrics:
+            resolved_crises = sum(1 for crisis in self.crisis_scenarios 
+                                if crisis.crisis_id in simulation.active_crises 
+                                and crisis.status == "resolved")
+            total_crises = len(simulation.active_crises)
+            resolution_rate = resolved_crises / max(1, total_crises)
+            simulation.metrics["crisis_resolution"].append({
+                "day": day,
+                "value": resolution_rate
+            })
+        
+        # Calculate social cohesion metric
+        if "social_cohesion" in simulation.metrics:
+            # Complex metric based on policy agreement, coalition participation, and crisis response
+            policy_agreement = 0.7  # Placeholder
+            coalition_participation = len(simulation.active_coalitions) / max(1, len(simulation.active_agents))
+            crisis_response = 0.8  # Placeholder
+            
+            cohesion_score = (policy_agreement + coalition_participation + crisis_response) / 3
+            simulation.metrics["social_cohesion"].append({
+                "day": day,
+                "value": cohesion_score
+            })
+    
+    def get_simulation_status(self, simulation_id):
+        """Get the current status of a simulation
+        
+        Args:
+            simulation_id (str): The ID of the simulation to check
+            
+        Returns:
+            dict: The current status of the simulation
+        """
+        if simulation_id in self.active_simulations:
+            simulation = self.active_simulations[simulation_id]
+            return {
+                "simulation_id": simulation.simulation_id,
+                "name": simulation.name,
+                "status": simulation.status,
+                "days_elapsed": len(simulation.historical_events),
+                "active_agents": len(simulation.active_agents),
+                "active_policies": len(simulation.active_policies),
+                "active_coalitions": len(simulation.active_coalitions),
+                "active_crises": len(simulation.active_crises),
+                "metrics": {k: v[-1] if v else None for k, v in simulation.metrics.items()}
+            }
+        
+        # Check history
+        for sim in self.simulation_history:
+            if sim.simulation_id == simulation_id:
+                return {
+                    "simulation_id": sim.simulation_id,
+                    "name": sim.name,
+                    "status": sim.status,
+                    "days_elapsed": len(sim.historical_events),
+                    "metrics": {k: v[-1] if v else None for k, v in sim.metrics.items()}
+                }
+                
+        return {"error": f"Simulation {simulation_id} not found"}
+    
+    def pause_simulation(self, simulation_id):
+        """Pause an active simulation
+        
+        Args:
+            simulation_id (str): The ID of the simulation to pause
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if simulation_id in self.active_simulations:
+            self.active_simulations[simulation_id].status = "paused"
+            return True
+        return False
+    
+    def resume_simulation(self, simulation_id):
+        """Resume a paused simulation
+        
+        Args:
+            simulation_id (str): The ID of the simulation to resume
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if simulation_id in self.active_simulations and self.active_simulations[simulation_id].status == "paused":
+            self.active_simulations[simulation_id].status = "running"
+            # Would need to restart the simulation thread
+            return True
+        return False
+    
+    def list_simulations(self):
+        """List all active and historical simulations
+        
+        Returns:
+            dict: Active and historical simulations
+        """
+        active = [{
+            "simulation_id": sim.simulation_id,
+            "name": sim.name,
+            "status": sim.status,
+            "days_elapsed": len(sim.historical_events)
+        } for sim in self.active_simulations.values()]
+        
+        historical = [{
+            "simulation_id": sim.simulation_id,
+            "name": sim.name,
+            "status": sim.status,
+            "days_elapsed": len(sim.historical_events)
+        } for sim in self.simulation_history]
+        
+        return {
+            "active": active,
+            "historical": historical
+        }
+
+# ================================
+# Main Function
+# ================================
+def main():
+    """Main function to demonstrate multi-agent societal simulation"""
+    parser = argparse.ArgumentParser(description="Multi-Agent Societal Simulation System")
+    parser.add_argument("--scouts", type=int, default=3, help="Number of scout agents to create")
+    parser.add_argument("--societal-agents", type=int, default=12, help="Number of societal agents to create")
+    parser.add_argument("--simulation", action="store_true", help="Start a societal simulation")
+    parser.add_argument("--duration", type=int, default=30, help="Simulation duration in days")
+    parser.add_argument("--model", type=str, default="meta-llama/Llama-4-Turbo-17B-Instruct-FP8", 
+                       help="LLM model to use")
+    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
+    parser.add_argument("--api-key", type=str, help="Together API key (if not in env)")
+    args = parser.parse_args()
+    
+    # Set API key if provided
+    if args.api_key:
+        os.environ["TOGETHER_API_KEY"] = args.api_key
+    
+    # Initialize the orchestrator
+    console.print("[bold green]Initializing Agent Orchestrator[/bold green]")
+    orchestrator = AgentOrchestrator(
+        num_scouts=args.scouts,
+        num_societal_agents=args.societal_agents,
+        model=args.model,
+        initial_simulation=args.simulation
+    )
+    
+    if args.interactive:
+        # Interactive console mode
+        console.print("\n[bold cyan]Multi-Agent Societal Simulation System - Interactive Mode[/bold cyan]")
+        console.print("Type 'help' for available commands or 'exit' to quit")
+        
+        while True:
+            try:
+                command = Prompt.ask("[bold blue]> [/bold blue]")
+                
+                if command.lower() == 'exit':
+                    break
+                elif command.lower() == 'help':
+                    console.print("[cyan]Available commands:[/cyan]")
+                    console.print("  simulate - Start a new societal simulation")
+                    console.print("  list - List active and historical simulations")
+                    console.print("  status <sim_id> - Show status of a simulation")
+                    console.print("  pause <sim_id> - Pause a simulation")
+                    console.print("  resume <sim_id> - Resume a paused simulation")
+                    console.print("  agents - List all agents")
+                    console.print("  policies - List active policies")
+                    console.print("  coalitions - List active coalitions")
+                    console.print("  crises - List active crises")
+                    console.print("  exit - Exit the program")
+                elif command.lower() == 'simulate':
+                    duration = Prompt.ask("Simulation duration in days", default=str(args.duration))
+                    simulation = orchestrator.simulate_society({
+                        "name": f"Interactive Simulation {int(time.time())}",
+                        "duration": int(duration)
+                    })
+                    console.print(f"[green]Started simulation {simulation.simulation_id}[/green]")
+                elif command.lower() == 'list':
+                    simulations = orchestrator.list_simulations()
+                    if simulations["active"]:
+                        console.print("[bold cyan]Active simulations:[/bold cyan]")
+                        for sim in simulations["active"]:
+                            console.print(f"  {sim['simulation_id']} - {sim['name']} ({sim['status']}, {sim['days_elapsed']} days)")
+                    else:
+                        console.print("[yellow]No active simulations[/yellow]")
+                        
+                    if simulations["historical"]:
+                        console.print("\n[bold cyan]Historical simulations:[/bold cyan]")
+                        for sim in simulations["historical"]:
+                            console.print(f"  {sim['simulation_id']} - {sim['name']} ({sim['status']}, {sim['days_elapsed']} days)")
+                    else:
+                        console.print("[yellow]No historical simulations[/yellow]")
+                elif command.lower().startswith('status '):
+                    sim_id = command.split(' ')[1]
+                    status = orchestrator.get_simulation_status(sim_id)
+                    if "error" in status:
+                        console.print(f"[red]{status['error']}[/red]")
+                    else:
+                        console.print(f"[bold cyan]Simulation {status['simulation_id']} - {status['name']}[/bold cyan]")
+                        console.print(f"Status: {status['status']}")
+                        console.print(f"Days elapsed: {status['days_elapsed']}")
+                        if "active_agents" in status:
+                            console.print(f"Active agents: {status['active_agents']}")
+                            console.print(f"Active policies: {status['active_policies']}")
+                            console.print(f"Active coalitions: {status['active_coalitions']}")
+                            console.print(f"Active crises: {status['active_crises']}")
+                        
+                        if "metrics" in status and status["metrics"]:
+                            console.print("\n[bold cyan]Current metrics:[/bold cyan]")
+                            for metric, value in status["metrics"].items():
+                                if value is not None:
+                                    if isinstance(value, dict) and "value" in value:
+                                        console.print(f"  {metric}: {value['value']}")
+                                    else:
+                                        console.print(f"  {metric}: {value}")
+                elif command.lower().startswith('pause '):
+                    sim_id = command.split(' ')[1]
+                    if orchestrator.pause_simulation(sim_id):
+                        console.print(f"[green]Paused simulation {sim_id}[/green]")
+                    else:
+                        console.print(f"[red]Failed to pause simulation {sim_id}[/red]")
+                elif command.lower().startswith('resume '):
+                    sim_id = command.split(' ')[1]
+                    if orchestrator.resume_simulation(sim_id):
+                        console.print(f"[green]Resumed simulation {sim_id}[/green]")
+                    else:
+                        console.print(f"[red]Failed to resume simulation {sim_id}[/red]")
+                elif command.lower() == 'agents':
+                    console.print("[bold cyan]Scout Agents:[/bold cyan]")
+                    for agent_id, agent in orchestrator.scouts.items():
+                        console.print(f"  {agent_id} - {agent.specialization}")
+                        
+                    console.print("\n[bold cyan]Societal Agents:[/bold cyan]")
+                    for sector, sector_data in orchestrator.societal_sectors.items():
+                        if sector_data["agents"]:
+                            console.print(f"[cyan]{sector} sector:[/cyan]")
+                            for agent_id, agent in sector_data["agents"].items():
+                                console.print(f"  {agent_id} - {agent.role}")
+                elif command.lower() == 'policies':
+                    if orchestrator.policy_register:
+                        console.print("[bold cyan]Active Policies:[/bold cyan]")
+                        for policy_id, policy in orchestrator.policy_register.items():
+                            console.print(f"  {policy.name} (proposed by {policy.proposer_sector}/{policy.proposer_role})")
+                            console.print(f"    Status: {policy.adoption_status}")
+                            console.print(f"    Support: {policy.adoption_score:.2f}")
+                    else:
+                        console.print("[yellow]No active policies[/yellow]")
+                elif command.lower() == 'coalitions':
+                    if orchestrator.coalition_register:
+                        console.print("[bold cyan]Active Coalitions:[/bold cyan]")
+                        for coalition_id, coalition in orchestrator.coalition_register.items():
+                            console.print(f"  {coalition.name} - {len(coalition.member_ids)} members")
+                            console.print(f"    Purpose: {coalition.purpose}")
+                            console.print(f"    Status: {coalition.status}")
+                    else:
+                        console.print("[yellow]No active coalitions[/yellow]")
+                elif command.lower() == 'crises':
+                    if orchestrator.crisis_scenarios:
+                        console.print("[bold cyan]Active Crises:[/bold cyan]")
+                        for crisis in orchestrator.crisis_scenarios:
+                            console.print(f"  {crisis.name} (Severity: {crisis.severity:.2f})")
+                            console.print(f"    Status: {crisis.status}")
+                            console.print(f"    Affected sectors: {', '.join(crisis.affected_sectors)}")
+                    else:
+                        console.print("[yellow]No active crises[/yellow]")
+                else:
+                    console.print(f"[red]Unknown command: {command}[/red]")
+                    
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/red]")
+    
+    elif args.simulation:
+        # Non-interactive simulation mode
+        console.print(f"[cyan]Running societal simulation for {args.duration} days...[/cyan]")
+        simulation = orchestrator.simulate_society({
+            "duration": args.duration
+        })
+        
+        # Wait until simulation is complete
+        while simulation.status != "completed":
+            time.sleep(1)
+            
+        # Show simulation results
+        console.print(f"\n[bold green]Simulation {simulation.simulation_id} completed![/bold green]")
+        console.print(f"Duration: {len(simulation.historical_events)} days")
+        
+        if simulation.metrics:
+            console.print("\n[bold cyan]Final metrics:[/bold cyan]")
+            for metric, values in simulation.metrics.items():
+                if values:
+                    console.print(f"  {metric}: {values[-1]['value']}")
+    
+    console.print("[bold green]Shutting down...[/bold green]")
+
+if __name__ == "__main__":
+    main()
+
