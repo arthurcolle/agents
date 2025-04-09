@@ -2052,7 +2052,7 @@ class AgentOrchestrator:
             specialization = "general"
             self.scouts[agent_id] = ScoutAgent(agent_id, specialization, model)
             
-        self.orchestrator_thread.start()
+        # Initialize agent performance tracking
         self.agent_performance_history = {}  # Track agent performance by task type
         self.collaboration_graph = {}  # Graph of agent collaborations
         self.skill_registry = {  # Registry of skills and which agents have them
@@ -2114,6 +2114,7 @@ class AgentOrchestrator:
             specialization = "general"
             self.scouts[agent_id] = ScoutAgent(agent_id, specialization, model)
             
+        # Start the orchestrator thread (only once)
         self.orchestrator_thread.start()
         
     def _orchestrator(self):
