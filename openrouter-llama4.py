@@ -1492,7 +1492,12 @@ For computationally intensive tasks, use your parallel processing capabilities.
                         latency = time.time() - start_time
                         self._update_api_health(success=True, latency=latency)
                         
-                        return self._handle_streaming_response(response)
+                        # Yield chunks from the async generator
+                        async for chunk in self._handle_streaming_response(response):
+                            yield chunk
+                        # Indicate completion after the stream is done
+                        # The _handle_streaming_response itself yields a 'complete' marker
+                        return # Exit after yielding all chunks
                     except requests.exceptions.ConnectionError as conn_err:
                         # Connection error during streaming
                         error_info = f"Error streaming response: Connection closed"
