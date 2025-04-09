@@ -1817,192 +1817,85 @@ For computationally intensive tasks, use your parallel processing capabilities.
             yield {"type": "error", "content": f"Error in streaming: {str(e)}"}
                         
         # Assemble complete message and add to conversation
-        assistant_message = {}
-        
+        assistant_message = {"role": "assistant"}
+        accumulated_tool_calls = [] # Store raw tool call definitions
+
         if content_chunks:
             assistant_message["content"] = "".join(content_chunks)
-        
-        # Process function calls
+
+        # Process accumulated function calls in parallel
         if function_call_chunks:
-            assistant_message["tool_calls"] = []
-            
-            for index, call_data in function_call_chunks.items():
-                # Execute the function
-                function_name = call_data["function"]["name"]
-                arguments = call_data["function"]["arguments"]
-                
-                # Parse arguments
-                try:
-                    args = json.loads(arguments)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-                    
-                # Add function call to response
-                assistant_message["tool_calls"].append(call_data)
-                
-                # Execute the function if kernel is available
-                if agent_kernel:
-                    if self.debug:
-                        print(f"[DEBUG] Executing function: {function_name} with args: {json.dumps(args)}")
-                    try:
-                        result, success = agent_kernel.execute_capability(function_name, **args)
-                        if self.debug:
-                            print(f"[DEBUG] Function execution result: {json.dumps(result) if isinstance(result, (dict, list)) else result}")
-                            print(f"[DEBUG] Execution success: {success}")
-                    except Exception as e:
-                        if self.debug:
-                            print(f"[DEBUG] Function execution error: {str(e)}")
-                        result = f"Error: {str(e)}"
-                        success = False
-                    
-                    # Create tool call response
-                    tool_call_response = {
-                        "tool_call_id": call_data["id"],
-                        "role": "tool",
-                        "name": function_name,
-                        "content": json.dumps(result) if isinstance(result, (dict, list)) else str(result)
-                    }
-                    
-                    # Add tool response to conversation history immediately
-                    self.messages.append(tool_call_response)
-                    
-                    # Also add it to the assistant message for reference
-                    if "tool_call_responses" not in assistant_message:
-                        assistant_message["tool_call_responses"] = []
-                    assistant_message["tool_call_responses"].append(tool_call_response)
-                    
-                    # Yield the function result to be shown to the user
-                    yield {
-                        "type": "function_result", 
-                        "function_name": function_name,
-                        "content": json.dumps(result) if isinstance(result, (dict, list)) else str(result)
-                    }
-                    
-                    # We'll handle weather formatting in the main response instead
-                    pass
-                
-                # Track function call
-                self.metadata["function_calls"].append({
-                    "name": function_name,
-                    "arguments": args,
-                    "result": result if 'result' in locals() else None,
-                    "timestamp": time.time()
-                })
-        
-        # Add assistant message to conversation history
-        self.messages.append({
-            "role": "assistant",
-            **assistant_message
-        })
-        
-        # If we have function calls, decide how to provide a response
-        if function_call_chunks and agent_kernel:
-            # Check what functions were called
-            function_names = [call["function"]["name"] for call in function_call_chunks.values()]
-            
-            # Handle special case for weather rather than doing a recursive call
-            if "get_weather" in function_names:
-                # Look for the weather result in the function calls
-                for call_data in function_call_chunks.values():
-                    if call_data["function"]["name"] == "get_weather":
-                        # Parse the arguments
-                        try:
-                            args = json.loads(call_data["function"]["arguments"])
-                            location = args.get("location", "the requested location")
-                        except:
-                            location = "the requested location"
-                
-                # Find the weather result in the responses
-                weather_content = None
-                for msg in self.messages:
-                    if msg.get("role") == "tool" and msg.get("name") == "get_weather":
-                        weather_content = msg.get("content")
-                        break
-                
-                if weather_content:
-                    try:
-                        # Parse the weather data
-                        weather_data = json.loads(weather_content)
-                        # Yield a nicely formatted response
-                        temp_unit = 'F' if weather_data.get('units', 'imperial') == 'imperial' else 'C'
-                        yield {
-                            "type": "content",
-                            "content": f"\nIn {weather_data.get('location', location)}, the current temperature is {weather_data.get('temperature')}°{temp_unit} with {weather_data.get('conditions', 'unknown conditions')}. The humidity is {weather_data.get('humidity', 'unknown')}%."
-                        }
-                    except Exception as e:
-                        if self.debug:
-                            print(f"[DEBUG] Error formatting weather response: {str(e)}")
-                        # Just yield the content directly
-                        yield {
-                            "type": "content",
-                            "content": f"\nThe weather information has been retrieved for {location}."
-                        }
-            else:
-                # For other function calls, do a recursive call
+            # Convert collected chunks into the format expected by _execute_capabilities_parallel
+            raw_tool_calls = list(function_call_chunks.values())
+            assistant_message["tool_calls"] = raw_tool_calls # Store the raw calls from the model
+
+            if agent_kernel:
                 if self.debug:
-                    print("[DEBUG] Starting recursive call after function execution")
-                try:
-                    # Recursive call with improved prompt
-                    continuation_prompt = "Based on the function results above, provide a helpful response that addresses the user's original request. Format your response clearly and do not include any JSON or function call syntax."
-                    
-                    # Create an event loop if needed for the recursive call
-                    try:
-                        loop = asyncio.get_event_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                    
-                    # Properly await the coroutine in the recursive call
-                    continuation_coroutine = self.chat(continuation_prompt, stream=True, recursive_call=True)
-                    
-                    # Define a synchronous function to process the async generator
-                    def process_async_generator(async_gen):
-                        result = []
-                        # Create a new event loop for this context
-                        temp_loop = asyncio.new_event_loop()
-                        try:
-                            # Define an async collector function
-                            async def collector():
-                                nonlocal result
-                                # Handle both coroutines and async generators
-                                if asyncio.iscoroutine(async_gen):
-                                    # If it's a coroutine, await it to get the generator
-                                    gen = await async_gen
-                                    async for item in gen:
-                                        result.append(item)
-                                else:
-                                    # If it's already an async generator
-                                    async for item in async_gen:
-                                        result.append(item)
-                                return result
-                            
-                            # Run the collector in the temporary loop
-                            return temp_loop.run_until_complete(collector())
-                        except Exception as e:
-                            logger.error(f"Error processing async generator: {e}")
-                            return [{"type": "error", "content": f"Error processing response: {str(e)}"}]
-                        finally:
-                            temp_loop.close()
-                    
-                    # Process the coroutine to get all chunks
-                    continuation_chunks = process_async_generator(continuation_coroutine)
-                    
-                    # Pass through all continuation responses
-                    for chunk in continuation_chunks:
-                        # Add a flag to indicate this is part of a recursive flow
-                        chunk["recursive"] = True
-                        yield chunk
-                        
-                    # The final result will be yielded by the continuation
-                except Exception as e:
-                    if self.debug:
-                        print(f"[DEBUG] Error in recursive call: {str(e)}")
-                        print(traceback.format_exc())
-                    # Yield the error to be shown to the user
-                    yield {"type": "error", "content": f"Error in recursive call: {str(e)}"}
-        
-        # Return final message
-        return {"type": "complete", "message": assistant_message}
+                    print(f"[DEBUG] Executing {len(raw_tool_calls)} tool calls in parallel...")
+
+                # Execute capabilities in parallel
+                tool_results = await self._execute_capabilities_parallel(raw_tool_calls)
+
+                if self.debug:
+                    print(f"[DEBUG] Parallel tool execution results: {json.dumps(tool_results)}")
+
+                # Add tool results to conversation history immediately
+                self.messages.extend(tool_results)
+
+                # Yield function results to the user interface
+                for result_msg in tool_results:
+                    yield {
+                        "type": "function_result",
+                        "function_name": result_msg.get("name", "unknown"),
+                        "content": result_msg.get("content", '{"error": "Result content missing"}')
+                    }
+
+                # Track function calls in metadata
+                for call_data, result_msg in zip(raw_tool_calls, tool_results):
+                     try:
+                         args = json.loads(call_data.get("function", {}).get("arguments", "{}"))
+                     except:
+                         args = {}
+                     try:
+                         result_content = json.loads(result_msg.get("content", "null"))
+                     except:
+                         result_content = result_msg.get("content")
+
+                     self.metadata["function_calls"].append({
+                         "name": call_data.get("function", {}).get("name"),
+                         "arguments": args,
+                         "result": result_content,
+                         "timestamp": time.time()
+                     })
+
+        # Add assistant message (potentially with tool calls but without results yet) to history
+        # The tool results were added separately above
+        self.messages.append(assistant_message)
+
+        # If we executed tools, make a recursive call to get the final response
+        if function_call_chunks and agent_kernel:
+            if self.debug:
+                print("[DEBUG] Starting recursive call after parallel function execution")
+            try:
+                # Recursive call with improved prompt
+                continuation_prompt = "Based on the function results provided in the history, provide a helpful response that addresses the user's original request. Format your response clearly and do not include any JSON or function call syntax."
+
+                # Properly await the coroutine in the recursive call
+                # The chat method itself returns an async generator
+                async for chunk in self.chat(continuation_prompt, stream=True, recursive_call=True):
+                    # Add a flag to indicate this is part of a recursive flow
+                    chunk["recursive"] = True
+                    yield chunk
+
+            except Exception as e:
+                if self.debug:
+                    print(f"[DEBUG] Error in recursive call: {str(e)}")
+                    print(traceback.format_exc())
+                # Yield the error to be shown to the user
+                yield {"type": "error", "content": f"Error in recursive call: {str(e)}"}
+
+        # Yield a completion marker
+        yield {"type": "complete", "message": assistant_message}
         
     def _handle_response(self, response_data):
         """
@@ -2035,104 +1928,89 @@ For computationally intensive tasks, use your parallel processing capabilities.
             })
             
             # Process any tool calls
-            if "tool_calls" in message:
-                # Create container for tool responses
-                tool_responses = []
-                message["tool_responses"] = []
-                
-                for tool_call in message["tool_calls"]:
-                    if "function" in tool_call:
-                        function_call = tool_call["function"]
-                        
-                        # Get function details
-                        function_name = function_call["name"]
-                        arguments = function_call["arguments"]
-                        
-                        # Parse arguments
-                        try:
-                            args = json.loads(arguments)
-                        except (json.JSONDecodeError, TypeError):
-                            args = {}
-                            
-                        # Execute function if kernel is available
-                        if agent_kernel:
-                            result, success = agent_kernel.execute_capability(function_name, **args)
-                            
-                            # Create tool response
-                            tool_call_id = tool_call.get("id", f"call_{uuid.uuid4()}")
-                            tool_response = {
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "name": function_name,
-                                "content": json.dumps(result) if isinstance(result, (dict, list)) else str(result)
-                            }
-                            
-                            # Add function call result to conversation
-                            self.messages.append(tool_response)
-                            tool_responses.append(tool_response)
-                            
-                            # Also add to message for the caller
-                            message["tool_responses"].append({
-                                "tool_call_id": tool_call_id,
-                                "function_name": function_name, 
-                                "result": result
-                            })
-                            
-                            # Track function call
-                            self.metadata["function_calls"].append({
-                                "name": function_name,
-                                "arguments": args,
-                                "result": result,
-                                "timestamp": time.time()
-                            })
-                
-                # Let the model decide what to do next
-                # This allows the model to recursively use tools when needed
-                # We only do this once to prevent infinite recursive calls
+            if "tool_calls" in message and agent_kernel:
+                raw_tool_calls = message["tool_calls"] # These are already dicts in non-streaming
+
+                # Execute tools in parallel
+                if self.debug:
+                    print(f"[DEBUG] Executing {len(raw_tool_calls)} tool calls in parallel (non-streaming)...")
+
+                # Need to run the async helper in the current event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                tool_results = loop.run_until_complete(
+                    self._execute_capabilities_parallel(raw_tool_calls)
+                )
+
+                if self.debug:
+                    print(f"[DEBUG] Parallel tool execution results (non-streaming): {json.dumps(tool_results)}")
+
+                # Add tool results to conversation history
+                self.messages.extend(tool_results)
+
+                # Track function calls in metadata
+                for call_data, result_msg in zip(raw_tool_calls, tool_results):
+                     try:
+                         args = json.loads(call_data.get("function", {}).get("arguments", "{}"))
+                     except:
+                         args = {}
+                     try:
+                         result_content = json.loads(result_msg.get("content", "null"))
+                     except:
+                         result_content = result_msg.get("content")
+
+                     self.metadata["function_calls"].append({
+                         "name": call_data.get("function", {}).get("name"),
+                         "arguments": args,
+                         "result": result_content,
+                         "timestamp": time.time()
+                     })
+
+                # Let the model decide what to do next after tool execution
                 if not message.get("is_recursive_call", False):
-                    next_prompt_data = {
-                        "model": self.model,
-                        "messages": format_messages_for_api(self.messages),
-                        "temperature": self.temperature,
-                        "max_tokens": self.max_tokens,
-                        "stream": False,
-                        "tools": self._get_tool_definitions()
-                    }
-                    
-                    headers = {
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    }
-                    
                     if self.debug:
-                        print("[DEBUG] Getting next response from model after tool execution")
-                    next_response = requests.post(
-                        self.endpoint,
-                        headers=headers,
-                        json=next_prompt_data
-                    )
-                    
-                    if next_response.status_code == 200:
-                        # Mark this as a recursive call to prevent infinite loops
-                        next_data = next_response.json()
-                        next_data["is_recursive_call"] = True
-                        
-                        # Process the recursive response
-                        next_result = self._handle_response(next_data)
-                        
-                        # Add the final result to our message
-                        message["final_response"] = next_result.get("content", "")
-                        
-                        # Also copy any new tool calls/responses
-                        if "tool_calls" in next_result:
-                            if "recursive_tool_calls" not in message:
-                                message["recursive_tool_calls"] = []
-                            message["recursive_tool_calls"].extend(next_result["tool_calls"])
-                            
-                        if "tool_responses" in next_result:
-                            message["tool_responses"].extend(next_result["tool_responses"])
-            
-            # Return the processed message
+                        print("[DEBUG] Getting next response from model after tool execution (non-streaming)")
+
+                    # Make the recursive call (this is synchronous, but calls the async chat method)
+                    # The chat method handles the async call internally
+                    # We need to adapt this part as _handle_response is sync but needs async result
+                    # Let's call chat and process the result synchronously here.
+
+                    continuation_prompt = "Based on the function results provided in the history, provide a helpful response that addresses the user's original request."
+
+                    # This needs careful handling as we are in a sync method calling async chat
+                    # We'll run the async chat method and get the final result synchronously
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+
+                    # Define an async function to run the chat and collect the final response
+                    async def run_recursive_chat():
+                        final_content = ""
+                        async for chunk in self.chat(continuation_prompt, stream=False, recursive_call=True):
+                            # In non-streaming, chat should return the final message dict
+                            if isinstance(chunk, dict) and chunk.get("role") == "assistant":
+                                final_content = chunk.get("content", "")
+                                # We might need to handle nested tool calls here if the recursive call also uses tools
+                                # For simplicity now, just get the content.
+                                break
+                        return final_content
+
+                    final_response_content = loop.run_until_complete(run_recursive_chat())
+
+                    # Update the original message with the final response content
+                    message["content"] = final_response_content # Overwrite original content with final one
+                    # Clear tool calls as they've been processed and resulted in the final content
+                    message.pop("tool_calls", None)
+                    message.pop("tool_responses", None) # Clear intermediate responses if any
+
+            # Return the processed message (potentially updated after recursive call)
             return message
                 
         except Exception as e:
@@ -2172,7 +2050,99 @@ For computationally intensive tasks, use your parallel processing capabilities.
             tools.append(tool)
             
         return tools
-        
+
+    async def _execute_capabilities_parallel(self, tool_calls: List[Dict]) -> List[Dict]:
+        """Executes multiple tool capabilities in parallel."""
+        tasks = []
+        results_map = {} # To map task results back to tool_call_id
+
+        for tool_call_data in tool_calls:
+            tool_call_id = tool_call_data.get("id")
+            function_name = tool_call_data.get("function", {}).get("name")
+            arguments_str = tool_call_data.get("function", {}).get("arguments", "{}")
+
+            if not tool_call_id or not function_name:
+                logger.warning(f"Skipping invalid tool call data: {tool_call_data}")
+                continue
+
+            try:
+                args = json.loads(arguments_str)
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.error(f"Failed to parse arguments for {function_name}: {arguments_str}. Error: {e}")
+                # Store error result immediately
+                results_map[tool_call_id] = {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": function_name,
+                    "content": json.dumps({"success": False, "message": f"Argument parsing error: {e}"})
+                }
+                continue # Skip creating a task for this call
+
+            # Create an async task for each capability execution
+            # We wrap the potentially synchronous kernel call
+            async def execute_task(call_id, name, func_args):
+                loop = asyncio.get_running_loop()
+                try:
+                    # Assume agent_kernel.execute_capability might be sync
+                    # Use run_in_executor if agent_kernel is available
+                    if agent_kernel:
+                         # Use functools.partial to pass arguments correctly
+                        partial_func = functools.partial(agent_kernel.execute_capability, name, **func_args)
+                        result, success = await loop.run_in_executor(None, partial_func)
+                    else:
+                        result, success = f"Error: Agent kernel not available", False
+
+                    # Format the result content
+                    content = json.dumps(result) if isinstance(result, (dict, list)) else str(result)
+
+                    return {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": name,
+                        "content": content
+                    }
+                except Exception as e:
+                    logger.error(f"Error executing capability {name} in parallel: {e}")
+                    return {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": name,
+                        "content": json.dumps({"success": False, "message": f"Execution error: {e}"})
+                    }
+
+            tasks.append(execute_task(tool_call_id, function_name, args))
+
+        # Run all tasks concurrently
+        if tasks:
+            task_results = await asyncio.gather(*tasks)
+            for res in task_results:
+                results_map[res["tool_call_id"]] = res
+
+        # Return results in the order corresponding to the input tool_calls, preserving errors
+        final_results = []
+        for tool_call_data in tool_calls:
+             call_id = tool_call_data.get("id")
+             if call_id in results_map:
+                 final_results.append(results_map[call_id])
+             # If call_id wasn't processed (e.g., arg parse error), it won't be added here
+             # which is the correct behavior as we already stored the error in results_map
+
+        # Add back any results for calls that failed before task creation (e.g., arg parsing)
+        for call_id, result in results_map.items():
+             if call_id not in [res["tool_call_id"] for res in final_results]:
+                 # Find the original position if possible, otherwise append
+                 original_index = -1
+                 for i, tc in enumerate(tool_calls):
+                     if tc.get("id") == call_id:
+                         original_index = i
+                         break
+                 if original_index != -1:
+                     final_results.insert(original_index, result)
+                 else:
+                     final_results.append(result) # Append if original position not found
+
+        return final_results
+
     def add_code_module(self, name: str, code: str):
         """Add a new code module to the agent"""
         if not agent_kernel:
