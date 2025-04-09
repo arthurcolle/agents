@@ -1689,9 +1689,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
             self.api_health["failure_count"] += 1
             self.api_health["last_error"] = error
             
-    def _handle_streaming_response(self, response):
+    async def _handle_streaming_response(self, response):
         """
-        Handle a streaming response from the API
+        Handle a streaming response from the API (as an async generator)
         Uses an elegant recursive approach where the agent controls the entire flow
         """
         content_chunks = []
