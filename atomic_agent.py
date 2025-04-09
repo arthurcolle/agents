@@ -2761,7 +2761,7 @@ class ToolRegistry:
             "success": True,
             "response_sent": text_to_send
         }
-    def _orchestrate_tasks(self, main_task: str, subtasks: List[str] = None, priority: int = 1, context: Dict[str, Any] = None, agent=None) -> Dict[str, Any]:
+    def _orchestrate_tasks(self, main_task: str = None, subtasks: List[str] = None, priority: int = 1, context: Dict[str, Any] = None, tasks: str = None, agent=None) -> Dict[str, Any]:
         """Orchestrate multiple parallel tasks using scout agents"""
         try:
             # Use passed agent instance if available, otherwise try inspect.stack()
@@ -2778,12 +2778,30 @@ class ToolRegistry:
             if context is None:
                 context = {}
             
+            # Handle the case where tasks is provided as a JSON string
+            if tasks is not None:
+                try:
+                    # Try to parse as JSON
+                    if isinstance(tasks, str):
+                        if tasks.startswith('[') and tasks.endswith(']'):
+                            parsed_tasks = json.loads(tasks)
+                            if isinstance(parsed_tasks, list):
+                                subtasks = [t.get("task_name", t) if isinstance(t, dict) else t for t in parsed_tasks]
+                                if main_task is None and subtasks:
+                                    main_task = f"Process multiple tasks: {', '.join(subtasks[:2])}..."
+                except Exception as e:
+                    return {"error": f"Failed to parse tasks parameter: {str(e)}", "success": False}
+            
             # Add main task to context
-            context["main_task"] = main_task
+            if main_task:
+                context["main_task"] = main_task
             
             # If subtasks not provided, create a single task for the main task
             if subtasks is None or not subtasks:
-                subtasks = [f"Get {main_task}"]
+                if main_task:
+                    subtasks = [f"Get {main_task}"]
+                else:
+                    return {"error": "No main_task or subtasks provided", "success": False}
             
             # Convert string to list if needed
             if isinstance(subtasks, str):
@@ -3525,6 +3543,20 @@ class ToolRegistry:
                 "required": []
             },
             function=self._get_weather
+        )
+        
+        # Register stock price retrieval function
+        self.register_function(
+            name="get_stock_price",
+            description="Get current stock price information for a given stock symbol",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Stock symbol (e.g., AAPL, MSFT, TSLA)"}
+                },
+                "required": ["symbol"]
+            },
+            function=self._get_stock_price
         )
         
         # Register a weather_api alias for compatibility
@@ -4662,6 +4694,66 @@ class ToolRegistry:
         except Exception as e:
             return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
+    def _get_stock_price(self, symbol: str) -> Dict[str, Any]:
+        """Get current stock price information for a given symbol"""
+        try:
+            # This is a mock implementation since we don't have a real API key
+            # In a real implementation, you would use a financial API like Alpha Vantage, Yahoo Finance, etc.
+            import random
+            import time
+            
+            # Generate a realistic mock price based on the symbol
+            symbol = symbol.upper().strip()
+            
+            # Common stock symbols and their mock prices
+            mock_prices = {
+                "AAPL": 180.95,
+                "MSFT": 420.45,
+                "GOOGL": 175.85,
+                "AMZN": 185.35,
+                "META": 500.25,
+                "TSLA": 175.35,
+                "NVDA": 950.75,
+                "BRK.A": 620000.00,
+                "JPM": 195.45,
+                "V": 275.85
+            }
+            
+            # Use predefined price if available, otherwise generate a random one
+            if symbol in mock_prices:
+                base_price = mock_prices[symbol]
+            else:
+                # Generate a random base price between $10 and $500
+                base_price = random.uniform(10.0, 500.0)
+            
+            # Add some random variation (+/- 2%)
+            variation = random.uniform(-0.02, 0.02)
+            current_price = base_price * (1 + variation)
+            
+            # Generate a realistic daily change
+            daily_change_pct = random.uniform(-0.05, 0.05)
+            daily_change = base_price * daily_change_pct
+            previous_close = current_price - daily_change
+            
+            # Generate realistic volume
+            volume = random.randint(500000, 10000000)
+            
+            # Format the results
+            return {
+                "success": True,
+                "symbol": symbol,
+                "price": round(current_price, 2),
+                "change": round(daily_change, 2),
+                "change_percent": round(daily_change_pct * 100, 2),
+                "previous_close": round(previous_close, 2),
+                "volume": volume,
+                "market_cap": round(current_price * volume / 1000, 2),
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "source": "Mock Data (Demo Only)"
+            }
+        except Exception as e:
+            return {"error": str(e), "traceback": traceback.format_exc(), "success": False}
+    
     def _get_multiple_weather(self, locations: List[str]) -> Dict[str, Any]:
         """Get weather information for multiple locations in parallel using Jina search"""
         try:
