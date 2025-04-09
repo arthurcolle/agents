@@ -8833,7 +8833,7 @@ if __name__ == "__main__":
             time.sleep(0.5)
         
         # Complete the simulation
-        if simulation.status \!= "paused":
+        if simulation.status != "paused":
             simulation.status = "completed"
             
         # Store in history
