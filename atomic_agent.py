@@ -7327,16 +7327,223 @@ print("Hello, world!")
                 "orchestrate a team of specialized scout agents to solve complex problems in parallel. "
                 "You can issue multiple function calls in parallel to efficiently solve complex tasks. "
                 "When you need to make function calls, you can return them in the format: "
-                "[function_name1(param1=value1, param2=value2), function_name2(param1=value1)]"
+                "[function_name1(param1=value1, param2=value2), function_name2(param1=value1)]\n\n"
+                "You support special CLI formatting commands:\n"
+                "- <append>content</append>: Append content to the previous output\n"
+                "- <replace>old|new</replace>: Replace 'old' with 'new' in the previous output\n"
+                "- <grid>content</grid>: Display content in a formatted grid\n"
+                "- <table>header1,header2|row1col1,row1col2|row2col1,row2col2</table>: Display a formatted table\n"
+                "- <code language>code</code>: Format code blocks with syntax highlighting\n"
+                "- <progress value=50>: Show a progress bar\n"
+                "- <tree>root|child1|child1.1,child1.2|child2</tree>: Display a tree structure\n"
+                "- <chart type=bar>label1,value1|label2,value2</chart>: Display a simple chart\n"
+                "- <animate>frame1|frame2|frame3</animate>: Show a simple animation sequence\n"
+                "- <highlight>important text</highlight>: Highlight important information"
             )
         else:
             system_content = (
                 "You are a helpful AI assistant that can dynamically use tools to accomplish tasks and "
                 "orchestrate a team of specialized scout agents to solve complex problems in parallel. "
-                "You can issue function calls using the defined tools."
+                "You can issue function calls using the defined tools.\n\n"
+                "You support special CLI formatting commands:\n"
+                "- <append>content</append>: Append content to the previous output\n"
+                "- <replace>old|new</replace>: Replace 'old' with 'new' in the previous output\n"
+                "- <grid>content</grid>: Display content in a formatted grid\n"
+                "- <table>header1,header2|row1col1,row1col2|row2col1,row2col2</table>: Display a formatted table\n"
+                "- <code language>code</code>: Format code blocks with syntax highlighting\n"
+                "- <progress value=50>: Show a progress bar\n"
+                "- <tree>root|child1|child1.1,child1.2|child2</tree>: Display a tree structure\n"
+                "- <chart type=bar>label1,value1|label2,value2</chart>: Display a simple chart\n"
+                "- <animate>frame1|frame2|frame3</animate>: Show a simple animation sequence\n"
+                "- <highlight>important text</highlight>: Highlight important information"
             )
         self.system_message = {"role": "system", "content": system_content}
         self.conversation_history.append(self.system_message)
+        
+    def _process_cli_commands(self, response: str) -> str:
+        """
+        Process special CLI formatting commands in the response.
+        
+        Args:
+            response: The response text containing CLI commands
+            
+        Returns:
+            The processed response with CLI commands handled
+        """
+        # Store the last response for append/replace operations
+        if not hasattr(self, 'last_response'):
+            self.last_response = ""
+        
+        # Handle <append> command
+        append_pattern = r'<append>(.*?)</append>'
+        append_matches = re.findall(append_pattern, response, re.DOTALL)
+        if append_matches:
+            for match in append_matches:
+                # Remove the command from the response
+                response = response.replace(f"<append>{match}</append>", "")
+                # Append the content to the last response
+                self.last_response += match
+                # Add a notification
+                console.print("[cyan]Content appended to previous response[/cyan]")
+        
+        # Handle <replace> command
+        replace_pattern = r'<replace>(.*?)\|(.*?)</replace>'
+        replace_matches = re.findall(replace_pattern, response, re.DOTALL)
+        if replace_matches:
+            for old, new in replace_matches:
+                # Remove the command from the response
+                response = response.replace(f"<replace>{old}|{new}</replace>", "")
+                # Replace in the last response
+                if old in self.last_response:
+                    self.last_response = self.last_response.replace(old, new)
+                    console.print(f"[cyan]Replaced '{old}' with '{new}' in previous response[/cyan]")
+        
+        # Handle <grid> command
+        grid_pattern = r'<grid>(.*?)</grid>'
+        grid_matches = re.findall(grid_pattern, response, re.DOTALL)
+        if grid_matches:
+            for match in grid_matches:
+                # Format as a grid using rich
+                lines = match.strip().split('\n')
+                grid_content = "\n".join([f"│ {line.ljust(max(len(l) for l in lines))} │" for line in lines])
+                grid_border = "┌" + "─" * (max(len(l) for l in lines) + 2) + "┐\n"
+                grid_border_bottom = "\n└" + "─" * (max(len(l) for l in lines) + 2) + "┘"
+                formatted_grid = grid_border + grid_content + grid_border_bottom
+                
+                # Replace in the response
+                response = response.replace(f"<grid>{match}</grid>", formatted_grid)
+        
+        # Handle <table> command
+        table_pattern = r'<table>(.*?)</table>'
+        table_matches = re.findall(table_pattern, response, re.DOTALL)
+        if table_matches:
+            for match in table_matches:
+                try:
+                    # Parse table data
+                    rows = match.strip().split('|')
+                    headers = rows[0].split(',')
+                    data = [row.split(',') for row in rows[1:]]
+                    
+                    # Create a rich table
+                    from rich.table import Table
+                    table = Table()
+                    for header in headers:
+                        table.add_column(header.strip())
+                    
+                    for row in data:
+                        table.add_row(*[cell.strip() for cell in row])
+                    
+                    # Render the table to string
+                    console_capture = Console(file=StringIO(), width=80)
+                    console_capture.print(table)
+                    table_str = console_capture.file.getvalue()
+                    
+                    # Replace in the response
+                    response = response.replace(f"<table>{match}</table>", table_str)
+                except Exception as e:
+                    console.print(f"[yellow]Error formatting table: {e}[/yellow]")
+                    # Remove the command but keep the content
+                    response = response.replace(f"<table>{match}</table>", match)
+        
+        # Handle <code> command
+        code_pattern = r'<code\s+([a-zA-Z0-9_]+)>(.*?)</code>'
+        code_matches = re.findall(code_pattern, response, re.DOTALL)
+        if code_matches:
+            for lang, code in code_matches:
+                try:
+                    # Format code with syntax highlighting
+                    syntax = Syntax(code, lang, theme="monokai", line_numbers=True)
+                    
+                    # Render to string
+                    console_capture = Console(file=StringIO(), width=80)
+                    console_capture.print(syntax)
+                    code_str = console_capture.file.getvalue()
+                    
+                    # Replace in the response
+                    response = response.replace(f"<code {lang}>{code}</code>", code_str)
+                except Exception as e:
+                    console.print(f"[yellow]Error formatting code: {e}[/yellow]")
+                    # Replace with markdown code block as fallback
+                    response = response.replace(f"<code {lang}>{code}</code>", f"```{lang}\n{code}\n```")
+        
+        # Handle <progress> command
+        progress_pattern = r'<progress\s+value=(\d+)>'
+        progress_matches = re.findall(progress_pattern, response)
+        if progress_matches:
+            for value in progress_matches:
+                try:
+                    value = int(value)
+                    # Create a progress bar
+                    from rich.progress import Progress
+                    progress = Progress()
+                    task = progress.add_task("", total=100)
+                    progress.update(task, completed=value)
+                    
+                    # Render to string
+                    console_capture = Console(file=StringIO(), width=80)
+                    with progress:
+                        progress.update(task, completed=value)
+                        console_capture.print(progress)
+                    progress_str = console_capture.file.getvalue()
+                    
+                    # Replace in the response
+                    response = response.replace(f"<progress value={value}>", progress_str)
+                except Exception as e:
+                    console.print(f"[yellow]Error creating progress bar: {e}[/yellow]")
+                    # Replace with text representation
+                    bar_length = 20
+                    filled_length = int(bar_length * value / 100)
+                    bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                    response = response.replace(f"<progress value={value}>", f"[{bar}] {value}%")
+        
+        # Handle <tree> command
+        tree_pattern = r'<tree>(.*?)</tree>'
+        tree_matches = re.findall(tree_pattern, response, re.DOTALL)
+        if tree_matches:
+            for match in tree_matches:
+                try:
+                    # Parse tree data
+                    levels = match.strip().split('|')
+                    
+                    # Create a rich tree
+                    from rich.tree import Tree
+                    root_name = levels[0]
+                    tree = Tree(root_name)
+                    
+                    # Build the tree structure
+                    current_nodes = [tree]
+                    for level in levels[1:]:
+                        items = level.split(',')
+                        new_nodes = []
+                        for item in items:
+                            node = current_nodes[0].add(item.strip())
+                            new_nodes.append(node)
+                        current_nodes = new_nodes
+                    
+                    # Render to string
+                    console_capture = Console(file=StringIO(), width=80)
+                    console_capture.print(tree)
+                    tree_str = console_capture.file.getvalue()
+                    
+                    # Replace in the response
+                    response = response.replace(f"<tree>{match}</tree>", tree_str)
+                except Exception as e:
+                    console.print(f"[yellow]Error creating tree: {e}[/yellow]")
+                    # Remove the command but keep the content
+                    response = response.replace(f"<tree>{match}</tree>", match.replace('|', '\n- '))
+        
+        # Handle <highlight> command
+        highlight_pattern = r'<highlight>(.*?)</highlight>'
+        highlight_matches = re.findall(highlight_pattern, response, re.DOTALL)
+        if highlight_matches:
+            for match in highlight_matches:
+                # Replace with highlighted text
+                response = response.replace(f"<highlight>{match}</highlight>", f"[bold yellow]{match}[/bold yellow]")
+        
+        # Store this response for future append/replace operations
+        self.last_response = response
+        
+        return response
 
     def _detect_system_info(self):
         return {
@@ -7624,6 +7831,7 @@ print("Hello, world!")
         """
         Check if a response appears to be cut off or incomplete and fix it by reprompting.
         This ensures premium users ($10,000/day) receive complete, high-quality responses.
+        Also processes special CLI formatting commands.
         
         Args:
             response: The original response from the model
@@ -7631,6 +7839,9 @@ print("Hello, world!")
         Returns:
             The complete response, either original or fixed through reprompting
         """
+        # Process special CLI formatting commands first
+        response = self._process_cli_commands(response)
+        
         if not hasattr(self, 'reprompting') or not self.reprompting.get("enabled", False):
             return response
             
@@ -7735,6 +7946,9 @@ print("Hello, world!")
                         max_tokens=4096
                     )
                     new_content = new_response.choices[0].message.content
+                
+                # Process CLI commands in the new content
+                new_content = self._process_cli_commands(new_content)
                 
                 # Add the new response to conversation history
                 self.add_message("assistant", new_content)
@@ -8534,7 +8748,14 @@ def main():
         "Chat with an AI agent that uses multiple specialized scout agents to solve complex tasks in parallel.\n"
         "The main agent coordinates a team of specialized scouts (research, code, planning, creative, critical).\n"
         "Each scout uses extensive chain-of-thought reasoning to solve its assigned tasks.\n"
-        "The system supports autonomous task decomposition and parallel execution.\n"
+        "The system supports autonomous task decomposition and parallel execution.\n\n"
+        "[bold cyan]Special CLI Commands:[/bold cyan]\n"
+        "- <append>content</append>: Append content to previous output\n"
+        "- <replace>old|new</replace>: Replace text in previous output\n"
+        "- <grid>content</grid>: Display content in a formatted grid\n"
+        "- <table>header1,header2|row1col1,row1col2</table>: Display a table\n"
+        "- <code language>code</code>: Format code with syntax highlighting\n"
+        "- <highlight>text</highlight>: Highlight important information\n\n"
         "Type [bold]'/paste'[/bold] to paste an image from your clipboard.\n"
         "Type [bold]'exit'[/bold] or [bold]'quit'[/bold] to exit."
     )
