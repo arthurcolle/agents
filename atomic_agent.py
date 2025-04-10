@@ -1988,8 +1988,6 @@ class AgentOrchestrator:
         self.team_history = {}  # Track team formations and their performance
         self.task_decomposition_cache = {}  # Cache task decompositions
         
-        # Start the orchestrator thread
-        self.orchestrator_thread.start()
         
         self.agent_performance_history = {}  # Track agent performance by task type
         self.collaboration_graph = {}  # Graph of agent collaborations
