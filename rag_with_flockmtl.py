@@ -58,12 +58,37 @@ class RAGWithFlockMTL:
             self.conn.execute(f"CREATE SECRET (TYPE OPENAI, API_KEY '{api_key}');")
             
             # Create model resources
-            self.conn.execute("CREATE MODEL('embedding-model', 'text-embedding-3-small');")
-            self.conn.execute("CREATE MODEL('completion-model', 'gpt-4o');")
+            self.conn.execute("""
+                CREATE MODEL(
+                    'embedding-model',
+                    'text-embedding-3-small', 
+                    'openai'
+                );
+            """)
+            
+            self.conn.execute("""
+                CREATE MODEL(
+                    'completion-model',
+                    'gpt-4o', 
+                    'openai', 
+                    {"context_window": 128000, "max_output_tokens": 8400}
+                );
+            """)
             
             # Create prompt resources
-            self.conn.execute("CREATE PROMPT('retrieval-prompt', 'Search for documents that are relevant to answering this question.');")
-            self.conn.execute("CREATE PROMPT('generation-prompt', 'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.');")
+            self.conn.execute("""
+                CREATE PROMPT(
+                    'retrieval-prompt', 
+                    'Search for documents that are relevant to answering this question.'
+                );
+            """)
+            
+            self.conn.execute("""
+                CREATE PROMPT(
+                    'generation-prompt', 
+                    'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.'
+                );
+            """)
             
             logger.info("Model and prompt resources set up successfully")
         except Exception as e:
@@ -106,8 +131,9 @@ class RAGWithFlockMTL:
                         {i+1} as id,
                         '{doc['title'].replace("'", "''")}' as title,
                         '{doc['content'].replace("'", "''")}' as content,
-                        llm_embedding({{'model_name': 'embedding-model'}}, 
-                                     {{'content': '{doc['content'].replace("'", "''")}'}}
+                        llm_embedding(
+                            {{'model_name': 'embedding-model'}}, 
+                            {{'prompt': '{doc['content'].replace("'", "''")}' }}
                         )::FLOAT[1536] as embedding;
                 """)
             
@@ -131,8 +157,10 @@ class RAGWithFlockMTL:
             # Generate query embedding
             self.conn.execute(f"""
                 CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
-                SELECT llm_embedding({{'model_name': 'embedding-model'}}, 
-                                   {{'content': '{query.replace("'", "''")}'}})::FLOAT[1536] AS embedding;
+                SELECT llm_embedding(
+                    {{'model_name': 'embedding-model'}}, 
+                    {{'prompt': '{query.replace("'", "''")}' }}
+                )::FLOAT[1536] AS embedding;
             """)
             
             # Retrieve relevant documents
@@ -156,10 +184,7 @@ class RAGWithFlockMTL:
             answer = self.conn.execute(f"""
                 SELECT llm_complete(
                     {{'model_name': 'completion-model'}},
-                    {{'prompt_name': 'generation-prompt',
-                      'question': '{query.replace("'", "''")}', 
-                      'context': '{context.replace("'", "''")}' 
-                    }}
+                    {{'prompt': 'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.\\n\\nQuestion: {query.replace("'", "''")}\\n\\nContext:\\n{context.replace("'", "''")}' }}
                 );
             """).fetchone()[0]
             
