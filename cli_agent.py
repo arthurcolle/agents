@@ -52,6 +52,181 @@ console = Console()
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Import weather tool template and script functions
+from tool_templates import create_weather_tool
+import weather_script
+# Import Jina weather tool
+from modules.jina_tools import jina_weather
+
+class WeatherTools:
+    """
+    Weather tools that can be used by the agent
+    """
+    def __init__(self):
+        logger.info("Initializing weather tools")
+        self.api_key = os.getenv("OPENWEATHERMAP_API_KEY")
+        self.jina_api_key = os.getenv("JINA_API_KEY")
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not self.api_key:
+            logger.warning("OPENWEATHERMAP_API_KEY environment variable not set")
+        
+    def get_weather(self, location, units="metric"):
+        """
+        Get current weather for a location with enhanced error handling
+        
+        Args:
+            location: City name or zip code
+            units: Units to use (metric, imperial)
+            
+        Returns:
+            Weather data for the location with detailed error information if applicable
+        """
+        logger.info(f"Getting weather for {location}")
+        
+        # First try OpenWeatherMap API if API key is available
+        if self.api_key:
+            try:
+                # Use the comprehensive weather script with enhanced caching and error handling
+                weather_data = weather_script.get_current_weather(self.api_key, location, units)
+                
+                # Check for error in response
+                if isinstance(weather_data, dict) and "error" in weather_data:
+                    error_msg = weather_data.get("error")
+                    status_code = weather_data.get("status_code", 500)
+                    
+                    logger.error(f"OpenWeatherMap API error: {error_msg} (Status code: {status_code})")
+                    
+                    # Handle specific errors
+                    if status_code == 404:
+                        # For location not found errors, try alternative formatting
+                        # Sometimes "San Francisco, CA" works better as just "San Francisco"
+                        if "," in location:
+                            logger.info(f"Location not found, trying without state/country: {location.split(',')[0]}")
+                            simplified_location = location.split(',')[0].strip()
+                            return self.get_weather(simplified_location, units)
+                    
+                    # Will fall through to fallback for other errors
+                elif weather_data and not isinstance(weather_data, dict):
+                    # Get the summary for a clean response
+                    summary = weather_data.get_summary()
+                    # Format temperature and feels_like to 1 decimal place
+                    if 'temperature' in summary:
+                        summary['temperature'] = round(summary['temperature'], 1)
+                    if 'feels_like' in summary:
+                        summary['feels_like'] = round(summary['feels_like'], 1)
+                    
+                    # Add more useful fields
+                    if 'condition' in summary and summary['condition'] != 'Unknown':
+                        # Add weather condition recommendations
+                        if summary['condition'] == 'Rain':
+                            summary['recommendation'] = "Take an umbrella"
+                        elif summary['condition'] == 'Snow':
+                            summary['recommendation'] = "Dress warmly and be careful on roads"
+                        elif summary['condition'] == 'Clear' and summary.get('temperature', 0) > 30:
+                            summary['recommendation'] = "Stay hydrated and use sunscreen"
+                        elif summary['condition'] == 'Clear' and summary.get('temperature', 0) < 5:
+                            summary['recommendation'] = "Dress warmly"
+                    
+                    return {
+                        "success": True,
+                        "message": f"Weather data for {location}",
+                        "data": summary,
+                        "source": "OpenWeatherMap"
+                    }
+            except Exception as e:
+                logger.error(f"Error getting weather from OpenWeatherMap: {e}")
+                # Will fall through to Jina fallback
+        
+        # If OpenWeatherMap failed or no API key, use Jina web search as fallback
+        logger.info(f"Falling back to Jina web search for weather in {location}")
+        try:
+            # Use the Jina-based weather function
+            jina_result = jina_weather(location, token=self.jina_api_key, openai_key=self.openai_api_key)
+            
+            if jina_result.get("success"):
+                weather_data = jina_result.get("data", {})
+                
+                # Add geocoding information if available
+                try:
+                    import geocoder
+                    g = geocoder.osm(location)
+                    if g.ok:
+                        weather_data['geo'] = {
+                            'lat': g.lat,
+                            'lng': g.lng,
+                            'country': g.country,
+                            'state': g.state,
+                            'city': g.city
+                        }
+                except ImportError:
+                    logger.warning("Geocoder package not available for enhanced location data")
+                
+                return {
+                    "success": True,
+                    "message": f"Weather data for {location} (via web search)",
+                    "data": weather_data,
+                    "source": "Jina Web Search"
+                }
+            else:
+                return jina_result
+        except Exception as e:
+            logger.error(f"Error getting weather from Jina: {e}")
+            return {
+                "success": False,
+                "message": f"Unable to retrieve weather data for {location} from any source",
+                "error": str(e),
+                "data": None
+            }
+    
+    def get_forecast(self, location, days=5, units="metric"):
+        """
+        Get weather forecast for a location
+        
+        Args:
+            location: City name or zip code
+            days: Number of days for forecast
+            units: Units to use (metric, imperial)
+            
+        Returns:
+            Forecast data for the location
+        """
+        logger.info(f"Getting forecast for {location}")
+        
+        if not self.api_key:
+            return {
+                "success": False,
+                "message": "OpenWeatherMap API key not set. Please set the OPENWEATHERMAP_API_KEY environment variable.",
+                "data": None
+            }
+        
+        try:
+            # Use the comprehensive weather script
+            forecast_data = weather_script.get_forecast(self.api_key, location, days, units)
+            
+            if forecast_data:
+                # Get the summary for a clean response
+                summary = forecast_data.get_summary()
+                
+                return {
+                    "success": True,
+                    "message": f"Forecast data for {location}",
+                    "data": summary
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": f"Could not retrieve forecast data for {location}",
+                    "data": None
+                }
+        except Exception as e:
+            logger.error(f"Error getting forecast: {e}")
+            return {
+                "success": False,
+                "message": f"Error getting forecast: {str(e)}",
+                "data": None
+            }
+
 class DataAnalysisTools:
     """
     Tools for data analysis that can be used by the agent
@@ -2568,6 +2743,9 @@ class CLIAgent:
         # Dynamic tool registry
         self.tool_registry = DynamicToolRegistry(console=self.console)
         
+        # Initialize Weather Tools
+        self.weather_tools = WeatherTools()
+        
         # Perceptual memory system with evolutionary capabilities and knowledge bases
         self.perceptual_memory = PerceptualMemory(
             max_frames=max_memory_frames,
@@ -3163,6 +3341,58 @@ class CLIAgent:
                 "required": ["name", "code", "description", "parameters"]
             },
             "tool_management"
+        )
+        
+        # Register weather tools
+        self.tool_registry.register_tool(
+            "get_weather", 
+            self.weather_tools.get_weather,
+            "Get current weather data for a location",
+            {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City name or zip code"
+                    },
+                    "units": {
+                        "type": "string",
+                        "description": "Units of measurement (metric, imperial)",
+                        "enum": ["metric", "imperial"],
+                        "default": "metric"
+                    }
+                },
+                "required": ["location"]
+            },
+            "weather"
+        )
+        
+        self.tool_registry.register_tool(
+            "get_forecast", 
+            self.weather_tools.get_forecast,
+            "Get weather forecast for a location",
+            {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City name or zip code"
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days to forecast",
+                        "default": 5
+                    },
+                    "units": {
+                        "type": "string",
+                        "description": "Units of measurement (metric, imperial)",
+                        "enum": ["metric", "imperial"],
+                        "default": "metric"
+                    }
+                },
+                "required": ["location"]
+            },
+            "weather"
         )
         
         # Register knowledge base tools
@@ -4188,7 +4418,7 @@ class CLIAgent:
 
                     # Check for autonomous tasks
                     if not autonomous:  # Don't check during autonomous execution to prevent recursion
-                        self.check_autonomous_tasks()
+                        await self.check_autonomous_tasks()
 
                     # Notify hooks that the agent has completed
                     agent_name = "Autonomous Agent" if autonomous else "CLI Agent"

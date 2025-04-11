@@ -95,15 +95,19 @@ class WeatherAPI:
         raise NotImplementedError("Subclasses must implement this method")
 
 class OpenWeatherMapAPI(WeatherAPI):
-    """OpenWeatherMap API implementation"""
+    """OpenWeatherMap API implementation with enhanced error handling and caching"""
     
     def __init__(self, api_key: str):
         super().__init__(api_key)
         self.base_url = "https://api.openweathermap.org/data/2.5"
+        self.cache = {}  # Simple in-memory cache
+        self.cache_ttl = 600  # Cache time-to-live in seconds (10 minutes)
+        self.last_request_time = 0  # For rate limiting
+        self.min_request_interval = 0.2  # Minimum time between requests (seconds)
         
     def get_current_weather(self, location: str, units: str = "metric") -> Dict:
         """
-        Get current weather for a location using OpenWeatherMap API
+        Get current weather for a location using OpenWeatherMap API with caching
         
         Args:
             location: Location name or coordinates (lat,lon)
@@ -112,6 +116,22 @@ class OpenWeatherMapAPI(WeatherAPI):
         Returns:
             Dictionary with weather information or empty dict if request failed
         """
+        # Create a cache key
+        cache_key = f"current_{location}_{units}"
+        
+        # Check cache first
+        if cache_key in self.cache:
+            cache_entry = self.cache[cache_key]
+            if time.time() - cache_entry['timestamp'] < self.cache_ttl:
+                print(f"Using cached weather data for {location}")
+                return cache_entry['data']
+        
+        # Apply rate limiting
+        current_time = time.time()
+        time_since_last_request = current_time - self.last_request_time
+        if time_since_last_request < self.min_request_interval:
+            time.sleep(self.min_request_interval - time_since_last_request)
+        
         # Check if location is coordinates (lat,lon)
         if "," in location and all(part.replace('.', '', 1).replace('-', '', 1).isdigit() 
                                   for part in location.split(',')):
@@ -123,23 +143,59 @@ class OpenWeatherMapAPI(WeatherAPI):
                 "units": units
             }
         else:
+            # Ensure location is properly URL encoded for API request
+            import urllib.parse
+            location_quoted = urllib.parse.quote(location)
             params = {
-                "q": location,
+                "q": location_quoted,
                 "appid": self.api_key,
                 "units": units
             }
         
         try:
+            # Update last request time
+            self.last_request_time = time.time()
+            
+            # Make API request with better error handling
+            print(f"Fetching weather data for {location}")
             response = requests.get(f"{self.base_url}/weather", params=params)
+            
+            # Check for non-successful status codes
             response.raise_for_status()
-            return response.json()
+            
+            # Parse response
+            data = response.json()
+            
+            # Cache the result
+            self.cache[cache_key] = {
+                'data': data,
+                'timestamp': time.time()
+            }
+            
+            return data
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code
+            error_msg = f"HTTP Error {status_code}"
+            
+            if status_code == 401:
+                error_msg = "Invalid API key"
+            elif status_code == 404:
+                error_msg = f"Location '{location}' not found"
+            elif status_code == 429:
+                error_msg = "API rate limit exceeded"
+                
+            print(f"Error fetching weather data: {error_msg}")
+            return {"error": error_msg, "status_code": status_code}
         except requests.exceptions.RequestException as e:
             print(f"Error fetching weather data: {e}")
-            return {}
+            return {"error": str(e)}
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            return {"error": "Unexpected error occurred"}
             
     def get_forecast(self, location: str, days: int = 5, units: str = "metric") -> Dict:
         """
-        Get weather forecast for a location
+        Get weather forecast for a location with caching
         
         Args:
             location: Location name or coordinates (lat,lon)
@@ -147,8 +203,24 @@ class OpenWeatherMapAPI(WeatherAPI):
             units: Units of measurement (metric, imperial, standard)
             
         Returns:
-            Dictionary with forecast information or empty dict if request failed
+            Dictionary with forecast information or error details if request failed
         """
+        # Create a cache key
+        cache_key = f"forecast_{location}_{days}_{units}"
+        
+        # Check cache first
+        if cache_key in self.cache:
+            cache_entry = self.cache[cache_key]
+            if time.time() - cache_entry['timestamp'] < self.cache_ttl:
+                print(f"Using cached forecast data for {location}")
+                return cache_entry['data']
+        
+        # Apply rate limiting
+        current_time = time.time()
+        time_since_last_request = current_time - self.last_request_time
+        if time_since_last_request < self.min_request_interval:
+            time.sleep(self.min_request_interval - time_since_last_request)
+        
         # Check if location is coordinates (lat,lon)
         if "," in location and all(part.replace('.', '', 1).replace('-', '', 1).isdigit() 
                                   for part in location.split(',')):
@@ -161,20 +233,56 @@ class OpenWeatherMapAPI(WeatherAPI):
                 "cnt": min(days * 8, 40)  # 8 forecasts per day, max 40 (5 days)
             }
         else:
+            # Ensure location is properly URL encoded for API request
+            import urllib.parse
+            location_quoted = urllib.parse.quote(location)
             params = {
-                "q": location,
+                "q": location_quoted,
                 "appid": self.api_key,
                 "units": units,
                 "cnt": min(days * 8, 40)  # 8 forecasts per day, max 40 (5 days)
             }
         
         try:
+            # Update last request time
+            self.last_request_time = time.time()
+            
+            # Make API request with better error handling
+            print(f"Fetching forecast data for {location}")
             response = requests.get(f"{self.base_url}/forecast", params=params)
+            
+            # Check for non-successful status codes
             response.raise_for_status()
-            return response.json()
+            
+            # Parse response
+            data = response.json()
+            
+            # Cache the result
+            self.cache[cache_key] = {
+                'data': data,
+                'timestamp': time.time()
+            }
+            
+            return data
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code
+            error_msg = f"HTTP Error {status_code}"
+            
+            if status_code == 401:
+                error_msg = "Invalid API key"
+            elif status_code == 404:
+                error_msg = f"Location '{location}' not found"
+            elif status_code == 429:
+                error_msg = "API rate limit exceeded"
+                
+            print(f"Error fetching forecast data: {error_msg}")
+            return {"error": error_msg, "status_code": status_code}
         except requests.exceptions.RequestException as e:
             print(f"Error fetching forecast data: {e}")
-            return {}
+            return {"error": str(e)}
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            return {"error": "Unexpected error occurred"}
             
     def get_historical_weather(self, location: str, date: datetime, units: str = "metric") -> Dict:
         """
@@ -230,11 +338,11 @@ class OpenWeatherMapAPI(WeatherAPI):
             return {}
 
 class WeatherData:
-    """Class for parsing and storing weather data"""
+    """Enhanced class for parsing, storing, and analyzing weather data"""
     
     def __init__(self, data: Dict, data_type: str = "current"):
         """
-        Initialize weather data
+        Initialize weather data with analysis capabilities
         
         Args:
             data: Weather data dictionary from API
@@ -243,6 +351,117 @@ class WeatherData:
         self.raw_data = data
         self.data_type = data_type
         self.parsed_data = self._parse_data()
+        self.analysis = self._analyze_data()
+        
+    def _analyze_data(self) -> Dict:
+        """Perform analysis on the weather data"""
+        analysis = {
+            "comfort_level": None,
+            "weather_trend": None,
+            "precipitation_risk": None,
+            "warnings": [],
+            "tips": []
+        }
+        
+        if not self.parsed_data:
+            return analysis
+            
+        try:
+            # Analyze current weather
+            if self.data_type == "current":
+                # Calculate comfort level based on temperature and humidity
+                if "measurements" in self.parsed_data:
+                    temp = self.parsed_data.get("measurements", {}).get("temperature", {}).get("current")
+                    humidity = self.parsed_data.get("measurements", {}).get("humidity")
+                    wind_speed = self.parsed_data.get("measurements", {}).get("wind", {}).get("speed")
+                    
+                    if temp is not None and humidity is not None:
+                        # Basic heat index calculation
+                        if temp > 20 and humidity > 40:
+                            if temp > 30 and humidity > 70:
+                                analysis["comfort_level"] = "Uncomfortable"
+                                analysis["warnings"].append("High heat and humidity levels may cause discomfort")
+                                analysis["tips"].append("Stay hydrated and seek air-conditioned spaces")
+                            elif temp > 25:
+                                analysis["comfort_level"] = "Warm"
+                                analysis["tips"].append("Stay hydrated")
+                            else:
+                                analysis["comfort_level"] = "Comfortable"
+                        elif temp < 10:
+                            if temp < 0:
+                                analysis["comfort_level"] = "Very Cold"
+                                analysis["warnings"].append("Freezing conditions")
+                                analysis["tips"].append("Wear multiple layers of warm clothing")
+                            else:
+                                analysis["comfort_level"] = "Cold"
+                                analysis["tips"].append("Wear warm clothing")
+                        else:
+                            analysis["comfort_level"] = "Comfortable"
+                    
+                    # Add wind chill warning
+                    if temp is not None and wind_speed is not None and temp < 10 and wind_speed > 5:
+                        analysis["warnings"].append("Wind chill effect makes it feel colder than actual temperature")
+                
+                # Add condition-specific tips
+                condition = self.parsed_data.get("weather", {}).get("condition")
+                if condition:
+                    if condition == "Rain":
+                        analysis["precipitation_risk"] = "Current"
+                        analysis["tips"].append("Carry an umbrella")
+                    elif condition == "Snow":
+                        analysis["precipitation_risk"] = "Current"
+                        analysis["tips"].append("Be careful on roads and sidewalks")
+                    elif condition == "Thunderstorm":
+                        analysis["precipitation_risk"] = "Current"
+                        analysis["warnings"].append("Lightning risk")
+                        analysis["tips"].append("Seek indoor shelter")
+                    elif condition == "Clear" and temp and temp > 25:
+                        analysis["tips"].append("Use sunscreen if staying outdoors")
+            
+            # Analyze forecast data
+            elif self.data_type == "forecast":
+                if "forecasts" in self.parsed_data and len(self.parsed_data["forecasts"]) > 1:
+                    # Analyze temperature trend
+                    temps = [f.get("measurements", {}).get("temperature", {}).get("current") 
+                             for f in self.parsed_data["forecasts"] 
+                             if "measurements" in f and "temperature" in f["measurements"]]
+                    
+                    if len(temps) > 1 and all(t is not None for t in temps):
+                        temp_diff = temps[-1] - temps[0]
+                        if temp_diff > 5:
+                            analysis["weather_trend"] = "Warming"
+                        elif temp_diff < -5:
+                            analysis["weather_trend"] = "Cooling"
+                        else:
+                            analysis["weather_trend"] = "Stable"
+                    
+                    # Check for precipitation risk
+                    has_rain = any(f.get("weather", {}).get("condition") in ["Rain", "Drizzle", "Thunderstorm"] 
+                                  for f in self.parsed_data["forecasts"] if "weather" in f)
+                    has_snow = any(f.get("weather", {}).get("condition") == "Snow" 
+                                  for f in self.parsed_data["forecasts"] if "weather" in f)
+                    
+                    if has_rain and has_snow:
+                        analysis["precipitation_risk"] = "Mixed Precipitation"
+                        analysis["tips"].append("Be prepared for changing weather conditions")
+                    elif has_rain:
+                        analysis["precipitation_risk"] = "Rain"
+                        analysis["tips"].append("Pack rain gear")
+                    elif has_snow:
+                        analysis["precipitation_risk"] = "Snow"
+                        analysis["tips"].append("Check snow conditions before traveling")
+                    else:
+                        analysis["precipitation_risk"] = "Low"
+                        
+                    # Add alerts if available
+                    if "alerts" in self.parsed_data and self.parsed_data["alerts"]:
+                        for alert in self.parsed_data["alerts"]:
+                            analysis["warnings"].append(f"{alert.get('event')}: {alert.get('description')[:50]}...")
+            
+            return analysis
+        except Exception as e:
+            print(f"Error in weather analysis: {e}")
+            return analysis
         
     def _parse_data(self) -> Dict:
         """Parse raw weather data based on data type"""
@@ -435,18 +654,71 @@ class WeatherData:
             return {}
     
     def get_summary(self) -> Dict:
-        """Get a summary of the weather data"""
+        """Get an enhanced summary of the weather data with analysis"""
         if not self.parsed_data:
             return {}
             
+        # Get the basic summary
+        summary = {}
         if self.data_type == "current":
-            return self._get_current_summary()
+            summary = self._get_current_summary()
         elif self.data_type == "forecast":
-            return self._get_forecast_summary()
+            summary = self._get_forecast_summary()
         elif self.data_type == "historical":
-            return self._get_historical_summary()
+            summary = self._get_historical_summary()
         else:
             return {}
+            
+        # Add analysis data to summary if available
+        if self.analysis:
+            summary["analysis"] = {
+                "comfort_level": self.analysis.get("comfort_level"),
+                "weather_trend": self.analysis.get("weather_trend"),
+                "precipitation_risk": self.analysis.get("precipitation_risk")
+            }
+            
+            if self.analysis.get("warnings"):
+                summary["warnings"] = self.analysis.get("warnings")
+                
+            if self.analysis.get("tips"):
+                summary["tips"] = self.analysis.get("tips")
+                
+        # Add air quality data if available
+        if self.data_type == "current" and "measurements" in self.parsed_data and "air_quality" in self.parsed_data["measurements"]:
+            aqi = self.parsed_data["measurements"]["air_quality"]["aqi"]
+            aqi_labels = {
+                1: "Good",
+                2: "Fair",
+                3: "Moderate",
+                4: "Poor",
+                5: "Very Poor"
+            }
+            
+            components = self.parsed_data["measurements"]["air_quality"].get("components", {})
+            
+            summary["air_quality"] = {
+                "aqi": aqi,
+                "description": aqi_labels.get(aqi, "Unknown"),
+                "components": {
+                    "co": components.get("co"),  # Carbon monoxide
+                    "no2": components.get("no2"),  # Nitrogen dioxide
+                    "o3": components.get("o3"),  # Ozone
+                    "pm2_5": components.get("pm2_5")  # Fine particles
+                }
+            }
+            
+        # Add alerts data if available
+        if "alerts" in self.parsed_data and self.parsed_data["alerts"]:
+            summary["weather_alerts"] = []
+            for alert in self.parsed_data["alerts"]:
+                summary["weather_alerts"].append({
+                    "event": alert.get("event"),
+                    "description": alert.get("description"),
+                    "start_time": datetime.fromtimestamp(alert.get("start", 0)).strftime("%Y-%m-%d %H:%M:%S"),
+                    "end_time": datetime.fromtimestamp(alert.get("end", 0)).strftime("%Y-%m-%d %H:%M:%S")
+                })
+                
+        return summary
             
     def _get_current_summary(self) -> Dict:
         """Get a summary of current weather data"""
@@ -1233,7 +1505,7 @@ class WeatherVisualizer:
 
 def get_current_weather(api_key, location, units="metric"):
     """
-    Get current weather for a location using OpenWeatherMap API
+    Get current weather for a location using OpenWeatherMap API with advanced error handling
     
     Args:
         api_key: OpenWeatherMap API key
@@ -1241,19 +1513,75 @@ def get_current_weather(api_key, location, units="metric"):
         units: Units of measurement (metric, imperial, standard)
         
     Returns:
-        Dictionary with weather information or None if request failed
+        WeatherData object with parsed weather information or error dictionary if request failed
     """
     api = OpenWeatherMapAPI(api_key)
     data = api.get_current_weather(location, units)
-    if not data:
-        return None
     
-    weather_data = WeatherData(data, "current")
-    return weather_data
+    # Check for error response
+    if isinstance(data, dict) and "error" in data:
+        return data
+    
+    # Check for empty data
+    if not data:
+        return {"error": "No data returned from API", "status_code": 500}
+    
+    try:
+        weather_data = WeatherData(data, "current")
+        
+        # Validate that essential data was received
+        if not weather_data.parsed_data:
+            return {"error": "Unable to parse weather data", "status_code": 500}
+            
+        # Add Air Quality Index if available
+        try:
+            # Only proceed if we have coordinates
+            if "coord" in data and "lat" in data["coord"] and "lon" in data["coord"]:
+                lat = data["coord"]["lat"]
+                lon = data["coord"]["lon"]
+                
+                # Apply rate limiting
+                time.sleep(0.2)  # Simple rate limiting
+                
+                # Make AQI request
+                aqi_url = f"{api.base_url}/air_pollution"
+                aqi_params = {
+                    "lat": lat,
+                    "lon": lon,
+                    "appid": api_key
+                }
+                
+                aqi_response = requests.get(aqi_url, params=aqi_params)
+                if aqi_response.status_code == 200:
+                    aqi_data = aqi_response.json()
+                    if "list" in aqi_data and len(aqi_data["list"]) > 0:
+                        aqi = aqi_data["list"][0].get("main", {}).get("aqi", 0)
+                        components = aqi_data["list"][0].get("components", {})
+                        
+                        # Add AQI data to weather_data.raw_data
+                        weather_data.raw_data["air_quality"] = {
+                            "aqi": aqi,  # 1=Good, 2=Fair, 3=Moderate, 4=Poor, 5=Very Poor
+                            "components": components
+                        }
+                        
+                        # Update the parsed data
+                        if "measurements" in weather_data.parsed_data:
+                            weather_data.parsed_data["measurements"]["air_quality"] = {
+                                "aqi": aqi,
+                                "components": components
+                            }
+        except Exception as e:
+            print(f"Error fetching air quality data: {e}")
+            # Non-critical, so continue without AQI data
+        
+        return weather_data
+    except Exception as e:
+        print(f"Error processing weather data: {e}")
+        return {"error": f"Error processing weather data: {str(e)}", "status_code": 500}
 
 def get_forecast(api_key, location, days=5, units="metric"):
     """
-    Get weather forecast for a location
+    Get weather forecast for a location with enhanced error handling
     
     Args:
         api_key: OpenWeatherMap API key
@@ -1262,15 +1590,70 @@ def get_forecast(api_key, location, days=5, units="metric"):
         units: Units of measurement (metric, imperial, standard)
         
     Returns:
-        Dictionary with forecast information or None if request failed
+        WeatherData object with parsed forecast information or error dictionary if request failed
     """
     api = OpenWeatherMapAPI(api_key)
     data = api.get_forecast(location, days, units)
-    if not data:
-        return None
     
-    weather_data = WeatherData(data, "forecast")
-    return weather_data
+    # Check for error response
+    if isinstance(data, dict) and "error" in data:
+        return data
+    
+    # Check for empty data
+    if not data:
+        return {"error": "No forecast data returned from API", "status_code": 500}
+    
+    try:
+        weather_data = WeatherData(data, "forecast")
+        
+        # Validate that essential data was received
+        if not weather_data.parsed_data or "forecasts" not in weather_data.parsed_data:
+            return {"error": "Unable to parse forecast data", "status_code": 500}
+            
+        # Add weather alerts if available and if OneCall API is used
+        try:
+            # Only proceed if we have coordinates
+            if "city" in data and "coord" in data["city"]:
+                lat = data["city"]["coord"]["lat"]
+                lon = data["city"]["coord"]["lon"]
+                
+                # Apply rate limiting
+                time.sleep(0.2)  # Simple rate limiting
+                
+                # Make OneCall request to get alerts
+                onecall_url = f"{api.base_url}/onecall"
+                onecall_params = {
+                    "lat": lat,
+                    "lon": lon,
+                    "exclude": "current,minutely,hourly",  # Only need daily and alerts
+                    "appid": api_key,
+                    "units": units
+                }
+                
+                onecall_response = requests.get(onecall_url, params=onecall_params)
+                if onecall_response.status_code == 200:
+                    onecall_data = onecall_response.json()
+                    if "alerts" in onecall_data:
+                        # Add alerts to weather_data
+                        weather_data.raw_data["alerts"] = onecall_data["alerts"]
+                        weather_data.parsed_data["alerts"] = []
+                        
+                        for alert in onecall_data["alerts"]:
+                            weather_data.parsed_data["alerts"].append({
+                                "sender": alert.get("sender_name", "Unknown"),
+                                "event": alert.get("event", "Weather Alert"),
+                                "start": alert.get("start", 0),
+                                "end": alert.get("end", 0),
+                                "description": alert.get("description", "")
+                            })
+        except Exception as e:
+            print(f"Error fetching weather alerts: {e}")
+            # Non-critical, so continue without alerts data
+            
+        return weather_data
+    except Exception as e:
+        print(f"Error processing forecast data: {e}")
+        return {"error": f"Error processing forecast data: {str(e)}", "status_code": 500}
 
 def get_historical_weather(api_key, location, date, units="metric"):
     """

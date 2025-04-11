@@ -53,10 +53,64 @@ class AdvancedHybridSearch:
             self.conn.execute("INSTALL fts;")
             self.conn.execute("LOAD fts;")
             
+            # Load environment variables into DB secrets
+            self._load_env_vars_to_db()
+            
             logger.info("All extensions loaded successfully")
         except Exception as e:
             logger.error(f"Error loading extensions: {e}")
             raise
+            
+    def _load_env_vars_to_db(self):
+        """Load all environment variables into DuckDB as secrets"""
+        try:
+            # Create a temporary table to store environment variables
+            self.conn.execute("CREATE TEMPORARY TABLE IF NOT EXISTS env_vars (name VARCHAR, value VARCHAR)")
+            
+            # Insert all environment variables
+            for name, value in os.environ.items():
+                # Skip variables with empty values
+                if not value:
+                    continue
+                    
+                # Escape single quotes in values
+                escaped_value = value.replace("'", "''")
+                
+                # Insert into temporary table
+                self.conn.execute(f"INSERT INTO env_vars VALUES ('{name}', '{escaped_value}')")
+            
+            # Create secrets for common API keys
+            api_keys = {
+                "openai": "OPENAI_API_KEY",
+                "azure_openai": "AZURE_OPENAI_API_KEY",
+                "anthropic": "ANTHROPIC_API_KEY",
+                "google": "GOOGLE_API_KEY",
+                "jina": "JINA_API_KEY"
+            }
+            
+            for secret_name, env_var in api_keys.items():
+                api_key = os.environ.get(env_var, "")
+                if api_key:
+                    try:
+                        # Try to create the secret
+                        self.conn.execute(f"CREATE SECRET {secret_name} (api_key='{api_key.replace('\'', '\'\'')}');")
+                        logger.info(f"Created secret for {secret_name}")
+                    except Exception as e:
+                        if "already exists" in str(e):
+                            # If secret already exists, try to update it
+                            try:
+                                self.conn.execute(f"UPDATE SECRET {secret_name} SET api_key='{api_key.replace('\'', '\'\'')}';")
+                                logger.info(f"Updated secret for {secret_name}")
+                            except Exception as update_e:
+                                logger.warning(f"Could not update secret for {secret_name}: {update_e}")
+                        else:
+                            logger.warning(f"Could not create secret for {secret_name}: {e}")
+            
+            logger.info(f"Loaded {self.conn.execute('SELECT COUNT(*) FROM env_vars').fetchone()[0]} environment variables into database")
+        except Exception as e:
+            logger.warning(f"Error loading environment variables into database: {e}")
+            # Continue execution even if this fails
+            pass
     
     def _setup_resources(self):
         """Set up model and prompt resources for FlockMTL"""

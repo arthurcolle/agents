@@ -1,0 +1,1890 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tool Management API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Root",
+        "description": "Root endpoint displaying IP, health check, and endpoint overview.",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Health check endpoint with detailed system status.",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools": {
+      "post": {
+        "summary": "Create Tool",
+        "description": "Create a new tool.",
+        "operationId": "create_tool_tools_post",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Tool"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Get Tools",
+        "description": "Get all tools.",
+        "operationId": "get_tools_tools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ToolResponse"
+                  },
+                  "title": "Response Get Tools Tools Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete All Tools",
+        "description": "Delete all tools, schemas, and code.",
+        "operationId": "delete_all_tools_tools_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/{tool_id}": {
+      "get": {
+        "summary": "Get Tool",
+        "description": "Get a specific tool.",
+        "operationId": "get_tool_tools__tool_id__get",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetToolRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Tool",
+        "description": "Update a tool.",
+        "operationId": "update_tool_tools__tool_id__put",
+        "parameters": [
+          {
+            "name": "tool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Tool"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Tool",
+        "description": "Delete a tool.",
+        "operationId": "delete_tool_tools__tool_id__delete",
+        "parameters": [
+          {
+            "name": "tool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/snippets": {
+      "post": {
+        "summary": "Create Snippet",
+        "description": "Create a new code snippet.",
+        "operationId": "create_snippet_snippets_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Snippet"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnippetResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Get Snippets",
+        "description": "Get all snippets with optional filtering.",
+        "operationId": "get_snippets_snippets_get",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SnippetType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Tags"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SnippetResponse"
+                  },
+                  "title": "Response Get Snippets Snippets Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/snippets/search": {
+      "post": {
+        "summary": "Search Snippets",
+        "description": "Search snippets using semantic search.",
+        "operationId": "search_snippets_snippets_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnippetSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SnippetResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Search Snippets Snippets Search Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/batch": {
+      "post": {
+        "summary": "Create Tools Batch",
+        "description": "Create multiple tools in a batch.",
+        "operationId": "create_tools_batch_tools_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/Tool"
+                },
+                "type": "array",
+                "title": "Tools"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ToolResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Create Tools Batch Tools Batch Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/by_name/{tool_name}": {
+      "get": {
+        "summary": "Get Tool Versions",
+        "description": "Get all versions of a tool by name, including the latest.",
+        "operationId": "get_tool_versions_tools_by_name__tool_name__get",
+        "parameters": [
+          {
+            "name": "tool_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ToolResponse"
+                  },
+                  "title": "Response Get Tool Versions Tools By Name  Tool Name  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/name/{tool_name}": {
+      "get": {
+        "summary": "Get Tool By Name",
+        "description": "Get a tool by name.",
+        "operationId": "get_tool_by_name_tools_name__tool_name__get",
+        "parameters": [
+          {
+            "name": "tool_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/latest/{tool_name}": {
+      "get": {
+        "summary": "Get Latest Tool Version",
+        "description": "Get the latest version of a tool by name.",
+        "operationId": "get_latest_tool_version_tools_latest__tool_name__get",
+        "parameters": [
+          {
+            "name": "tool_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/execute_tool": {
+      "post": {
+        "summary": "Execute Single Tool",
+        "description": "Execute a single tool with the given input data.",
+        "operationId": "execute_single_tool_execute_tool_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolExecutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Execute Single Tool Execute Tool Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/execute_tools_sequential": {
+      "post": {
+        "summary": "Execute Tools Sequential",
+        "description": "Execute a sequence of tools, passing output from one to the next.\n\nThis endpoint allows for the sequential execution of multiple tools, where the output of one tool\nbecomes the input for the next. This is useful for creating tool pipelines or workflows.\n\nArgs:\n    request (SequentialToolExecutionRequest): An object containing:\n        - tool_ids (List[str]): A list of tool IDs to be executed in sequence.\n        - initial_input (Dict[str, Any]): The initial input data for the first tool.\n    db (Neo4jConnection): The database connection object.\n\nReturns:\n    List[ToolExecutionResponse]: A list of ToolExecutionResponse objects, each containing:\n        - tool_id (str): The ID of the executed tool.\n        - output_data (Dict[str, Any]): The output data from the tool execution.\n\nExample:\n    Request:\n    {\n        \"tool_ids\": [\"1\", \"2\", \"3\"],\n        \"initial_input\": {\"param1\": \"value1\"}\n    }\n\n    Response:\n    [\n        {\"tool_id\": \"1\", \"output_data\": {\"result1\": \"output1\"}},\n        {\"tool_id\": \"2\", \"output_data\": {\"result2\": \"output2\"}},\n        {\"tool_id\": \"3\", \"output_data\": {\"result3\": \"output3\"}}\n    ]\n\nRaises:\n    HTTPException: If there's an error during tool execution or if a tool is not found.",
+        "operationId": "execute_tools_sequential_execute_tools_sequential_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SequentialToolExecutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ToolExecutionResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Execute Tools Sequential Execute Tools Sequential Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/execute_tools_parallel": {
+      "post": {
+        "summary": "Execute Tools Parallel",
+        "description": "Execute multiple tools in parallel.\n\nThis endpoint allows for the simultaneous execution of multiple tools, improving efficiency\nwhen dealing with independent tasks. It takes a ParallelToolExecutionRequest object, which\ncontains a list of tool IDs and their corresponding input data.\n\nArgs:\n    request (ParallelToolExecutionRequest): An object containing:\n        - tool_ids (List[str]): A list of tool IDs to be executed.\n        - input_data (Dict[str, Dict[str, Any]]): A dictionary mapping tool IDs to their input data.\n    db (Neo4jConnection): The database connection object.\n\nReturns:\n    List[ToolExecutionResponse]: A list of ToolExecutionResponse objects, each containing:\n        - tool_id (str): The ID of the executed tool.\n        - output_data (Dict[str, Any]): The output data from the tool execution.\n\nExample:\n    Request:\n    {\n        \"tool_ids\": [\"1\", \"2\", \"3\"],\n        \"input_data\": {\n            \"1\": {\"param1\": \"value1\"},\n            \"2\": {\"param2\": \"value2\"},\n            \"3\": {\"param3\": \"value3\"}\n        }\n    }\n\n    Response:\n    [\n        {\"tool_id\": \"1\", \"output_data\": {\"result1\": \"output1\"}},\n        {\"tool_id\": \"2\", \"output_data\": {\"result2\": \"output2\"}},\n        {\"tool_id\": \"3\", \"output_data\": {\"result3\": \"output3\"}}\n    ]\n\nRaises:\n    HTTPException: If there's an error during tool execution or if a tool is not found.",
+        "operationId": "execute_tools_parallel_execute_tools_parallel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParallelToolExecutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ToolExecutionResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Execute Tools Parallel Execute Tools Parallel Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/search": {
+      "post": {
+        "summary": "Search Tools",
+        "description": "Search for tools using vector similarity with a given prompt.\n\nArgs:\n    prompt (str): The search prompt.\n    node_label (str): The node label to search (default: \"Tool\").\n    limit (int): The maximum number of results to return (default: 5).\n    for_model (str): The model to format the results for (default: \"anthropic\").\n\nReturns:\n    List[Dict]: A list of tool information dictionaries formatted for the specified model.",
+        "operationId": "search_tools_tools_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_search_tools_tools_search_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/validate/{tool_id}": {
+      "post": {
+        "summary": "Validate Tool",
+        "description": "Validate or reject a tool created by an agent.",
+        "operationId": "validate_tool_tools_validate__tool_id__post",
+        "parameters": [
+          {
+            "name": "tool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolValidationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolValidationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/pending": {
+      "get": {
+        "summary": "Get Pending Tools",
+        "description": "Get all tools pending validation.",
+        "operationId": "get_pending_tools_tools_pending_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingToolsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/agent/{agent_id}": {
+      "get": {
+        "summary": "Get Agent Tools",
+        "description": "Get all tools created by a specific agent.",
+        "operationId": "get_agent_tools_tools_agent__agent_id__get",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentToolsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/format/{model}": {
+      "post": {
+        "summary": "Format Tools For Model",
+        "description": "Format tools for the specified model.",
+        "operationId": "format_tools_for_model_tools_format__model__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolFormatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/{tool_id}/user_settings": {
+      "post": {
+        "summary": "Update User Settings",
+        "description": "Update user settings for a specific tool.",
+        "operationId": "update_user_settings_tools__tool_id__user_settings_post",
+        "parameters": [
+          {
+            "name": "tool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserSettingsUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentToolsResponse": {
+        "properties": {
+          "tools": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tools",
+            "description": "List of tools created by the specified agent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tools"
+        ],
+        "title": "AgentToolsResponse"
+      },
+      "Body_search_tools_tools_search_post": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "node_label": {
+            "type": "string",
+            "title": "Node Label",
+            "default": "Tool"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 5
+          },
+          "for_model": {
+            "type": "string",
+            "title": "For Model",
+            "default": "anthropic"
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "Body_search_tools_tools_search_post"
+      },
+      "FormatType": {
+        "type": "string",
+        "enum": [
+          "anthropic",
+          "openai"
+        ],
+        "title": "FormatType"
+      },
+      "GetToolRequest": {
+        "properties": {
+          "tool_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Id"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          }
+        },
+        "type": "object",
+        "title": "GetToolRequest"
+      },
+      "HTTPAction": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "DELETE",
+              "PATCH"
+            ],
+            "title": "Method"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "headers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headers"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "url"
+        ],
+        "title": "HTTPAction"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "JavaScriptCode": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "function_name": {
+            "type": "string",
+            "title": "Function Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "function_name"
+        ],
+        "title": "JavaScriptCode"
+      },
+      "ParallelToolExecutionRequest": {
+        "properties": {
+          "tool_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tool Ids"
+          },
+          "input_data": {
+            "additionalProperties": {
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Input Data"
+          },
+          "format_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormatType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_ids",
+          "input_data"
+        ],
+        "title": "ParallelToolExecutionRequest"
+      },
+      "PendingToolsResponse": {
+        "properties": {
+          "tools": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tools",
+            "description": "List of tools awaiting validation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tools"
+        ],
+        "title": "PendingToolsResponse"
+      },
+      "PythonCode": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "function_name": {
+            "type": "string",
+            "title": "Function Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "function_name"
+        ],
+        "title": "PythonCode"
+      },
+      "SequentialToolExecutionRequest": {
+        "properties": {
+          "tool_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tool Ids"
+          },
+          "initial_input": {
+            "type": "object",
+            "title": "Initial Input"
+          },
+          "format_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormatType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_ids",
+          "initial_input"
+        ],
+        "title": "SequentialToolExecutionRequest"
+      },
+      "Snippet": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "type": {
+            "$ref": "#/components/schemas/SnippetType"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By",
+            "default": "user"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "code",
+          "type"
+        ],
+        "title": "Snippet",
+        "description": "Model for code snippets."
+      },
+      "SnippetResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "type": {
+            "$ref": "#/components/schemas/SnippetType"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata"
+          },
+          "created_by": {
+            "type": "string",
+            "title": "Created By"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "code",
+          "type",
+          "tags",
+          "metadata",
+          "created_by",
+          "agent_id"
+        ],
+        "title": "SnippetResponse",
+        "description": "Response model for code snippets."
+      },
+      "SnippetSearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnippetType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 10
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SnippetSearchRequest",
+        "description": "Request model for searching snippets."
+      },
+      "SnippetType": {
+        "type": "string",
+        "enum": [
+          "python",
+          "javascript",
+          "sql",
+          "shell",
+          "other"
+        ],
+        "title": "SnippetType",
+        "description": "Type of code snippet."
+      },
+      "Tool": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "input_schema": {
+            "type": "object",
+            "title": "Input Schema"
+          },
+          "output_schema": {
+            "type": "object",
+            "title": "Output Schema"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ToolAction"
+          },
+          "output": {
+            "$ref": "#/components/schemas/ToolOutput"
+          },
+          "user_settings": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/UserSetting"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Settings"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "is_adhoc": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Adhoc",
+            "default": false
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "python",
+                  "javascript"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By",
+            "default": "user"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "validation_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "approved",
+                  "rejected"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "input_schema",
+          "output_schema",
+          "action",
+          "output"
+        ],
+        "title": "Tool"
+      },
+      "ToolAction": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "javascript",
+              "http",
+              "python"
+            ],
+            "title": "Type"
+          },
+          "javascript": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JavaScriptCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "http": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HTTPAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "python": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PythonCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "ToolAction"
+      },
+      "ToolExecutionRequest": {
+        "properties": {
+          "tool_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Id"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          },
+          "input_data": {
+            "type": "object",
+            "title": "Input Data"
+          },
+          "format_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormatType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "input_data"
+        ],
+        "title": "ToolExecutionRequest"
+      },
+      "ToolExecutionResponse": {
+        "properties": {
+          "tool_id": {
+            "type": "string",
+            "title": "Tool Id"
+          },
+          "output_data": {
+            "type": "object",
+            "title": "Output Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_id",
+          "output_data"
+        ],
+        "title": "ToolExecutionResponse"
+      },
+      "ToolFormatRequest": {
+        "properties": {
+          "tools": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tools",
+            "description": "List of tools to format"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "Target model format (e.g., 'anthropic', 'openai')"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tools",
+          "model"
+        ],
+        "title": "ToolFormatRequest"
+      },
+      "ToolOutput": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "ai",
+              "markdown",
+              "html"
+            ],
+            "title": "Type"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "content"
+        ],
+        "title": "ToolOutput"
+      },
+      "ToolResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "input_schema": {
+            "type": "object",
+            "title": "Input Schema"
+          },
+          "output_schema": {
+            "type": "object",
+            "title": "Output Schema"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ToolAction"
+          },
+          "output": {
+            "$ref": "#/components/schemas/ToolOutput"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "input_schema",
+          "output_schema",
+          "action",
+          "output",
+          "version"
+        ],
+        "title": "ToolResponse"
+      },
+      "ToolValidationRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "title": "Action",
+            "description": "Action to take on the tool - either approve or reject"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "ToolValidationRequest"
+      },
+      "ToolValidationResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Confirmation message of the validation action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "ToolValidationResponse"
+      },
+      "UserSetting": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "default": "text"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": false
+          },
+          "placeholder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placeholder"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Values"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label"
+        ],
+        "title": "UserSetting"
+      },
+      "UserSettingsUpdateRequest": {
+        "properties": {
+          "settings": {
+            "type": "object",
+            "title": "Settings",
+            "description": "Updated user settings for the tool"
+          }
+        },
+        "type": "object",
+        "required": [
+          "settings"
+        ],
+        "title": "UserSettingsUpdateRequest"
+      },
+      "UserSettingsUpdateResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Confirmation message of the settings update"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "UserSettingsUpdateResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

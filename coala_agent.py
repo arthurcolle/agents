@@ -1099,9 +1099,17 @@ class CoALAAgent:
             # Prepare data for summarization
             search_data = []
             for i, item in enumerate(search_results[:5]):  # Limit to first 5 results
-                title = item.get("title", "No title")
-                snippet = item.get("snippet", "No snippet")
-                url = item.get("link", "No URL")
+                # Handle case where item might be a string instead of a dict
+                if isinstance(item, dict):
+                    title = item.get("title", "No title")
+                    snippet = item.get("snippet", "No snippet")
+                    url = item.get("link", "No URL")
+                else:
+                    # If the item is a string, use it as both title and snippet
+                    title = "Result"
+                    snippet = str(item)
+                    url = "No URL"
+                
                 search_data.append(f"Result {i+1}:\nTitle: {title}\nSnippet: {snippet}\nURL: {url}\n")
                 
             search_content = "\n".join(search_data)
@@ -1152,8 +1160,14 @@ class CoALAAgent:
                             if additional_results:
                                 additional_summary = f"\n\n**Additional Information from Follow-up Search**\nI performed a follow-up search for '{followup_query}' and found:\n"
                                 for i, item in enumerate(additional_results[:3]):
-                                    title = item.get("title", "No title")
-                                    snippet = item.get("snippet", "No snippet")
+                                    # Handle case where item might be a string instead of a dict
+                                    if isinstance(item, dict):
+                                        title = item.get("title", "No title")
+                                        snippet = item.get("snippet", "No snippet")
+                                    else:
+                                        # If item is a string, use it as both title and snippet
+                                        title = "Result"
+                                        snippet = str(item)
                                     additional_summary += f"- {title}: {snippet}\n"
                                 summary += additional_summary
                 

@@ -1,0 +1,95 @@
+{
+  "manager": {
+    "host": "0.0.0.0",
+    "port": 8500
+  },
+  "agents": [
+    {
+      "agent_type": "self_improving",
+      "agent_name": "Learning Agent",
+      "port": 8600,
+      "model": "gpt-4",
+      "env_vars": {
+        "IMPROVEMENT_LOGGING": "detailed"
+      }
+    },
+    {
+      "agent_type": "self_improving",
+      "agent_name": "Expert Agent",
+      "port": 8601,
+      "model": "gpt-4",
+      "env_vars": {
+        "IMPROVEMENT_LOGGING": "detailed",
+        "EXPERTISE_LEVEL": "advanced"
+      }
+    },
+    {
+      "agent_type": "collective",
+      "agent_name": "Agent Collective",
+      "port": 8700,
+      "model": "gpt-4",
+      "env_vars": {
+        "COLLECTIVE_MODE": "coordinator"
+      }
+    },
+    {
+      "agent_type": "self_improving",
+      "agent_name": "Researcher Agent",
+      "port": 8702,
+      "model": "gpt-4",
+      "env_vars": {
+        "IMPROVEMENT_LOGGING": "detailed",
+        "RESEARCH_FOCUS": "true"
+      }
+    },
+    {
+      "agent_type": "self_improving",
+      "agent_name": "Implementation Agent",
+      "port": 8703,
+      "model": "gpt-4",
+      "env_vars": {
+        "IMPROVEMENT_LOGGING": "detailed",
+        "IMPLEMENTATION_FOCUS": "true"
+      }
+    },
+    {
+      "agent_type": "self_improving",
+      "agent_name": "Testing Agent",
+      "port": 8704,
+      "model": "gpt-4",
+      "env_vars": {
+        "IMPROVEMENT_LOGGING": "detailed",
+        "TESTING_FOCUS": "true"
+      }
+    },
+    {
+      "agent_type": "web",
+      "agent_name": "Web Interface",
+      "port": 8800,
+      "model": "gpt-4",
+      "env_vars": {
+        "WEB_TEMPLATE_DIR": "templates"
+      }
+    },
+    {
+      "agent_type": "pubsub_service",
+      "agent_name": "PubSub Service",
+      "port": 8004,
+      "env_vars": {
+        "REDIS_URL": "redis://localhost:6379/0",
+        "PUBSUB_HOST": "0.0.0.0",
+        "PUBSUB_PORT": "8004"
+      }
+    },
+    {
+      "agent_type": "cli",
+      "agent_name": "CLI Interface",
+      "port": 8801,
+      "model": "gpt-4",
+      "env_vars": {
+        "INTERACTIVE_MODE": "true"
+      }
+    }
+  ],
+  "keep_running_on_failure": true
+}

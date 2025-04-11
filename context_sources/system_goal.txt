@@ -1,0 +1,7 @@
+
+Ultimate Goal: Build a cool web app with dynamic generative UI that lets users send prompts and get real work done.
+Key Features:
+- Distributed systems architecture for scalability
+- Native ability to call external services and APIs
+- Dynamic UI generation based on user needs
+- Intelligent task decomposition and execution

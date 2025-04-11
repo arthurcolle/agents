@@ -1,168 +1,240 @@
 # Llama4 Agent System
 
-A sophisticated agent system built on the Llama 4 model with dynamic code generation and self-modification capabilities.
+A sophisticated agent system built on advanced language models with dynamic code generation, self-modification capabilities, and inter-agent communication.
 
 ## Key Features
 
-- **Protected Kernel Architecture**: Prevents critical system components from being modified at runtime
+- **Distributed Agent Architecture**: Multiple autonomous agents running as separate processes
+- **FastAPI Integration**: Each agent exposes a REST API with WebSocket support
+- **Redis PubSub Communication**: Realtime messaging between agents
+- **Self-Improving Capabilities**: Agents can improve their own code and capabilities
+- **Process Manager**: Centralized manager for monitoring and controlling agents
+- **Fault Tolerance**: Automatic restart of crashed agents
+- **Resource Monitoring**: Track memory and CPU usage of agent processes
 - **Dynamic Code Extension**: Add new capabilities without restarting
-- **Self-modifying Agent**: Analyzes and improves its own code
-- **Module Management**: Load, register, and validate code modules
-- **Function Calling**: Robust function registry with parameter validation
-- **Reasoning Engine**: Multi-step reasoning for complex problem-solving
-- **Hybrid Search**: Combined semantic and keyword search using DuckDB and FlockMTL
-- **Jupyter Integration**: Execute code and manage notebooks interactively
-- **Code Execution Engine**: Safely run code with resource limits
-- **Filesystem Tools**: Safe file operations with security controls
+- **Agent Collaboration**: Agents can communicate and collaborate on tasks
+- **Hybrid Search**: Combined semantic and keyword search capabilities
+- **CLI and Web Interfaces**: Multiple interaction options
 
 ## Components
 
-- `openrouter-llama4.py`: Main agent with protected kernel and dynamic code capabilities
-- `openrouter_kernel.py`: Core kernel implementation for protected operations
-- `agent_editor.py`: Code analysis and modification utilities
-- `self_modify_agent.py`: Agent that can analyze and improve its own code
-- `hybrid_search.py`: Semantic and keyword search using DuckDB and FlockMTL
-- `advanced_hybrid_search.py`: Enhanced version with additional features
-- `modules/`: Directory for loadable code modules
-  - `jupyter_tools.py`: Jupyter notebook and kernel management
-  - `code_execution.py`: Safe code execution with sandboxing
-  - `filesystem.py`: File system operations with safety controls
-  - `jina_tools.py`: Web search and content tools
-  - `math_utils.py`: Mathematical utilities
+- `agent_process_manager.py`: Main process manager for controlling agent lifecycle
+- `self_improving_agent.py`: Self-improving agent with dynamic capability learning
+- `start_agent_system.py`: Script to launch the entire agent system
+- `agent_config.json`: Configuration for the agent system
+- `pubsub_service.py`: Redis PubSub service for real-time communication
+- `distributed_services.py`: Base services for distributed agent architecture
+- `web_app.py`: Web interface for interacting with agents
+- `cli_agent.py`: Command line interface agent
 
-## Jina Integration
+## Architecture
 
-The system includes integration with Jina.ai APIs for search, fact checking, and content ranking:
+The system follows a distributed architecture with these key components:
 
-- `modules/jina_client.py`: Async client for Jina.ai endpoints
-- `modules/jina_tools.py`: Functions for kernel integration
-- `register_jina_tools.py`: Script to register Jina tools with the agent kernel
+1. **Agent Process Manager**: Central process that manages agent lifecycles, monitors health, and provides a management API
+
+2. **Individual Agents**: Each agent runs as a separate process with:
+   - FastAPI server for REST API and WebSocket
+   - Redis PubSub for inter-agent messaging
+   - Capabilities specific to the agent type
+   - Self-improvement mechanisms
+
+3. **Communication Layer**: Redis PubSub for real-time messaging between agents
+
+4. **Web Interface**: Optional web UI for interacting with the agent system
+
+## Agent Types
+
+- **Self-Improving Agent**: Can learn new capabilities and improve its own code
+- **CLI Agent**: Command line interface for user interaction
+- **Web Agent**: Web interface for browser-based interaction
+- **Custom Agents**: Define specialized agents for specific tasks
 
 ## Setup & Usage
 
 1. Set up your environment:
    ```
-   export OPENROUTER_API_KEY=your_api_key
-   export JINA_API_KEY=your_jina_api_key  # For Jina integration
-   ```
-
-2. Install dependencies:
-   ```
    pip install -r requirements.txt
+   
+   # Start Redis server for PubSub communication
+   redis-server
+   
+   # Set API keys as needed
+   export OPENAI_API_KEY=your_api_key
+   # OR
+   export ANTHROPIC_API_KEY=your_api_key
    ```
 
-3. Run the main agent:
+2. Start the agent system:
    ```
-   python openrouter-llama4.py --interactive
-   ```
-
-4. Run the self-modifying agent:
-   ```
-   python self_modify_agent.py --interactive
-   ```
-
-5. Register all tools:
-   ```
-   python register_tools.py
+   # Start with default configuration
+   python start_agent_system.py
+   
+   # Start with custom config
+   python start_agent_system.py --config agent_config.json
    ```
 
-## Using Jupyter Integration
+3. Or start components individually:
+   ```
+   # Start process manager
+   python agent_process_manager.py --mode manager --port 8500
+   
+   # Start a self-improving agent
+   python self_improving_agent.py --port 8600 --model gpt-4
+   ```
+
+## API Endpoints
+
+### Agent Process Manager (default port 8500)
+
+- `GET /agents`: List all running agents
+- `GET /agents/{agent_id}`: Get details about a specific agent
+- `POST /agents`: Create a new agent
+- `DELETE /agents/{agent_id}`: Stop and remove an agent
+- `POST /agents/{agent_id}/restart`: Restart an agent
+- `WebSocket /ws`: Real-time updates about agents
+
+### Self-Improving Agent (default port 8600)
+
+- `GET /health`: Health check endpoint
+- `GET /capabilities`: List agent capabilities
+- `POST /chat`: Send a chat message
+- `POST /improve`: Request capability improvement
+- `POST /analyze`: Analyze code for improvements
+- `GET /memory`: Query agent's memory
+- `POST /upload_improvement`: Upload code to improve the agent
+
+## Inter-Agent Communication
+
+Agents can communicate with each other using Redis PubSub channels:
+
+- `agent:{agent_id}:commands`: Send commands to a specific agent
+- `agent:{agent_id}:responses`: Receive responses from an agent
+- `agent_events`: System-wide events (agent started, agent stopped, etc.)
+
+Example communication pattern:
 
 ```python
-# Execute code in a Jupyter kernel
-result = jupyter_execute_code("import numpy as np\nprint(np.random.rand(3,3))")
+# Agent A sends a chat message to Agent B
+await agent_a.publish_event(f"agent:{agent_b_id}:commands", {
+    "command": "chat",
+    "message_id": message_id,
+    "agent_id": agent_a_id,
+    "message": "Hello, can you help me with this task?",
+    "timestamp": time.time()
+})
 
-# Create and save a notebook
-cells = [
-    {"type": "markdown", "content": "# My Notebook\nThis is a test."},
-    {"type": "code", "content": "print('Hello, world!')"}
-]
-notebook = jupyter_create_notebook(cells)
-jupyter_save_notebook(notebook["notebook"], "my_notebook.ipynb")
-
-# Run a notebook
-result = jupyter_run_notebook("my_notebook.ipynb")
+# Agent B receives the message and responds
+await agent_b.publish_event(f"agent:{agent_b_id}:responses", {
+    "type": "chat_response",
+    "message_id": message_id,
+    "agent_id": agent_b_id,
+    "receiver": agent_a_id,
+    "message": "Yes, I can help with that task.",
+    "timestamp": time.time()
+})
 ```
 
-## Using Code Execution
+## Self-Improvement Process
 
-```python
-# Execute Python code safely
-result = execute_code("print('Hello, world!')")
+The self-improving agent can learn new capabilities through:
 
-# Run with resource limits
-result = execute_code("import numpy as np\nprint(np.random.rand(1000,1000))", 
-                     time_limit=5, memory_limit=500)
+1. **User requests**: Direct API calls to improve specific capabilities
+2. **Self-detection**: Automatically detecting improvement opportunities during conversations
+3. **Code analysis**: Analyzing existing code for improvement opportunities
+4. **Agent collaboration**: Learning from other agents in the system
 
-# Execute JavaScript
-result = execute_code("console.log('Hello from Node.js')", language="javascript")
+When an improvement is made:
 
-# Run a script file
-result = run_script("my_script.py")
-```
+1. The agent generates code for the new capability using an LLM
+2. The code is validated for syntax and security
+3. The capability is dynamically added to the agent
+4. The improvement is reported to the agent process manager
+5. The new capability becomes immediately available
 
-## Using Filesystem Tools
+## Configuration
 
-```python
-# Read a file
-result = read_file("/path/to/file.txt")
+See `agent_config.json` for an example configuration:
 
-# Write to a file
-result = write_file("/path/to/output.txt", "Hello, world!")
-
-# List directory contents
-result = list_directory("/path/to/directory", recursive=True)
-
-# Search for files
-result = search_files("/path/to/directory", "*.py")
-
-# Get file information
-result = get_file_info("/path/to/file.txt")
-```
-
-## Using Hybrid Search
-
-The hybrid search module combines keyword-based full-text search with semantic vector similarity search using DuckDB and the FlockMTL extension.
-
-### Running the search demo:
-
-```bash
-# Run with default query "vector similarity for search"
-python hybrid_search.py
-
-# Run with a custom query and number of results
-python hybrid_search.py --query "database systems" --results 5
-
-# Use with API (requires OpenAI API key)
-export OPENAI_API_KEY=your_openai_api_key
-python hybrid_search.py --mock false
-```
-
-### Integrating in Python code:
-
-```python
-from hybrid_search import HybridSearch
-
-# Initialize with mock embeddings (no API key needed)
-search = HybridSearch(use_mock_embeddings=True)
-
-# Create a database and add documents
-documents = [
-    {"title": "Document 1", "content": "This is the content of document 1."},
-    {"title": "Document 2", "content": "This is the content of document 2."}
-]
-search.insert_documents(documents)
-search.create_indexes()
-
-# Perform search
-results = search.hybrid_search("document content", k=5)
-for result in results:
-    print(f"{result['title']}: {result['score']}")
-
-# Close connection when done
-search.close()
+```json
+{
+  "manager": {
+    "host": "0.0.0.0",
+    "port": 8500
+  },
+  "agents": [
+    {
+      "agent_type": "self_improving",
+      "agent_name": "Learning Agent",
+      "port": 8600,
+      "model": "gpt-4",
+      "env_vars": {
+        "IMPROVEMENT_LOGGING": "detailed"
+      }
+    },
+    {
+      "agent_type": "cli",
+      "agent_name": "CLI Helper",
+      "port": 8700,
+      "model": "gpt-4"
+    }
+  ]
+}
 ```
 
 ## Extending
 
-Add new modules to the `modules/` directory. They will be dynamically loaded and can be registered with the agent kernel.
+To create a new agent type:
+
+1. Create a new Python file for your agent (e.g., `my_agent.py`)
+2. Extend the `AgentServer` class from `agent_process_manager.py`
+3. Implement custom methods and override `process_command` as needed
+4. Add the agent to your configuration file
+
+Example:
+
+```python
+from agent_process_manager import AgentServer
+
+class MySpecialAgent(AgentServer):
+    def __init__(self, agent_id=None, agent_name=None, 
+                host="127.0.0.1", port=8600, redis_url=None, model="gpt-4"):
+        super().__init__(
+            agent_id=agent_id,
+            agent_name=agent_name or "My Special Agent",
+            agent_type="special",
+            host=host,
+            port=port,
+            redis_url=redis_url,
+            model=model
+        )
+        self.capabilities = ["special_task", "another_capability"]
+        
+    async def process_command(self, command, data, sender):
+        if command == "special_task":
+            # Handle special task command
+            result = await self.do_special_task(data)
+            
+            # Send response back
+            await self.publish_event(f"agent:{self.agent_id}:responses", {
+                "type": "special_task_result",
+                "agent_id": self.agent_id,
+                "receiver": sender,
+                "result": result,
+                "timestamp": time.time()
+            })
+        else:
+            # Fall back to parent implementation for unknown commands
+            await super().process_command(command, data, sender)
+            
+    async def do_special_task(self, data):
+        # Implement your special task here
+        return {"success": True, "message": "Special task completed"}
+```
+
+## Security Considerations
+
+- Agents run as separate processes with proper isolation
+- LLM-generated code is validated before execution
+- Resource limits can be applied to prevent runaway processes
+- API endpoints should be properly secured in production deployments

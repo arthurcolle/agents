@@ -1,0 +1,504 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Embeddings Service API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/generate_embeddings": {
+      "post": {
+        "summary": "Generate Embeddings",
+        "operationId": "generate_embeddings_generate_embeddings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cosine_similarity": {
+      "post": {
+        "summary": "Compute Cosine Similarity",
+        "operationId": "compute_cosine_similarity_cosine_similarity_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CosineSimilarityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CosineSimilarityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pairwise_cosine_similarity": {
+      "post": {
+        "summary": "Compute Pairwise Cosine Similarity",
+        "operationId": "compute_pairwise_cosine_similarity_pairwise_cosine_similarity_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairwiseCosineSimilarityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairwiseCosineSimilarityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/load_model/{model_name}": {
+      "post": {
+        "summary": "Load Model Endpoint",
+        "description": "Load a specific model by name.",
+        "operationId": "load_model_endpoint_load_model__model_name__post",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelLoadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/available_models": {
+      "get": {
+        "summary": "List Available Models",
+        "description": "List all available models and currently loaded model.",
+        "operationId": "list_available_models_available_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailableModelsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AvailableModelsResponse": {
+        "properties": {
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "current_model": {
+            "type": "string",
+            "title": "Current Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "models",
+          "current_model"
+        ],
+        "title": "AvailableModelsResponse"
+      },
+      "CosineSimilarityRequest": {
+        "properties": {
+          "texts1": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Texts1",
+            "description": "First text or list of texts"
+          },
+          "texts2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Texts2",
+            "description": "Second text or list of texts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "texts1",
+          "texts2"
+        ],
+        "title": "CosineSimilarityRequest"
+      },
+      "CosineSimilarityResponse": {
+        "properties": {
+          "similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Similarity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "similarity"
+        ],
+        "title": "CosineSimilarityResponse"
+      },
+      "EmbeddingItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique identifier for the embedding"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Original text content"
+          },
+          "embedding": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Embedding",
+            "description": "Vector embedding of the content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "embedding"
+        ],
+        "title": "EmbeddingItem",
+        "example": {
+          "content": "example text",
+          "embedding": [
+            -0.027797,
+            -0.015061
+          ],
+          "id": "5218ecf1-eb87-4a3e-abd8-55341fddd0b4"
+        }
+      },
+      "EmbeddingRequest": {
+        "properties": {
+          "texts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Texts"
+          },
+          "batch_size": {
+            "type": "integer",
+            "title": "Batch Size",
+            "default": 32
+          },
+          "max_length": {
+            "type": "integer",
+            "title": "Max Length",
+            "default": 8192
+          }
+        },
+        "type": "object",
+        "required": [
+          "texts"
+        ],
+        "title": "EmbeddingRequest"
+      },
+      "EmbeddingResponse": {
+        "properties": {
+          "embeddings": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingItem"
+            },
+            "type": "array",
+            "title": "Embeddings",
+            "description": "List of embeddings"
+          },
+          "pairwise_similarities": {
+            "items": {
+              "$ref": "#/components/schemas/PairwiseSimilarity"
+            },
+            "type": "array",
+            "title": "Pairwise Similarities",
+            "description": "List of pairwise similarities"
+          }
+        },
+        "type": "object",
+        "required": [
+          "embeddings",
+          "pairwise_similarities"
+        ],
+        "title": "EmbeddingResponse",
+        "example": {
+          "embeddings": [
+            {
+              "content": "abc123",
+              "embedding": [
+                -0.027797,
+                -0.015061
+              ],
+              "id": "5218ecf1-eb87-4a3e-abd8-55341fddd0b4"
+            }
+          ],
+          "pairwise_similarities": [
+            {
+              "id1": "5218ecf1-eb87-4a3e-abd8-55341fddd0b4",
+              "id2": "6308885c-af95-4706-a870-61ea1a5f00e7",
+              "score": 0.816496
+            }
+          ]
+        }
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ModelLoadResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "ModelLoadResponse"
+      },
+      "PairwiseCosineSimilarityRequest": {
+        "properties": {
+          "texts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Texts",
+            "description": "List of texts for pairwise comparison"
+          }
+        },
+        "type": "object",
+        "required": [
+          "texts"
+        ],
+        "title": "PairwiseCosineSimilarityRequest"
+      },
+      "PairwiseCosineSimilarityResponse": {
+        "properties": {
+          "similarity": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Similarity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "similarity"
+        ],
+        "title": "PairwiseCosineSimilarityResponse"
+      },
+      "PairwiseSimilarity": {
+        "properties": {
+          "id1": {
+            "type": "string",
+            "title": "Id1"
+          },
+          "id2": {
+            "type": "string",
+            "title": "Id2"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id1",
+          "id2",
+          "score"
+        ],
+        "title": "PairwiseSimilarity"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

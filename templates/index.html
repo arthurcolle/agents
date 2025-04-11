@@ -1,0 +1,235 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Generative UI Agent</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 70vh;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 18px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+        .user-message {
+            background-color: #e1f5fe;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+        .agent-message {
+            background-color: #f0f0f0;
+            align-self: flex-start;
+        }
+        .input-area {
+            display: flex;
+            padding: 10px;
+            background-color: #fff;
+            border-top: 1px solid #ddd;
+        }
+        #message-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0b7dda;
+        }
+        .dynamic-ui {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fff;
+        }
+        .system-goal {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            border-radius: 4px;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.3);
+            border-radius: 50%;
+            border-top-color: #2196F3;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>Dynamic Generative UI Agent</h1>
+    
+    <div class="system-goal">
+        <h3>System Goal:</h3>
+        <p id="system-goal-text">Loading system goal...</p>
+    </div>
+    
+    <div class="chat-container">
+        <div class="chat-messages" id="chat-messages">
+            <div class="message agent-message">
+                Hello! I'm your assistant. I can help you build a web app with dynamic generative UI.
+                What would you like to work on today?
+            </div>
+        </div>
+        <div class="input-area">
+            <input type="text" id="message-input" placeholder="Type your message here...">
+            <button id="send-button">Send</button>
+        </div>
+    </div>
+    
+    <div class="dynamic-ui" id="dynamic-ui">
+        <h2>Dynamic UI Area</h2>
+        <p>This area will update with dynamically generated UI elements based on your conversation.</p>
+    </div>
+    
+    <script>
+        const chatMessages = document.getElementById('chat-messages');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const dynamicUI = document.getElementById('dynamic-ui');
+        const systemGoalText = document.getElementById('system-goal-text');
+        
+        // Fetch system goal
+        fetch('/api/system-goal')
+            .then(response => response.json())
+            .then(data => {
+                systemGoalText.textContent = data.goal;
+            });
+        
+        // WebSocket connection
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        
+        ws.onopen = function(e) {
+            console.log('WebSocket connection established');
+        };
+        
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'message') {
+                addMessage(data.content, 'agent');
+            } else if (data.type === 'ui_update') {
+                updateDynamicUI(data.content);
+            } else if (data.type === 'thinking') {
+                showThinking(data.content);
+            }
+        };
+        
+        ws.onclose = function(event) {
+            if (event.wasClean) {
+                console.log(`Connection closed cleanly, code=${event.code}, reason=${event.reason}`);
+            } else {
+                console.log('Connection died');
+                addMessage('Connection to server lost. Please refresh the page.', 'agent');
+            }
+        };
+        
+        ws.onerror = function(error) {
+            console.log(`WebSocket error: ${error.message}`);
+        };
+        
+        // Send message
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (message) {
+                addMessage(message, 'user');
+                ws.send(JSON.stringify({
+                    type: 'message',
+                    content: message
+                }));
+                messageInput.value = '';
+            }
+        }
+        
+        // Add message to chat
+        function addMessage(content, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message`;
+            messageDiv.textContent = content;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Show thinking indicator
+        function showThinking(message) {
+            const thinkingDiv = document.createElement('div');
+            thinkingDiv.className = 'message agent-message thinking';
+            thinkingDiv.innerHTML = message + ' <span class="loading"></span>';
+            thinkingDiv.id = 'thinking-indicator';
+            chatMessages.appendChild(thinkingDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Update dynamic UI area
+        function updateDynamicUI(htmlContent) {
+            dynamicUI.innerHTML = htmlContent;
+            
+            // Execute any scripts in the dynamic UI
+            const scripts = dynamicUI.querySelectorAll('script');
+            scripts.forEach(script => {
+                const newScript = document.createElement('script');
+                Array.from(script.attributes).forEach(attr => {
+                    newScript.setAttribute(attr.name, attr.value);
+                });
+                newScript.textContent = script.textContent;
+                script.parentNode.replaceChild(newScript, script);
+            });
+        }
+        
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
+        
