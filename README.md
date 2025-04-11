@@ -2,6 +2,8 @@
 
 A sophisticated agent system built on advanced language models with dynamic code generation, self-modification capabilities, and inter-agent communication.
 
+![GoSKNQHXwAEr5Un](https://github.com/user-attachments/assets/4b38ed32-82e5-4288-a796-a61d3e2d53fc)
+
 ## Key Features
 
 - **Distributed Agent Architecture**: Multiple autonomous agents running as separate processes
