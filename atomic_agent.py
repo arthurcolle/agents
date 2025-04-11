@@ -8765,6 +8765,7 @@ def main():
     parser.add_argument("--scouts", type=int, default=5, help="Number of scout agents to initialize (default: 5)")
     parser.add_argument("--logprobs", action="store_true", help="Enable returning logprobs for confidence analysis")
     parser.add_argument("--test-mode", action="store_true", help="Run in test mode with mock API responses")
+    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
     parser.add_argument("--install-deps", action="store_true", help="Install required dependencies")
     args = parser.parse_args()
     
