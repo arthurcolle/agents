@@ -1,6 +1,7 @@
 import duckdb
 import os
 import logging
+import argparse
 from typing import List, Dict, Any, Optional
 
 # Set up logging
@@ -48,22 +49,17 @@ class RAGWithFlockMTL:
     def _setup_resources(self):
         """Set up model and prompt resources for FlockMTL"""
         try:
-            # Create model resources
-            self.conn.execute("""
-                CREATE OR REPLACE MODEL('embedding-model', 'text-embedding-3-small', 'openai');
-                CREATE OR REPLACE MODEL('completion-model', 'gpt-4o', 'openai');
-            """)
+            # Create model resources - drop first if they exist
+            self.conn.execute("DROP MODEL IF EXISTS 'embedding-model';")
+            self.conn.execute("DROP MODEL IF EXISTS 'completion-model';")
+            self.conn.execute("CREATE MODEL 'embedding-model' FROM openai (MODEL 'text-embedding-3-small');")
+            self.conn.execute("CREATE MODEL 'completion-model' FROM openai (MODEL 'gpt-4o');")
             
-            # Create prompt resources
-            self.conn.execute("""
-                CREATE OR REPLACE PROMPT('retrieval-prompt', 
-                    'Search for documents that are relevant to answering this question.');
-                
-                CREATE OR REPLACE PROMPT('generation-prompt', 
-                    'Based on the retrieved documents, answer the following question. 
-                     If the documents do not contain relevant information, say so.
-                     Include citations to the document IDs you used in your answer.');
-            """)
+            # Create prompt resources - drop first if they exist
+            self.conn.execute("DROP PROMPT IF EXISTS 'retrieval-prompt';")
+            self.conn.execute("DROP PROMPT IF EXISTS 'generation-prompt';")
+            self.conn.execute("CREATE PROMPT 'retrieval-prompt' AS 'Search for documents that are relevant to answering this question.';")
+            self.conn.execute("CREATE PROMPT 'generation-prompt' AS 'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.';")
             
             logger.info("Model and prompt resources set up successfully")
         except Exception as e:
