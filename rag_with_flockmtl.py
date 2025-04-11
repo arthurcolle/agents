@@ -49,17 +49,21 @@ class RAGWithFlockMTL:
     def _setup_resources(self):
         """Set up model and prompt resources for FlockMTL"""
         try:
-            # Create model resources - drop first if they exist
-            self.conn.execute("DROP MODEL IF EXISTS 'embedding-model';")
-            self.conn.execute("DROP MODEL IF EXISTS 'completion-model';")
-            self.conn.execute("CREATE MODEL 'embedding-model' FROM openai (MODEL 'text-embedding-3-small');")
-            self.conn.execute("CREATE MODEL 'completion-model' FROM openai (MODEL 'gpt-4o');")
+            # Set up OpenAI API key as a secret
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY environment variable is not set")
             
-            # Create prompt resources - drop first if they exist
-            self.conn.execute("DROP PROMPT IF EXISTS 'retrieval-prompt';")
-            self.conn.execute("DROP PROMPT IF EXISTS 'generation-prompt';")
-            self.conn.execute("CREATE PROMPT 'retrieval-prompt' AS 'Search for documents that are relevant to answering this question.';")
-            self.conn.execute("CREATE PROMPT 'generation-prompt' AS 'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.';")
+            # Create secret for OpenAI API key
+            self.conn.execute(f"CREATE SECRET (TYPE OPENAI, API_KEY '{api_key}');")
+            
+            # Create model resources
+            self.conn.execute("CREATE MODEL('embedding-model', 'text-embedding-3-small');")
+            self.conn.execute("CREATE MODEL('completion-model', 'gpt-4o');")
+            
+            # Create prompt resources
+            self.conn.execute("CREATE PROMPT('retrieval-prompt', 'Search for documents that are relevant to answering this question.');")
+            self.conn.execute("CREATE PROMPT('generation-prompt', 'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.');")
             
             logger.info("Model and prompt resources set up successfully")
         except Exception as e:
@@ -128,7 +132,7 @@ class RAGWithFlockMTL:
             self.conn.execute(f"""
                 CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
                 SELECT llm_embedding({{'model_name': 'embedding-model'}}, 
-                                   {{'query': '{query.replace("'", "''")}'}})::FLOAT[1536] AS embedding;
+                                   {{'content': '{query.replace("'", "''")}'}})::FLOAT[1536] AS embedding;
             """)
             
             # Retrieve relevant documents
@@ -152,8 +156,10 @@ class RAGWithFlockMTL:
             answer = self.conn.execute(f"""
                 SELECT llm_complete(
                     {{'model_name': 'completion-model'}},
-                    {{'prompt_name': 'generation-prompt'}},
-                    {{'question': '{query.replace("'", "''")}', 'context': '{context.replace("'", "''")}'}}
+                    {{'prompt_name': 'generation-prompt',
+                      'question': '{query.replace("'", "''")}', 
+                      'context': '{context.replace("'", "''")}' 
+                    }}
                 );
             """).fetchone()[0]
             
