@@ -1410,7 +1410,10 @@ For computationally intensive tasks, use your parallel processing capabilities.
         
         # Check circuit breaker status
         if self._check_circuit_breaker():
-            return {"error": f"Circuit breaker active. Cooling down for {self.circuit_breaker_timeout} seconds. Try again later."}
+            error_msg = f"Circuit breaker active. Cooling down for {self.circuit_breaker_timeout} seconds. Try again later."
+            # Always yield the error in an async generator context
+            yield {"type": "error", "content": error_msg}
+            return  # Early return with no value after yielding error
             
         # Track request start time for latency monitoring
         start_time = time.time()
@@ -1480,7 +1483,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
                     else:
                         # Check if we should activate circuit breaker
                         self._check_circuit_breaker_threshold()
-                        return {"error": error_info}
+                        # Use yield instead of return for error in async generator
+                        yield {"type": "error", "content": error_info}
+                        return
                 
                 # Process the response based on streaming preference
                 if stream:
@@ -1519,7 +1524,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
                         else:
                             # Check if we should activate circuit breaker
                             self._check_circuit_breaker_threshold()
-                            return {"error": "Connection closed after maximum retries"}
+                            # Use yield instead of return for error in async generator
+                            yield {"type": "error", "content": "Connection closed after maximum retries"}
+                            return
                     except requests.exceptions.ReadTimeout:
                         # Timeout during streaming
                         error_info = "Stream read timeout"
@@ -1541,7 +1548,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
                         else:
                             # Check if we should activate circuit breaker
                             self._check_circuit_breaker_threshold()
-                            return {"error": "Stream timeout after maximum retries"}
+                            # Use yield instead of return for error in async generator
+                            yield {"type": "error", "content": "Stream timeout after maximum retries"}
+                            return
                     except Exception as stream_error:
                         error_info = f"Error processing streaming response: {str(stream_error)}"
                         logger.error(error_info)
@@ -1552,7 +1561,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
                         if self.debug:
                             print(f"[DEBUG] Stream processing error: {error_info}")
                             print(f"[DEBUG] {traceback.format_exc()}")
-                        return {"error": error_info}
+                        # Use yield instead of return for error in async generator
+                        yield {"type": "error", "content": error_info}
+                        return
                 else:
                     # Non-streaming mode
                     try:
@@ -1565,7 +1576,10 @@ For computationally intensive tasks, use your parallel processing capabilities.
                         latency = time.time() - start_time
                         self._update_api_health(success=True, latency=latency)
                         
-                        return result
+                        # For non-streaming responses in an async generator
+                        # We need to yield the result instead of returning it
+                        yield result
+                        return
                     except json.JSONDecodeError:
                         error_info = "Invalid JSON response from API"
                         logger.error(error_info)
@@ -1585,7 +1599,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
                         else:
                             # Check if we should activate circuit breaker
                             self._check_circuit_breaker_threshold()
-                            return {"error": error_info}
+                            # Use yield instead of return for error in async generator
+                            yield {"type": "error", "content": error_info}
+                            return
                     
             except requests.exceptions.ConnectionError as conn_err:
                 # Connection error during request
@@ -1608,7 +1624,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
                 else:
                     # Check if we should activate circuit breaker
                     self._check_circuit_breaker_threshold()
-                    return {"error": "Maximum retries exceeded. Connection failed."}
+                    # Use yield instead of return for error in async generator
+                    yield {"type": "error", "content": "Maximum retries exceeded. Connection failed."}
+                    return
             except requests.exceptions.Timeout as timeout_err:
                 # Timeout error during request
                 error_type = "Connection timeout" if "connect" in str(timeout_err).lower() else "Read timeout"
@@ -1631,7 +1649,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
                 else:
                     # Check if we should activate circuit breaker
                     self._check_circuit_breaker_threshold()
-                    return {"error": f"Maximum retries exceeded. {error_type}."}
+                    # Use yield instead of return for error in async generator
+                    yield {"type": "error", "content": f"Maximum retries exceeded. {error_type}."}
+                    return
             except Exception as e:
                 error_info = f"Error in chat request: {str(e)}"
                 logger.error(error_info)
@@ -1643,7 +1663,9 @@ For computationally intensive tasks, use your parallel processing capabilities.
                 if self.debug:
                     print(f"[DEBUG] Request error: {error_info}")
                     print(f"[DEBUG] {traceback.format_exc()}")
-                return {"error": error_info}
+                # Use yield instead of return for error in async generator
+                yield {"type": "error", "content": error_info}
+                return
             
     def _check_circuit_breaker(self):
         """Check if the circuit breaker is active and should block requests"""
