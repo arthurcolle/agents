@@ -60,12 +60,12 @@ class RAGWithFlockMTL:
             # Create model resources - using the correct syntax from documentation
             self.conn.execute("""
                 CREATE MODEL('embedding-model', 'text-embedding-3-small', 'openai', 
-                            {'context_window': 8192, 'max_output_tokens': 1536});
+                            {"context_window": 8192, "max_output_tokens": 1536});
             """)
             
             self.conn.execute("""
                 CREATE MODEL('completion-model', 'gpt-4o', 'openai', 
-                            {'context_window': 128000, 'max_output_tokens': 4096});
+                            {"context_window": 128000, "max_output_tokens": 4096});
             """)
             
             # Create prompt resources - using the correct syntax from documentation
@@ -119,8 +119,8 @@ class RAGWithFlockMTL:
                         '{doc['title'].replace("'", "''")}' as title,
                         '{doc['content'].replace("'", "''")}' as content,
                         llm_embedding(
-                            {'model_name': 'embedding-model'}, 
-                            {'prompt': '{doc['content'].replace("'", "''")}'}
+                            {"model_name": "embedding-model"}, 
+                            {"prompt": '{doc['content'].replace("'", "''")}'}
                         )::FLOAT[1536] as embedding;
                 """)
             
@@ -145,8 +145,8 @@ class RAGWithFlockMTL:
             self.conn.execute(f"""
                 CREATE OR REPLACE TEMPORARY TABLE query_embedding AS
                 SELECT llm_embedding(
-                    {'model_name': 'embedding-model'}, 
-                    {'prompt': '{query.replace("'", "''")}'}
+                    {"model_name": "embedding-model"}, 
+                    {"prompt": '{query.replace("'", "''")}'}
                 )::FLOAT[1536] AS embedding;
             """)
             
@@ -170,8 +170,8 @@ class RAGWithFlockMTL:
             # Generate answer using llm_complete
             answer = self.conn.execute(f"""
                 SELECT llm_complete(
-                    {'model_name': 'completion-model'},
-                    {'prompt': 'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.\\n\\nQuestion: {query.replace("'", "''")}\\n\\nContext:\\n{context.replace("'", "''")}'}
+                    {"model_name": "completion-model"},
+                    {"prompt": 'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.\\n\\nQuestion: {query.replace("'", "''")}\\n\\nContext:\\n{context.replace("'", "''")}'}
                 );
             """).fetchone()[0]
             
