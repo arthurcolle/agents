@@ -204,7 +204,9 @@ if REDIS_AVAILABLE:
             # Create a new event loop if one doesn't exist
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        loop.create_task(init_async_redis())
+        
+        # Run the initialization synchronously to avoid pending tasks
+        loop.run_until_complete(init_async_redis())
         
         logger.info("Redis PubSub initialized successfully")
     except Exception as e:
@@ -3786,20 +3788,34 @@ def register_default_apis():
 def cleanup_async_resources():
     """Clean up any pending async tasks and resources"""
     try:
+        # Try to get the current event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running event loop
+            return
+            
         # Get all running tasks
-        pending_tasks = asyncio.all_tasks(asyncio.get_event_loop())
+        pending_tasks = asyncio.all_tasks(loop)
         if pending_tasks:
             # Cancel all pending tasks
             for task in pending_tasks:
-                task.cancel()
+                if not task.done():
+                    task.cancel()
             
-            # Wait for all tasks to be cancelled
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
+            # Wait for all tasks to be cancelled with a timeout
+            try:
+                loop.run_until_complete(
+                    asyncio.wait_for(
+                        asyncio.gather(*pending_tasks, return_exceptions=True),
+                        timeout=2.0
+                    )
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.warning("Some tasks could not be cancelled cleanly")
             
-        # Close the event loop
-        loop = asyncio.get_event_loop()
-        loop.close()
+        # Don't close the event loop as it might be used by other parts of the program
+        # or might be the default event loop
     except Exception as e:
         logger.error(f"Error during async cleanup: {e}")
 
@@ -3899,106 +3915,111 @@ if __name__ == "__main__":
                     asyncio.set_event_loop(loop)
                 
                 # Use streaming for real-time response - properly await the coroutine
-                for chunk in loop.run_until_complete(agent.chat(user_input, stream=True)):
-                    # Print appropriate prefix based on recursive level
-                    if not conversation_state["has_printed_prefix"]:
-                        print("\n🦙: ", end="", flush=True)
-                        conversation_state["has_printed_prefix"] = True
-                    
-                    # Handle recursive chunks
-                    if chunk.get("recursive", False) and conversation_state["depth"] == 0:
-                        # Increase depth for formatting
-                        conversation_state["depth"] += 1
-                        # Print a separator and new prefix for recursive response
-                        print("\n\n🔄 Continuing based on function results...\n", flush=True)
-                        # Reset the prefix state for the continuation
-                        conversation_state["has_printed_prefix"] = False
-                        # Print new prefix
-                        print("🦙: ", end="", flush=True)
-                    
-                    # Debug logging - only show if debug flag is set
-                    if agent.debug and "debug" in chunk:
-                        print(f"\n[DEBUG] {chunk['debug']}", flush=True)
+                async def process_chat_response():
+                    async for chunk in agent.chat(user_input, stream=True):
+                        # Print appropriate prefix based on recursive level
+                        if not conversation_state["has_printed_prefix"]:
+                            print("\n🦙: ", end="", flush=True)
+                            conversation_state["has_printed_prefix"] = True
                         
-                    # Process different chunk types
-                    if chunk["type"] == "content":
-                        content = chunk["content"]
+                        # Handle recursive chunks
+                        if chunk.get("recursive", False) and conversation_state["depth"] == 0:
+                            # Increase depth for formatting
+                            conversation_state["depth"] += 1
+                            # Print a separator and new prefix for recursive response
+                            print("\n\n🔄 Continuing based on function results...\n", flush=True)
+                            # Reset the prefix state for the continuation
+                            conversation_state["has_printed_prefix"] = False
+                            # Print new prefix
+                            print("🦙: ", end="", flush=True)
                         
-                        # Filter out any special markers from the model
-                        special_markers = ["<|header_start|>", "<|header_end|>", "<|python_start|>", "<|python_end|>", "assistant"]
-                        for marker in special_markers:
-                            if marker in content:
-                                content = content.replace(marker, "")
-                        
-                        # More aggressive filtering of raw JSON and function call patterns
-                        # These can appear especially in recursive responses
-                        filter_patterns = [
-                            'type": "function"',
-                            '"type": "function"',
-                            '"name":',
-                            '"parameters":',
-                            'type":',
-                            '{"function":',
-                            '"function":',
-                            '{"tool_calls":',
-                            'parameters":',
-                            'name":',
-                            'tool_call":'
-                        ]
-                        
-                        # Function to check if content looks like JSON
-                        def looks_like_json(text):
-                            text = text.strip()
-                            # Check if it starts with JSON syntax
-                            if (text.startswith('{') or text.startswith('[') or
-                                text.startswith('"') or text.endswith('}') or 
-                                text.endswith(']')):
-                                return True
-                            # Check for JSON patterns
-                            if any(pattern in text for pattern in filter_patterns):
-                                return True
-                            # Check if it has JSON key-value pattern
-                            if re.search(r'"[^"]+"\s*:', text):
-                                return True
-                            return False
-                        
-                        # Skip content that appears to be JSON
-                        if looks_like_json(content):
-                            if agent.debug:
-                                print(f"\n[DEBUG] Skipping JSON-like content: {content[:30]}...")
-                            continue
-                                
-                        # Only print non-empty, non-whitespace content
-                        if content and not content.isspace():
-                            print(content, end="", flush=True)
-                    elif chunk["type"] == "tool_call":
-                        tool_call = chunk["tool_call"]
-                        if "function" in tool_call:
-                            function_info = tool_call["function"]
-                            if "name" in function_info:
-                                print(f"\n\n⚙️ Calling function: {function_info['name']}", flush=True)
-                        elif "name" in tool_call.get("function", {}):
-                            # Handle new structure format
-                            print(f"\n\n⚙️ Calling function: {tool_call['function']['name']}", flush=True)
-                    elif chunk["type"] == "function_result":
-                        # Display function result to user
-                        function_name = chunk.get('function_name', 'function')
-                        content = chunk.get('content', '')
-                        
-                        # Try to format JSON content for better readability
-                        try:
-                            if content.startswith('{') or content.startswith('['):
-                                data = json.loads(content)
-                                formatted_content = json.dumps(data, indent=2)
-                            else:
-                                formatted_content = content
-                        except:
-                            formatted_content = content
+                        # Debug logging - only show if debug flag is set
+                        if agent.debug and "debug" in chunk:
+                            print(f"\n[DEBUG] {chunk['debug']}", flush=True)
                             
-                        print(f"\n📊 Result from {function_name}:\n{formatted_content}", flush=True)
-                    elif chunk["type"] == "error":
-                        # Display errors
-                        print(f"\n❌ Error: {chunk['content']}", flush=True)
+                        # Process different chunk types
+                        if chunk["type"] == "content":
+                            content = chunk["content"]
+                            
+                            # Filter out any special markers from the model
+                            special_markers = ["<|header_start|>", "<|header_end|>", "<|python_start|>", "<|python_end|>", "assistant"]
+                            for marker in special_markers:
+                                if marker in content:
+                                    content = content.replace(marker, "")
+                            
+                            # More aggressive filtering of raw JSON and function call patterns
+                            # These can appear especially in recursive responses
+                            filter_patterns = [
+                                'type": "function"',
+                                '"type": "function"',
+                                '"name":',
+                                '"parameters":',
+                                'type":',
+                                '{"function":',
+                                '"function":',
+                                '{"tool_calls":',
+                                'parameters":',
+                                'name":',
+                                'tool_call":'
+                            ]
+                            
+                            # Function to check if content looks like JSON
+                            def looks_like_json(text):
+                                text = text.strip()
+                                # Check if it starts with JSON syntax
+                                if (text.startswith('{') or text.startswith('[') or
+                                    text.startswith('"') or text.endswith('}') or 
+                                    text.endswith(']')):
+                                    return True
+                                # Check for JSON patterns
+                                if any(pattern in text for pattern in filter_patterns):
+                                    return True
+                                # Check if it has JSON key-value pattern
+                                if re.search(r'"[^"]+"\s*:', text):
+                                    return True
+                                return False
+                            
+                            # Skip content that appears to be JSON
+                            if looks_like_json(content):
+                                if agent.debug:
+                                    print(f"\n[DEBUG] Skipping JSON-like content: {content[:30]}...")
+                                continue
+                                    
+                            # Only print non-empty, non-whitespace content
+                            if content and not content.isspace():
+                                print(content, end="", flush=True)
+                        elif chunk["type"] == "tool_call":
+                            tool_call = chunk["tool_call"]
+                            if "function" in tool_call:
+                                function_info = tool_call["function"]
+                                if "name" in function_info:
+                                    print(f"\n\n⚙️ Calling function: {function_info['name']}", flush=True)
+                            elif "name" in tool_call.get("function", {}):
+                                # Handle new structure format
+                                print(f"\n\n⚙️ Calling function: {tool_call['function']['name']}", flush=True)
+                        elif chunk["type"] == "function_result":
+                            # Display function result to user
+                            function_name = chunk.get('function_name', 'function')
+                            content = chunk.get('content', '')
+                            
+                            # Try to format JSON content for better readability
+                            try:
+                                if content.startswith('{') or content.startswith('['):
+                                    data = json.loads(content)
+                                    formatted_content = json.dumps(data, indent=2)
+                                else:
+                                    formatted_content = content
+                            except:
+                                formatted_content = content
+                                
+                            print(f"\n📊 Result from {function_name}:\n{formatted_content}", flush=True)
+                        elif chunk["type"] == "error":
+                            # Display errors
+                            print(f"\n❌ Error: {chunk['content']}", flush=True)
+                
+                # Run the async function in the event loop
+                loop.run_until_complete(process_chat_response())
+                    
                 
                 # Print a final newline
                 print("\n")
