@@ -2921,6 +2921,18 @@ class AsyncTaskProcessor:
             if url.startswith('www.'):
                 url = 'https://' + url
             normalized_urls.append(url)
+        
+        # Display extracted URLs in a panel
+        if normalized_urls:
+            url_list = "\n".join(normalized_urls[:5])
+            if len(normalized_urls) > 5:
+                url_list += f"\n... and {len(normalized_urls) - 5} more"
+            console.print(Panel(
+                url_list, 
+                title=f"Extracted {len(normalized_urls)} URLs", 
+                border_style="cyan"
+            ), justify="right")
+            
         return URLExtraction(source="text_extraction", urls=normalized_urls)
 
     def add_urls_to_process(self, urls, process_images=False):
@@ -2937,6 +2949,25 @@ class AsyncTaskProcessor:
                 self.processed_urls.add(url)
                 self.add_task(self._process_url, url)
         return len(new_urls)
+        
+    async def _process_urls_async(self, urls):
+        """Process multiple URLs asynchronously without blocking the main thread"""
+        tasks = []
+        for url in urls:
+            if url not in self.processed_urls:
+                self.processed_urls.add(url)
+                tasks.append(self._process_url(url))
+                
+        if tasks:
+            # Process all URLs concurrently
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Log results in a separate panel
+            successful = sum(1 for r in results if isinstance(r, dict) and r.get("success", False))
+            failed = len(results) - successful
+            
+            summary = f"Processed {len(tasks)} URLs: {successful} successful, {failed} failed"
+            console.print(Panel(summary, title="Async URL Processing Complete", border_style="green"), justify="right")
 
     async def _process_image(self, image_url):
         url = image_url  # Define the url variable
@@ -2968,40 +2999,43 @@ class AsyncTaskProcessor:
     async def _process_url(self, url):
         """Process a URL to extract knowledge"""
         try:
-            console.print(f"[blue]Processing URL: {url}[/blue]")
-            
-            # Check if it's a valid URL
-            if not url.startswith(('http://', 'https://')):
-                return {"success": False, "url": url, "error": "Invalid URL format"}
+            # Use a panel for URL processing notifications to keep them separate from main conversation
+            with console.status(f"[blue]Processing URL: {url}[/blue]", spinner="dots"):
+                console.print(Panel(f"Processing URL: {url}", title="URL Processing", border_style="blue"), justify="right")
                 
-            # Try to fetch content from the URL
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=10) as response:
-                        if response.status == 200:
-                            content = await response.text()
-                            
-                            # Add to knowledge base
-                            knowledge_item = KnowledgeItem(content=content, source_url=url)
-                            self.knowledge_base.append(knowledge_item)
-                            
-                            # Extract further URLs
-                            urls_extraction = self.extract_urls(content)
-                            if urls_extraction.urls:
-                                self.add_urls_to_process(urls_extraction.urls)
-                            
-                            return {
-                                "success": True,
-                                "url": url,
-                                "content_length": len(content),
-                                "knowledge_extracted": True,
-                                "further_urls_found": len(urls_extraction.urls) if urls_extraction else 0
-                            }
-                        else:
-                            return {"success": False, "url": url, "error": f"HTTP status {response.status}"}
-            except Exception as e:
-                return {"success": False, "url": url, "error": f"Request failed: {str(e)}"}
-                
+                # Check if it's a valid URL
+                if not url.startswith(('http://', 'https://')):
+                    return {"success": False, "url": url, "error": "Invalid URL format"}
+                    
+                # Try to fetch content from the URL
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=10) as response:
+                            if response.status == 200:
+                                content = await response.text()
+                                
+                                # Add to knowledge base
+                                knowledge_item = KnowledgeItem(content=content, source_url=url)
+                                self.knowledge_base.append(knowledge_item)
+                                
+                                # Extract further URLs
+                                urls_extraction = self.extract_urls(content)
+                                if urls_extraction.urls:
+                                    # Process URLs asynchronously without waiting
+                                    asyncio.create_task(self._process_urls_async(urls_extraction.urls))
+                                
+                                return {
+                                    "success": True,
+                                    "url": url,
+                                    "content_length": len(content),
+                                    "knowledge_extracted": True,
+                                    "further_urls_found": len(urls_extraction.urls) if urls_extraction else 0
+                                }
+                            else:
+                                return {"success": False, "url": url, "error": f"HTTP status {response.status}"}
+                except Exception as e:
+                    return {"success": False, "url": url, "error": f"Request failed: {str(e)}"}
+                    
         except Exception as e:
             return {"success": False, "url": url, "error": str(e)}
 
