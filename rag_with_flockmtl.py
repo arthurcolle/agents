@@ -59,11 +59,13 @@ class RAGWithFlockMTL:
             
             # Create model resources - using the correct syntax from documentation
             self.conn.execute("""
-                CREATE MODEL('embedding-model', 'text-embedding-3-small', 'openai', {});
+                CREATE MODEL('embedding-model', 'text-embedding-3-small', 'openai', 
+                            {'context_window': 8192, 'max_output_tokens': 1536});
             """)
             
             self.conn.execute("""
-                CREATE MODEL('completion-model', 'gpt-4o', 'openai', {});
+                CREATE MODEL('completion-model', 'gpt-4o', 'openai', 
+                            {'context_window': 128000, 'max_output_tokens': 4096});
             """)
             
             # Create prompt resources - using the correct syntax from documentation
