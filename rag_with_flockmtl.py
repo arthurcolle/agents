@@ -59,28 +59,32 @@ class RAGWithFlockMTL:
             
             # Create model resources - using the correct syntax from documentation
             self.conn.execute("""
-                CREATE MODEL
-                'embedding-model',
-                'text-embedding-3-small';
+                CREATE MODEL (
+                    'embedding-model',
+                    'text-embedding-3-small'
+                );
             """)
             
             self.conn.execute("""
-                CREATE MODEL
-                'completion-model',
-                'gpt-4o';
+                CREATE MODEL (
+                    'completion-model',
+                    'gpt-4o'
+                );
             """)
             
             # Create prompt resources - using the correct syntax from documentation
             self.conn.execute("""
-                CREATE PROMPT
-                'retrieval-prompt', 
-                'Search for documents that are relevant to answering this question.';
+                CREATE PROMPT (
+                    'retrieval-prompt', 
+                    'Search for documents that are relevant to answering this question.'
+                );
             """)
             
             self.conn.execute("""
-                CREATE PROMPT
-                'generation-prompt', 
-                'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.';
+                CREATE PROMPT (
+                    'generation-prompt', 
+                    'Based on the retrieved documents, answer the following question. If the documents do not contain relevant information, say so. Include citations to the document IDs you used in your answer.'
+                );
             """)
             
             logger.info("Model and prompt resources set up successfully")
