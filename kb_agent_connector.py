@@ -31,7 +31,7 @@ class KnowledgeBaseConnector:
         """
         self.cia.set_classification_level(kb_name, level)
 
-    async def dispatch_to_kb_agent(self, kb_name: str, command: str) -> Dict[str, Any]:
+    async def dispatch_to_kb_agent(self, kb_name: str, command: str, feedback: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Dispatch a command to a knowledge base agent.
         
@@ -44,6 +44,8 @@ class KnowledgeBaseConnector:
         """
         try:
             result = await self.cia.execute_command(kb_name, command)
+            if feedback:
+                self.cia.collect_feedback(kb_name, feedback)
             return result
         except Exception as e:
             logger.error(f"Error dispatching to KB agent: {e}")

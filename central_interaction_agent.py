@@ -23,6 +23,7 @@ class CentralInteractionAgent:
         self.holographic_memory = HolographicMemory(dimensions=100)
         self.dispatcher = dispatcher
         self.feedback_data = []  # Store feedback data for learning
+        self.agent_feedback = {}  # Store feedback from other agents
         self.model = RandomForestRegressor(n_estimators=100)  # Advanced model for task prioritization
         self.vectorizer = TfidfVectorizer()  # NLP vectorizer for processing text data
         self.scaler = StandardScaler()  # Scaler for feature normalization
@@ -171,7 +172,19 @@ class CentralInteractionAgent:
             self.model.fit(X, y)
         logger.info(f"Feedback received for task {task_id}: {outcome}")
 
-    async def query_all_kb_agents(self, query: str) -> Dict[str, Any]:
+    def collect_feedback(self, agent_id: str, feedback: Dict[str, Any]) -> None:
+        """
+        Collect feedback from other agents.
+
+        Args:
+            agent_id: Identifier of the agent providing feedback
+            feedback: Feedback data
+
+        """
+        if agent_id not in self.agent_feedback:
+            self.agent_feedback[agent_id] = []
+        self.agent_feedback[agent_id].append(feedback)
+        logger.info(f"Feedback collected from agent {agent_id}: {feedback}")
         """
         Query all knowledge base agents and aggregate their responses.
 
