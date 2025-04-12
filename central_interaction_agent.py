@@ -283,33 +283,6 @@ class CentralInteractionAgent:
                 logger.info(f"Triggering action based on result: {item['result']}")
                 # Simulate executing an action
                 await self.execute_command(item['source_kb'], "trigger_action")
-        """
-        Execute a command on a knowledge base agent through the dispatcher.
-
-        Args:
-            kb_name: Name of the knowledge base
-            command: Command to execute
-
-        Returns:
-            Command execution result
-        """
-        logger.info(f"Executing command on knowledge base {kb_name} with command: {command}")
-        try:
-            result = await self.dispatcher.execute_kb_command(kb_name, command)
-            # Assess the information value of the result
-            info_value = self.assess_information_value(result)
-            if info_value > 50:  # Arbitrary threshold for high-value information
-                logger.info(f"High-value information gathered from {kb_name}: {result}")
-            logger.info(f"Command executed successfully on {kb_name}. Result: {result}")
-            return result
-        except Exception as e:
-            logger.error(f"Error executing command on {kb_name} through CIA: {e}")
-            error_message = f"Error executing command through CIA: {str(e)}"
-            logger.error(error_message)
-            return {
-                "success": False,
-                "error": f"Error executing command through CIA: {str(e)}"
-            }
 
         async def autonomous_decision_making(self):
             """
