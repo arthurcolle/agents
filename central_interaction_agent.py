@@ -5,7 +5,7 @@ import asyncio
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 import numpy as np
-from textblob import TextBlob  # For sentiment analysis
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer  # For advanced sentiment analysis
 from blockchain_simulation import Blockchain
 from federated_learning import FederatedLearningClient
 from sklearn.feature_extraction.text import TfidfVectorizer  # For NLP processing
@@ -25,7 +25,7 @@ class CentralInteractionAgent:
         self.blockchain = Blockchain()
         self.federated_client = FederatedLearningClient()
         self.holographic_memory = HolographicMemory(dimensions=100)
-        self.dispatcher = dispatcher
+        self.sentiment_analyzer = SentimentIntensityAnalyzer()  # Initialize sentiment analyzer
         self.feedback_data = []  # Store feedback data for learning
         self.agent_feedback = {}  # Store feedback from other agents
         self.model = RandomForestRegressor(n_estimators=100)  # Advanced model for task prioritization
@@ -66,9 +66,10 @@ class CentralInteractionAgent:
         text_data = " ".join(str(v) for v in data.values())
         text_features = self.vectorizer.fit_transform([text_data]).toarray()
 
-        # Sentiment analysis
-        sentiment = TextBlob(text_data).sentiment.polarity
-        logger.info(f"Sentiment score: {sentiment}")
+        # Advanced sentiment analysis
+        sentiment_scores = self.sentiment_analyzer.polarity_scores(text_data)
+        sentiment = sentiment_scores['compound']
+        logger.info(f"Sentiment scores: {sentiment_scores}")
         logger.info("Blockchain and federated learning client initialized.")
 
         # Advanced information-theoretic calculation
@@ -134,9 +135,9 @@ class CentralInteractionAgent:
         Returns:
             List of prioritized tasks
         """
-        # Use a simple linear regression model to predict task priority
+        # Use a more complex model to predict task priority
         if self.feedback_data:
-            X = np.array([[task['info_value'], task.get('context_score', 1.0)] for task in tasks])
+            X = np.array([[task['info_value'], task.get('context_score', 1.0), task.get('sentiment', 0.0)] for task in tasks])
             y = np.array([task['classification_level'] for task in tasks])
             self.model.fit(X, y)
             priorities = self.model.predict(X)
@@ -145,7 +146,7 @@ class CentralInteractionAgent:
             # Fallback to simple sorting if no feedback data is available
             prioritized_tasks = sorted(tasks, key=lambda x: (x['info_value'], x['classification_level']), reverse=True)
         
-        logger.info(f"Prioritized tasks: {prioritized_tasks}")
+        logger.info(f"Prioritized tasks based on enhanced model: {prioritized_tasks}")
         return prioritized_tasks
         """
         Prioritize tasks based on information value and classification level.
