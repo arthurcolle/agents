@@ -273,7 +273,7 @@ class CentralInteractionAgent:
             "results": aggregated_results
         }
 
-    def process_kb_data(self, data: List[Dict[str, Any]]) -> None:
+    async def process_kb_data(self, data: List[Dict[str, Any]]) -> None:
         """
         Process data retrieved from knowledge bases and make decisions.
 
