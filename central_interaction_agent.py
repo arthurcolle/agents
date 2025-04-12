@@ -280,8 +280,10 @@ class CentralInteractionAgent:
         high_priority_tasks = [task for task in self.prioritize_tasks(self.feedback_data) if task['info_value'] > 80]
         if high_priority_tasks:
             for task in high_priority_tasks:
+                kb_name = task.get('source_kb', 'default_kb')
+                command = "execute_high_priority_task"
                 logger.info(f"Executing high-priority task: {task}")
-                await self.execute_command(task['source_kb'], "execute_high_priority_task")
+                await self.execute_command(kb_name, command)
 
         # Example: Adjust classification levels based on feedback
         for task_id, outcome in self.feedback_data:
@@ -291,6 +293,7 @@ class CentralInteractionAgent:
                 self.set_classification_level(task_id, "secret")
 
         logger.info("Autonomous decision-making process completed.")
+    async def execute_command(self, kb_name: str, command: str) -> Dict[str, Any]:
         """
         Execute a command on a knowledge base agent through the dispatcher.
 
