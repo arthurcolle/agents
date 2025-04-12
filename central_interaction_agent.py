@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional
 import random
 import asyncio
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 from textblob import TextBlob  # For sentiment analysis
 from sklearn.feature_extraction.text import TfidfVectorizer  # For NLP processing
@@ -22,6 +23,7 @@ class CentralInteractionAgent:
         self.feedback_data = []  # Store feedback data for learning
         self.model = RandomForestRegressor(n_estimators=100)  # Advanced model for task prioritization
         self.vectorizer = TfidfVectorizer()  # NLP vectorizer for processing text data
+        self.scaler = StandardScaler()  # Scaler for feature normalization
         """Initialize the Central Interaction Agent with a dispatcher."""
         self.dispatcher = dispatcher
 
@@ -66,9 +68,9 @@ class CentralInteractionAgent:
             context_score += context.get("relevance_factor", 0.1)
             context_score += context.get("urgency", 0.1)
         
-        # Machine learning-based adjustment
-        features = np.array([[base_score, context_score]])
-        adjustment_factor = self.model.predict(features)[0] if self.feedback_data else random.uniform(0.9, 1.1)
+        # Normalize features
+        features = self.scaler.fit_transform(np.array([[base_score, context_score]]))
+        adjustment_factor = self.model.predict(features)[0] if len(self.feedback_data) > 10 else random.uniform(0.9, 1.1)
         value_score = base_score * context_score * adjustment_factor
         logger.info(f"Assessed information value: {value_score}")
         return value_score

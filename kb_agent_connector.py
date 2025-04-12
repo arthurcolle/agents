@@ -53,7 +53,7 @@ class KnowledgeBaseConnector:
             }
     
     async def dispatch_query_to_all_kbs(self, query: str, max_results_per_kb: int = 3) -> Dict[str, Any]:
-        # Advanced security check
+        # Advanced security check with logging
         if not self.security_check(query):
             logger.error("Security check failed for query")
             return {
