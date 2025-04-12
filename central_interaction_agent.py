@@ -395,7 +395,7 @@ class CentralInteractionAgent:
                 logger.info(f"Task {task} selected for execution based on high info value and positive sentiment.")
 
         for task in tasks_to_execute:
-            kb_name = task.get('source_kb')
+            kb_name = task.get('source_kb', None)
             if not kb_name:
                 logger.error("No source_kb found in task data.")
                 continue
