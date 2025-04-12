@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import random
 
 # Set up logging
