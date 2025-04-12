@@ -53,7 +53,7 @@ class CentralInteractionAgent:
             aggregated_update = sum(self.model_updates) / len(self.model_updates)
             logger.info(f"Aggregated model update: {aggregated_update}")
             return aggregated_update
-    def validate_classification_level(self, level: str) -> bool:
+        def validate_classification_level(self, level: str) -> bool:
         """
         Validate the classification level.
 
@@ -106,28 +106,6 @@ class CentralInteractionAgent:
         value_score = base_score * context_score * adjustment_factor
         logger.info(f"Assessed information value: {value_score} with sentiment: {sentiment}")
         return value_score
-        """
-        Assess the information value of data using an information-theoretic approach.
-
-        Args:
-            data: Data to assess
-
-        Returns:
-            Information value score
-        """
-        # Placeholder for a complex information-theoretic calculation
-        # For demonstration, we use a simple heuristic based on data size and complexity
-        base_score = len(data) * (1 + sum(len(str(v)) for v in data.values()) / 100)
-        
-        # Adjust score based on context and historical data
-        if context:
-            base_score *= (1 + context.get("relevance_factor", 0.1))
-        
-        # Simulate adaptive learning by introducing a random adjustment
-        adjustment_factor = random.uniform(0.9, 1.1)
-        value_score = base_score * adjustment_factor
-        logger.info(f"Assessed information value: {value_score}")
-        return value_score
 
     def set_classification_level(self, kb_name: str, level: str) -> None:
         """
@@ -166,19 +144,6 @@ class CentralInteractionAgent:
             prioritized_tasks = sorted(tasks, key=lambda x: (x['info_value'], x['classification_level']), reverse=True)
         
         logger.info(f"Prioritized tasks using ensemble learning model with feedback data: {self.feedback_data}")
-        return prioritized_tasks
-        """
-        Prioritize tasks based on information value and classification level.
-
-        Args:
-            tasks: List of tasks with associated metadata
-
-        Returns:
-            List of prioritized tasks
-        """
-        # Sort tasks by a combination of information value and classification level
-        prioritized_tasks = sorted(tasks, key=lambda x: (x['info_value'], x['classification_level']), reverse=True)
-        logger.info(f"Prioritized tasks: {prioritized_tasks}")
         return prioritized_tasks
 
     def provide_feedback(self, task_id: str, outcome: float) -> None:
