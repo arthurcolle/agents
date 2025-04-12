@@ -245,19 +245,6 @@ class CentralInteractionAgent:
             "total_results": len(aggregated_results),
             "results": aggregated_results
         }
-        """
-        Query all knowledge base agents and aggregate their responses.
-
-        Args:
-            query: The query to send to each knowledge base agent
-
-        Returns:
-            Aggregated responses from all knowledge base agents
-        """
-        kb_list = self.dispatcher.list_knowledge_bases()
-        tasks = [self.dispatcher.search_knowledge_base(kb["name"], query) for kb in kb_list]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
         
         aggregated_results = []
         for i, result in enumerate(results):
@@ -369,13 +356,6 @@ class CentralInteractionAgent:
                 logger.info(f"Task {task_id} classified as secret due to moderate outcome.")
 
         logger.info("Autonomous decision-making process completed.")
-    async def autonomous_decision_making(self):
-        """
-        Make autonomous decisions based on current knowledge and task priorities.
-        """
-        logger.info("Starting autonomous decision-making process.")
-
-        # Advanced decision-making process
         logger.info("Evaluating tasks for autonomous execution.")
         tasks_to_execute = []
         for task in self.prioritize_tasks(self.feedback_data):
