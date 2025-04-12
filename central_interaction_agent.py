@@ -366,7 +366,41 @@ class CentralInteractionAgent:
                 logger.info(f"Task {task_id} classified as secret due to moderate outcome.")
 
         logger.info("Autonomous decision-making process completed.")
-    async def execute_command(self, kb_name: str, command: str) -> Dict[str, Any]:
+    async def autonomous_decision_making(self):
+        """
+        Make autonomous decisions based on current knowledge and task priorities.
+        """
+        logger.info("Starting autonomous decision-making process.")
+
+        # Advanced decision-making process
+        logger.info("Evaluating tasks for autonomous execution.")
+        tasks_to_execute = []
+        for task in self.prioritize_tasks(self.feedback_data):
+            if task['info_value'] > 80 and task['sentiment'] > 0.5:
+                tasks_to_execute.append(task)
+                logger.info(f"Task {task} selected for execution based on high info value and positive sentiment.")
+
+        for task in tasks_to_execute:
+            kb_name = task.get('source_kb', 'default_kb')
+            command = "execute_high_priority_task"
+            logger.info(f"Executing task: {task}")
+            result = await self.execute_command(kb_name, command)
+            if result['success']:
+                logger.info(f"Task executed successfully: {task}")
+            else:
+                logger.warning(f"Task execution failed: {task}")
+
+        # Feedback loop for continuous improvement
+        logger.info("Adjusting classification levels based on feedback.")
+        for task_id, outcome in self.feedback_data:
+            if outcome > 0.8:
+                self.set_classification_level(task_id, "top_secret")
+                logger.info(f"Task {task_id} classified as top_secret due to high outcome.")
+            elif outcome > 0.6:
+                self.set_classification_level(task_id, "secret")
+                logger.info(f"Task {task_id} classified as secret due to moderate outcome.")
+
+        logger.info("Autonomous decision-making process completed.")
         """
         Execute a command on a knowledge base agent through the dispatcher.
 
