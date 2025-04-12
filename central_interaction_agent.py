@@ -211,6 +211,8 @@ class CentralInteractionAgent:
         # Placeholder for data gathering logic
         await asyncio.sleep(1)  # Simulate time delay for data gathering
         logger.info(f"Data gathered for {kb_name}.")
+    async def query_all_kb_agents(self, query: str) -> Dict[str, Any]:
+    async def query_all_kb_agents(self, query: str) -> Dict[str, Any]:
         """
         Query all knowledge base agents and aggregate their responses.
 
