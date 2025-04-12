@@ -24,6 +24,7 @@ class CentralInteractionAgent:
         self.federated_client = FederatedLearningClient()
         self.holographic_memory = HolographicMemory(dimensions=100)
         self.sentiment_analyzer = SentimentIntensityAnalyzer()  # Initialize sentiment analyzer
+        logger.info("Sentiment analyzer initialized.")
         self.advanced_model = RandomForestRegressor(n_estimators=200, max_depth=10)  # More advanced model
         self.feedback_data = []  # Store feedback data for learning
         self.agent_feedback = {}  # Store feedback from other agents
@@ -65,11 +66,11 @@ class CentralInteractionAgent:
         text_data = " ".join(str(v) for v in data.values())
         text_features = self.vectorizer.fit_transform([text_data]).toarray()
 
-        # Advanced sentiment analysis with detailed logging
+        # Advanced sentiment analysis with detailed logging and error handling
         sentiment_scores = self.sentiment_analyzer.polarity_scores(text_data)
         sentiment = sentiment_scores['compound']
         logger.debug(f"Sentiment analysis details: {sentiment_scores}")
-        logger.info("Blockchain and federated learning client initialized.")
+        logger.info("Federated learning client initialized.")
 
         # Advanced information-theoretic calculation
         base_score = len(data) * (1 + sum(len(str(v)) for v in data.values()) / 100)
@@ -84,7 +85,7 @@ class CentralInteractionAgent:
         features = self.scaler.fit_transform(np.array([[base_score, context_score]]))
         adjustment_factor = self.model.predict(features)[0] if len(self.feedback_data) > 10 else random.uniform(0.9, 1.1)
         value_score = base_score * context_score * adjustment_factor
-        logger.info(f"Assessed information value: {value_score}")
+        logger.info(f"Assessed information value: {value_score} with sentiment: {sentiment}")
         return value_score
         """
         Assess the information value of data using an information-theoretic approach.
@@ -134,7 +135,7 @@ class CentralInteractionAgent:
         Returns:
             List of prioritized tasks
         """
-        # Use an advanced model to predict task priority with additional features
+        # Use an advanced model to predict task priority with additional features and logging
         if self.feedback_data:
             X = np.array([[task['info_value'], task.get('context_score', 1.0), task.get('sentiment', 0.0)] for task in tasks])
             y = np.array([task['classification_level'] for task in tasks])
@@ -145,7 +146,7 @@ class CentralInteractionAgent:
             # Fallback to simple sorting if no feedback data is available
             prioritized_tasks = sorted(tasks, key=lambda x: (x['info_value'], x['classification_level']), reverse=True)
         
-        logger.info(f"Prioritized tasks using advanced model: {prioritized_tasks}")
+        logger.info(f"Prioritized tasks using advanced model with feedback data: {self.feedback_data}")
         return prioritized_tasks
         """
         Prioritize tasks based on information value and classification level.
@@ -291,15 +292,19 @@ class CentralInteractionAgent:
         Returns:
             Command execution result
         """
+        logger.info(f"Executing command on knowledge base {kb_name} with command: {command}")
         try:
             result = await self.dispatcher.execute_kb_command(kb_name, command)
             # Assess the information value of the result
             info_value = self.assess_information_value(result)
             if info_value > 50:  # Arbitrary threshold for high-value information
                 logger.info(f"High-value information gathered from {kb_name}: {result}")
+            logger.info(f"Command executed successfully on {kb_name}. Result: {result}")
             return result
         except Exception as e:
             logger.error(f"Error executing command on {kb_name} through CIA: {e}")
+            error_message = f"Error executing command through CIA: {str(e)}"
+            logger.error(error_message)
             return {
                 "success": False,
                 "error": f"Error executing command through CIA: {str(e)}"
