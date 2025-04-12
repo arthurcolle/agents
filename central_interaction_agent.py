@@ -6,7 +6,6 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 import numpy as np
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer  # For advanced sentiment analysis
-from federated_learning import FederatedLearningClient
 from sklearn.feature_extraction.text import TfidfVectorizer  # For NLP processing
 from holographic_memory import HolographicMemory
 
@@ -21,7 +20,7 @@ class CentralInteractionAgent:
 
     def __init__(self, dispatcher):
         """Initialize the Central Interaction Agent with a dispatcher."""
-        self.federated_client = FederatedLearningClient()
+        self.federated_client = self.MockFederatedLearningClient()
         self.holographic_memory = HolographicMemory(dimensions=100)
         self.sentiment_analyzer = SentimentIntensityAnalyzer()  # Initialize sentiment analyzer
         logger.info("Sentiment analyzer initialized.")
@@ -34,7 +33,26 @@ class CentralInteractionAgent:
         """Initialize the Central Interaction Agent with a dispatcher."""
         self.dispatcher = dispatcher
 
-    def validate_classification_level(self, level: str) -> bool:
+    class MockFederatedLearningClient:
+        """Mock implementation of a federated learning client."""
+        
+        def __init__(self):
+            self.model_updates = []
+            logger.info("Mock Federated Learning Client initialized.")
+        
+        def submit_model_update(self, model_update):
+            """Simulate submitting a model update."""
+            self.model_updates.append(model_update)
+            logger.info(f"Model update submitted: {model_update}")
+        
+        def aggregate_updates(self):
+            """Simulate aggregating model updates."""
+            if not self.model_updates:
+                logger.warning("No model updates to aggregate.")
+                return None
+            aggregated_update = sum(self.model_updates) / len(self.model_updates)
+            logger.info(f"Aggregated model update: {aggregated_update}")
+            return aggregated_update
         """
         Validate the classification level.
 
