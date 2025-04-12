@@ -6,7 +6,6 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 import numpy as np
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer  # For advanced sentiment analysis
-from blockchain_simulation import Blockchain
 from federated_learning import FederatedLearningClient
 from sklearn.feature_extraction.text import TfidfVectorizer  # For NLP processing
 from holographic_memory import HolographicMemory
@@ -22,7 +21,6 @@ class CentralInteractionAgent:
 
     def __init__(self, dispatcher):
         """Initialize the Central Interaction Agent with a dispatcher."""
-        self.blockchain = Blockchain()
         self.federated_client = FederatedLearningClient()
         self.holographic_memory = HolographicMemory(dimensions=100)
         self.sentiment_analyzer = SentimentIntensityAnalyzer()  # Initialize sentiment analyzer
