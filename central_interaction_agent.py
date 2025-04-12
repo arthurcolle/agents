@@ -356,8 +356,6 @@ class CentralInteractionAgent:
                 logger.info(f"Task {task_id} classified as secret due to moderate outcome.")
 
         logger.info("Autonomous decision-making process completed.")
-        logger.info("Evaluating tasks for autonomous execution.")
-        tasks_to_execute = []
         for task in self.prioritize_tasks(self.feedback_data):
             if task['info_value'] > 80 and task['sentiment'] > 0.5:
                 tasks_to_execute.append(task)
