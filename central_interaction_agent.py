@@ -276,21 +276,33 @@ class CentralInteractionAgent:
         """
         logger.info("Starting autonomous decision-making process.")
 
-        # Example: Decide to execute a command if a high-priority task is found
-        high_priority_tasks = [task for task in self.prioritize_tasks(self.feedback_data) if task['info_value'] > 80]
-        if high_priority_tasks:
-            for task in high_priority_tasks:
-                kb_name = task.get('source_kb', 'default_kb')
-                command = "execute_high_priority_task"
-                logger.info(f"Executing high-priority task: {task}")
-                await self.execute_command(kb_name, command)
+        # Advanced decision-making process
+        logger.info("Evaluating tasks for autonomous execution.")
+        tasks_to_execute = []
+        for task in self.prioritize_tasks(self.feedback_data):
+            if task['info_value'] > 80 and task['sentiment'] > 0.5:
+                tasks_to_execute.append(task)
+                logger.info(f"Task {task} selected for execution based on high info value and positive sentiment.")
 
-        # Example: Adjust classification levels based on feedback
+        for task in tasks_to_execute:
+            kb_name = task.get('source_kb', 'default_kb')
+            command = "execute_high_priority_task"
+            logger.info(f"Executing task: {task}")
+            result = await self.execute_command(kb_name, command)
+            if result['success']:
+                logger.info(f"Task executed successfully: {task}")
+            else:
+                logger.warning(f"Task execution failed: {task}")
+
+        # Feedback loop for continuous improvement
+        logger.info("Adjusting classification levels based on feedback.")
         for task_id, outcome in self.feedback_data:
-            if outcome > 0.7:
+            if outcome > 0.8:
                 self.set_classification_level(task_id, "top_secret")
-            elif outcome > 0.5:
+                logger.info(f"Task {task_id} classified as top_secret due to high outcome.")
+            elif outcome > 0.6:
                 self.set_classification_level(task_id, "secret")
+                logger.info(f"Task {task_id} classified as secret due to moderate outcome.")
 
         logger.info("Autonomous decision-making process completed.")
     async def execute_command(self, kb_name: str, command: str) -> Dict[str, Any]:
