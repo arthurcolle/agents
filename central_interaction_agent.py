@@ -315,7 +315,21 @@ async def main():
     agent = CentralInteractionAgent(dispatcher)
 
     # Test querying all knowledge bases
+    logger.info("Starting query to all knowledge bases.")
     await agent.query_all_kb_agents("test query")
 
 if __name__ == "__main__":
     asyncio.run(main())
+    # Simulate task prioritization
+    tasks = [
+        {"info_value": 75, "classification_level": 2, "sentiment": 0.5},
+        {"info_value": 50, "classification_level": 1, "sentiment": 0.2},
+        {"info_value": 90, "classification_level": 3, "sentiment": 0.8}
+    ]
+    prioritized_tasks = agent.prioritize_tasks(tasks)
+    logger.info(f"Prioritized tasks: {prioritized_tasks}")
+
+    # Simulate providing feedback
+    agent.provide_feedback("task_1", 0.8)
+    agent.provide_feedback("task_2", 0.6)
+    logger.info("Feedback provided for tasks.")
