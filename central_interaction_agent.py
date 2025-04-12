@@ -211,7 +211,7 @@ class CentralInteractionAgent:
         Returns:
             Command execution result
         """
-        logger.info(f"Executing command on knowledge base {kb_name} with command: {command}")
+        logger.info(f"Executing command on knowledge base {item['source_kb']} with command: 'trigger_action'")
         try:
             result = await self.dispatcher.execute_kb_command(kb_name, command)
             # Assess the information value of the result
