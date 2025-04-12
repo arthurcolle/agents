@@ -333,7 +333,7 @@ class CentralInteractionAgent:
                     logger.error("No source_kb found in task data.")
                     continue
                 command = "execute_high_priority_task"
-                logger.info(f"Executing command on knowledge base {kb_name} with command: {command}")
+                logger.info(f"Executing command on knowledge base {item['source_kb']} with command: 'trigger_action'")
                 result = await self.execute_command(kb_name, command)
                 if result['success']:
                     logger.info(f"Task executed successfully: {task}")
