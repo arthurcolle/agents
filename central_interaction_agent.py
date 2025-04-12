@@ -14,6 +14,17 @@ class CentralInteractionAgent:
         """Initialize the Central Interaction Agent with a dispatcher."""
         self.dispatcher = dispatcher
 
+    def set_classification_level(self, kb_name: str, level: str) -> None:
+        """
+        Set the classification level for a knowledge base.
+
+        Args:
+            kb_name: Name of the knowledge base
+            level: Classification level to set
+        """
+        # This is a placeholder for actual classification logic
+        logger.info(f"Setting classification level for {kb_name} to {level}")
+
     async def execute_command(self, kb_name: str, command: str) -> Dict[str, Any]:
         """
         Execute a command on a knowledge base agent through the dispatcher.

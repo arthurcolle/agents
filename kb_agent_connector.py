@@ -21,6 +21,16 @@ class KnowledgeBaseConnector:
         """Initialize the knowledge base connector"""
         self.cia = dispatcher.cia
     
+    def set_kb_classification(self, kb_name: str, level: str) -> None:
+        """
+        Set the classification level for a knowledge base.
+
+        Args:
+            kb_name: Name of the knowledge base
+            level: Classification level to set
+        """
+        self.cia.set_classification_level(kb_name, level)
+
     async def dispatch_to_kb_agent(self, kb_name: str, command: str) -> Dict[str, Any]:
         """
         Dispatch a command to a knowledge base agent.
