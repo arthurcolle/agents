@@ -172,19 +172,38 @@ class CentralInteractionAgent:
             self.model.fit(X, y)
         logger.info(f"Feedback received for task {task_id}: {outcome}")
 
-    def collect_feedback(self, agent_id: str, feedback: Dict[str, Any]) -> None:
+    async def query_all_kb_agents(self, query: str) -> Dict[str, Any]:
         """
-        Collect feedback from other agents.
+        Query all knowledge base agents and aggregate their responses.
 
         Args:
-            agent_id: Identifier of the agent providing feedback
-            feedback: Feedback data
+            query: The query to send to each knowledge base agent
 
+        Returns:
+            Aggregated responses from all knowledge base agents
         """
-        if agent_id not in self.agent_feedback:
-            self.agent_feedback[agent_id] = []
-        self.agent_feedback[agent_id].append(feedback)
-        logger.info(f"Feedback collected from agent {agent_id}: {feedback}")
+        kb_list = self.dispatcher.list_knowledge_bases()
+        tasks = [self.dispatcher.search_knowledge_base(kb["name"], query) for kb in kb_list]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        aggregated_results = []
+        for i, result in enumerate(results):
+            kb_name = kb_list[i]["name"] if i < len(kb_list) else "unknown"
+            if isinstance(result, Exception):
+                logger.warning(f"Error querying knowledge base {kb_name}: {result}")
+                continue
+            if result.get("success") and "data" in result:
+                for item in result["data"]:
+                    item["source_kb"] = kb_name
+                    aggregated_results.append(item)
+        
+        return {
+            "success": True,
+            "query": query,
+            "total_results": len(aggregated_results),
+            "results": aggregated_results
+        }
         """
         Query all knowledge base agents and aggregate their responses.
 
