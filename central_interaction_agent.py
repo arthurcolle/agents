@@ -54,17 +54,17 @@ class CentralInteractionAgent:
             logger.info(f"Aggregated model update: {aggregated_update}")
             return aggregated_update
         def validate_classification_level(self, level: str) -> bool:
-        """
-        Validate the classification level.
+            """
+            Validate the classification level.
 
-        Args:
-            level: Classification level to validate
+            Args:
+                level: Classification level to validate
 
-        Returns:
-            True if valid, False otherwise
-        """
-        valid_levels = {"public", "confidential", "secret", "top_secret"}
-        return level in valid_levels
+            Returns:
+                True if valid, False otherwise
+            """
+            valid_levels = {"public", "confidential", "secret", "top_secret"}
+            return level in valid_levels
 
     def assess_information_value(self, data: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> float:
         """
