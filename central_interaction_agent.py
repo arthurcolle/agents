@@ -232,6 +232,9 @@ class CentralInteractionAgent:
                     item["source_kb"] = kb_name
                     aggregated_results.append(item)
         
+        # Process the aggregated results
+        self.process_kb_data(aggregated_results)
+
         return {
             "success": True,
             "query": query,
@@ -270,7 +273,25 @@ class CentralInteractionAgent:
             "results": aggregated_results
         }
 
-    async def autonomous_decision_making(self):
+    def process_kb_data(self, data: List[Dict[str, Any]]) -> None:
+        """
+        Process data retrieved from knowledge bases and make decisions.
+
+        Args:
+            data: List of data items from knowledge bases
+        """
+        logger.info("Processing data from knowledge bases.")
+        for item in data:
+            # Example processing: Log high-value information
+            info_value = self.assess_information_value(item)
+            if info_value > 50:
+                logger.info(f"High-value information from {item['source_kb']}: {item}")
+
+            # Example action: Execute a command if certain conditions are met
+            if item.get('result') and "execute" in item['result']:
+                logger.info(f"Triggering action based on result: {item['result']}")
+                # Simulate executing an action
+                self.execute_command(item['source_kb'], "trigger_action")
         """
         Make autonomous decisions based on current knowledge and task priorities.
         """
