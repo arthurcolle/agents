@@ -151,6 +151,39 @@ class CentralInteractionAgent:
             self.model.fit(X, y)
         logger.info(f"Feedback received for task {task_id}: {outcome}")
 
+    async def query_all_kb_agents(self, query: str) -> Dict[str, Any]:
+        """
+        Query all knowledge base agents and aggregate their responses.
+
+        Args:
+            query: The query to send to each knowledge base agent
+
+        Returns:
+            Aggregated responses from all knowledge base agents
+        """
+        kb_list = self.dispatcher.list_knowledge_bases()
+        tasks = [self.dispatcher.search_knowledge_base(kb["name"], query) for kb in kb_list]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        aggregated_results = []
+        for i, result in enumerate(results):
+            kb_name = kb_list[i]["name"] if i < len(kb_list) else "unknown"
+            if isinstance(result, Exception):
+                logger.warning(f"Error querying knowledge base {kb_name}: {result}")
+                continue
+            if result.get("success") and "data" in result:
+                for item in result["data"]:
+                    item["source_kb"] = kb_name
+                    aggregated_results.append(item)
+        
+        return {
+            "success": True,
+            "query": query,
+            "total_results": len(aggregated_results),
+            "results": aggregated_results
+        }
+
     async def execute_command(self, kb_name: str, command: str) -> Dict[str, Any]:
         """
         Execute a command on a knowledge base agent through the dispatcher.

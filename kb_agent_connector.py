@@ -52,7 +52,17 @@ class KnowledgeBaseConnector:
                 "error": f"Error dispatching to KB agent: {str(e)}"
             }
     
-    async def dispatch_query_to_all_kbs(self, query: str, max_results_per_kb: int = 3) -> Dict[str, Any]:
+    async def dispatch_query_to_all_kbs(self, query: str) -> Dict[str, Any]:
+        """
+        Dispatch a search query to all knowledge bases via the CIA and aggregate the results.
+
+        Args:
+            query: Search query
+
+        Returns:
+            Aggregated search results from all knowledge bases
+        """
+        return await self.cia.query_all_kb_agents(query)
         """
         Dispatch a search query to all knowledge bases and aggregate the results.
         
