@@ -78,44 +78,8 @@ class KnowledgeBaseConnector:
             task = self.dispatcher.search_knowledge_base(kb_info["name"], query)
             tasks.append(task)
         
-        # Real-time monitoring setup
-        logger.info("Starting real-time monitoring of knowledge base queries")
-
-        # Execute all search tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Aggregate and process results
-        aggregated_results = []
-        
-        for i, result in enumerate(results):
-            kb_name = kb_list[i]["name"] if i < len(kb_list) else "unknown"
-            
-            try:
-                if isinstance(result, Exception):
-                    logger.warning(f"Error searching knowledge base {kb_name}: {result}")
-                    continue
-                
-                if result.get("success") and "data" in result:
-                    kb_results = result["data"]
-                    
-                    # Limit results per knowledge base
-                    if isinstance(kb_results, list):
-                        kb_results = kb_results[:max_results_per_kb]
-                    
-                    # Add source information
-                    for item in kb_results if isinstance(kb_results, list) else [kb_results]:
-                        if isinstance(item, dict):
-                            item["source_kb"] = kb_name
-                            aggregated_results.append(item)
-            except Exception as e:
-                logger.error(f"Error processing results from {kb_name}: {e}")
-        
-        return {
-            "success": True,
-            "query": query,
-            "total_results": len(aggregated_results),
-            "results": aggregated_results
-        }
+        logger.info(f"Query passed security check: {query}")
+        return await self.cia.query_all_kb_agents(query)
         """
         Dispatch a search query to all knowledge bases and aggregate the results.
         
