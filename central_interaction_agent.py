@@ -350,6 +350,9 @@ class CentralInteractionAgent:
             if not kb_name:
                 logger.error("No source_kb found in task data.")
                 continue
+            if not kb_name:
+                logger.error("No source_kb found in task data.")
+                continue
             command = "execute_high_priority_task"
             logger.info(f"Executing task: {task}")
             result = await self.execute_command(kb_name, command)
