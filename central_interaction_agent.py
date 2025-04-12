@@ -356,18 +356,6 @@ class CentralInteractionAgent:
                 logger.info(f"Task {task_id} classified as secret due to moderate outcome.")
 
         logger.info("Autonomous decision-making process completed.")
-
-        # Feedback loop for continuous improvement
-        logger.info("Adjusting classification levels based on feedback.")
-        for task_id, outcome in self.feedback_data:
-            if outcome > 0.8:
-                self.set_classification_level(task_id, "top_secret")
-                logger.info(f"Task {task_id} classified as top_secret due to high outcome.")
-            elif outcome > 0.6:
-                self.set_classification_level(task_id, "secret")
-                logger.info(f"Task {task_id} classified as secret due to moderate outcome.")
-
-        logger.info("Autonomous decision-making process completed.")
         """
         Execute a command on a knowledge base agent through the dispatcher.
 
