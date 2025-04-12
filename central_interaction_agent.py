@@ -316,55 +316,21 @@ async def main():
 
     # Test querying all knowledge bases
     logger.info("Starting query to all knowledge bases.")
-    logger.info("Starting query to all knowledge bases.")
     await agent.query_all_kb_agents("test query")
+
+    # Simulate task prioritization
+    tasks = [
+        {"info_value": 75, "classification_level": 2, "sentiment": 0.5},
+        {"info_value": 50, "classification_level": 1, "sentiment": 0.2},
+        {"info_value": 90, "classification_level": 3, "sentiment": 0.8}
+    ]
+    prioritized_tasks = agent.prioritize_tasks(tasks)
+    logger.info(f"Prioritized tasks: {prioritized_tasks}")
+
+    # Simulate providing feedback
+    agent.provide_feedback("task_1", 0.8)
+    agent.provide_feedback("task_2", 0.6)
+    logger.info("Feedback provided for tasks.")
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-async def main():
-    """Main function to initialize and test the Central Interaction Agent."""
-    # Create a mock dispatcher for demonstration purposes
-    class MockDispatcher:
-        def list_knowledge_bases(self):
-            return [{"name": "kb1"}, {"name": "kb2"}]
-
-        async def search_knowledge_base(self, kb_name, query):
-            return {"success": True, "data": [{"result": f"Result from {kb_name} for query {query}"}]}
-
-        async def execute_kb_command(self, kb_name, command):
-            return {"success": True, "result": f"Executed {command} on {kb_name}"}
-
-    dispatcher = MockDispatcher()
-    agent = CentralInteractionAgent(dispatcher)
-
-    # Test querying all knowledge bases
-    logger.info("Starting query to all knowledge bases.")
-    await agent.query_all_kb_agents("test query")
-
-    # Simulate task prioritization
-    tasks = [
-        {"info_value": 75, "classification_level": 2, "sentiment": 0.5},
-        {"info_value": 50, "classification_level": 1, "sentiment": 0.2},
-        {"info_value": 90, "classification_level": 3, "sentiment": 0.8}
-    ]
-    prioritized_tasks = agent.prioritize_tasks(tasks)
-    logger.info(f"Prioritized tasks: {prioritized_tasks}")
-
-    # Simulate providing feedback
-    agent.provide_feedback("task_1", 0.8)
-    agent.provide_feedback("task_2", 0.6)
-    logger.info("Feedback provided for tasks.")
-    # Simulate task prioritization
-    tasks = [
-        {"info_value": 75, "classification_level": 2, "sentiment": 0.5},
-        {"info_value": 50, "classification_level": 1, "sentiment": 0.2},
-        {"info_value": 90, "classification_level": 3, "sentiment": 0.8}
-    ]
-    prioritized_tasks = agent.prioritize_tasks(tasks)
-    logger.info(f"Prioritized tasks: {prioritized_tasks}")
-
-    # Simulate providing feedback
-    agent.provide_feedback("task_1", 0.8)
-    agent.provide_feedback("task_2", 0.6)
-    logger.info("Feedback provided for tasks.")
