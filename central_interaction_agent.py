@@ -273,41 +273,25 @@ class CentralInteractionAgent:
             "results": aggregated_results
         }
 
-    async def autonomous_decision_making(self):
+    async def process_kb_data(self, data: List[Dict[str, Any]]) -> None:
         """
-        Make autonomous decisions based on current knowledge and task priorities.
+        Process data retrieved from knowledge bases and make decisions.
+
+        Args:
+            data: List of data items from knowledge bases
         """
-        logger.info("Starting autonomous decision-making process.")
+        logger.info("Processing data from knowledge bases.")
+        for item in data:
+            # Example processing: Log high-value information
+            info_value = self.assess_information_value(item)
+            if info_value > 50:
+                logger.info(f"High-value information from {item['source_kb']}: {item}")
 
-        # Advanced decision-making process
-        logger.info("Evaluating tasks for autonomous execution.")
-        tasks_to_execute = []
-        for task in self.prioritize_tasks(self.feedback_data):
-            if task['info_value'] > 80 and task['sentiment'] > 0.5:
-                tasks_to_execute.append(task)
-                logger.info(f"Task {task} selected for execution based on high info value and positive sentiment.")
-
-        for task in tasks_to_execute:
-            kb_name = task.get('source_kb', 'default_kb')
-            command = "execute_high_priority_task"
-            logger.info(f"Executing task: {task}")
-            result = await self.execute_command(kb_name, command)
-            if result['success']:
-                logger.info(f"Task executed successfully: {task}")
-            else:
-                logger.warning(f"Task execution failed: {task}")
-
-        # Feedback loop for continuous improvement
-        logger.info("Adjusting classification levels based on feedback.")
-        for task_id, outcome in self.feedback_data:
-            if outcome > 0.8:
-                self.set_classification_level(task_id, "top_secret")
-                logger.info(f"Task {task_id} classified as top_secret due to high outcome.")
-            elif outcome > 0.6:
-                self.set_classification_level(task_id, "secret")
-                logger.info(f"Task {task_id} classified as secret due to moderate outcome.")
-
-        logger.info("Autonomous decision-making process completed.")
+            # Example action: Execute a command if certain conditions are met
+            if item.get('result') and "execute" in item['result']:
+                logger.info(f"Triggering action based on result: {item['result']}")
+                # Simulate executing an action
+                await self.execute_command(item['source_kb'], "trigger_action")
         """
         Process data retrieved from knowledge bases and make decisions.
 
