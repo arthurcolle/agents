@@ -27,6 +27,22 @@ class CentralInteractionAgent:
         valid_levels = {"public", "confidential", "secret", "top_secret"}
         return level in valid_levels
 
+    def assess_information_value(self, data: Dict[str, Any]) -> float:
+        """
+        Assess the information value of data using an information-theoretic approach.
+
+        Args:
+            data: Data to assess
+
+        Returns:
+            Information value score
+        """
+        # Placeholder for a complex information-theoretic calculation
+        # For demonstration, we use a simple heuristic based on data size and complexity
+        value_score = len(data) * (1 + sum(len(str(v)) for v in data.values()) / 100)
+        logger.info(f"Assessed information value: {value_score}")
+        return value_score
+
     def set_classification_level(self, kb_name: str, level: str) -> None:
         """
         Set the classification level for a knowledge base.
@@ -55,6 +71,10 @@ class CentralInteractionAgent:
         """
         try:
             result = await self.dispatcher.execute_kb_command(kb_name, command)
+            # Assess the information value of the result
+            info_value = self.assess_information_value(result)
+            if info_value > 50:  # Arbitrary threshold for high-value information
+                logger.info(f"High-value information gathered from {kb_name}: {result}")
             return result
         except Exception as e:
             logger.error(f"Error executing command on {kb_name} through CIA: {e}")
