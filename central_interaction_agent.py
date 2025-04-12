@@ -270,7 +270,27 @@ class CentralInteractionAgent:
             "results": aggregated_results
         }
 
-    async def execute_command(self, kb_name: str, command: str) -> Dict[str, Any]:
+    async def autonomous_decision_making(self):
+        """
+        Make autonomous decisions based on current knowledge and task priorities.
+        """
+        logger.info("Starting autonomous decision-making process.")
+
+        # Example: Decide to execute a command if a high-priority task is found
+        high_priority_tasks = [task for task in self.prioritize_tasks(self.feedback_data) if task['info_value'] > 80]
+        if high_priority_tasks:
+            for task in high_priority_tasks:
+                logger.info(f"Executing high-priority task: {task}")
+                await self.execute_command(task['source_kb'], "execute_high_priority_task")
+
+        # Example: Adjust classification levels based on feedback
+        for task_id, outcome in self.feedback_data:
+            if outcome > 0.7:
+                self.set_classification_level(task_id, "top_secret")
+            elif outcome > 0.5:
+                self.set_classification_level(task_id, "secret")
+
+        logger.info("Autonomous decision-making process completed.")
         """
         Execute a command on a knowledge base agent through the dispatcher.
 
@@ -317,6 +337,9 @@ async def main():
     # Test querying all knowledge bases
     logger.info("Starting query to all knowledge bases.")
     await agent.query_all_kb_agents("test query")
+
+    # Start autonomous decision-making
+    await agent.autonomous_decision_making()
 
     # Simulate task prioritization
     tasks = [
