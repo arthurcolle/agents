@@ -20,6 +20,8 @@ class CentralInteractionAgent:
 
     def __init__(self, dispatcher):
         """Initialize the Central Interaction Agent with a dispatcher."""
+        self.blockchain = Blockchain()
+        self.federated_client = FederatedLearningClient()
         self.holographic_memory = HolographicMemory(dimensions=100)
         self.dispatcher = dispatcher
         self.feedback_data = []  # Store feedback data for learning
