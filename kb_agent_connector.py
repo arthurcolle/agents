@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+from quantum_simulation import QuantumSimulator
 from typing import Dict, List, Any, Optional, Tuple
 
 # Import the knowledge base dispatcher
@@ -20,6 +21,7 @@ class KnowledgeBaseConnector:
     def __init__(self):
         """Initialize the knowledge base connector"""
         self.cia = dispatcher.cia
+        self.quantum_simulator = QuantumSimulator()
     
     def set_kb_classification(self, kb_name: str, level: str) -> None:
         """

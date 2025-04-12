@@ -6,6 +6,8 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 import numpy as np
 from textblob import TextBlob  # For sentiment analysis
+from blockchain_simulation import Blockchain
+from federated_learning import FederatedLearningClient
 from sklearn.feature_extraction.text import TfidfVectorizer  # For NLP processing
 from holographic_memory import HolographicMemory
 
@@ -67,6 +69,7 @@ class CentralInteractionAgent:
         # Sentiment analysis
         sentiment = TextBlob(text_data).sentiment.polarity
         logger.info(f"Sentiment score: {sentiment}")
+        logger.info("Blockchain and federated learning client initialized.")
 
         # Advanced information-theoretic calculation
         base_score = len(data) * (1 + sum(len(str(v)) for v in data.values()) / 100)
