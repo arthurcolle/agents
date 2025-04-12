@@ -7,6 +7,7 @@ from sklearn.preprocessing import StandardScaler
 import numpy as np
 from textblob import TextBlob  # For sentiment analysis
 from sklearn.feature_extraction.text import TfidfVectorizer  # For NLP processing
+from holographic_memory import HolographicMemory
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +20,7 @@ class CentralInteractionAgent:
 
     def __init__(self, dispatcher):
         """Initialize the Central Interaction Agent with a dispatcher."""
+        self.holographic_memory = HolographicMemory(dimensions=100)
         self.dispatcher = dispatcher
         self.feedback_data = []  # Store feedback data for learning
         self.model = RandomForestRegressor(n_estimators=100)  # Advanced model for task prioritization
@@ -51,6 +53,10 @@ class CentralInteractionAgent:
         Returns:
             Information value score
         """
+        # Encode data into holographic memory
+        data_vector = np.array([len(str(v)) for v in data.values()])
+        encoded_data = self.holographic_memory.encode(data_vector)
+
         # NLP processing to extract features from text data
         text_data = " ".join(str(v) for v in data.values())
         text_features = self.vectorizer.fit_transform([text_data]).toarray()
