@@ -78,7 +78,11 @@ class CentralInteractionAgent:
             Information value score
         """
         # Encode data into holographic memory
-        data_vector = np.array([len(str(v)) for v in data.values()])
+        # Ensure the data vector matches the dimensions of the holographic memory
+        data_vector = np.zeros(self.holographic_memory.dimensions)
+        for i, v in enumerate(data.values()):
+            if i < len(data_vector):
+                data_vector[i] = len(str(v))
         encoded_data = self.holographic_memory.encode(data_vector)
 
         # NLP processing to extract features from text data
