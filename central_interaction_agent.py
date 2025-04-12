@@ -172,7 +172,45 @@ class CentralInteractionAgent:
             self.model.fit(X, y)
         logger.info(f"Feedback received for task {task_id}: {outcome}")
 
-    async def query_all_kb_agents(self, query: str) -> Dict[str, Any]:
+    async def ensure_minimum_kb_size(self, kb_name: str, min_size_mb: int = 500) -> None:
+        """
+        Ensure that a knowledge base has at least the specified minimum size.
+
+        Args:
+            kb_name: Name of the knowledge base
+            min_size_mb: Minimum size in megabytes
+        """
+        current_size = self.get_kb_size(kb_name)
+        while current_size < min_size_mb * 1024 * 1024:  # Convert MB to bytes
+            logger.info(f"Current size of {kb_name} is {current_size} bytes. Gathering more data...")
+            # Simulate data gathering
+            await self.gather_data_for_kb(kb_name)
+            current_size = self.get_kb_size(kb_name)
+        logger.info(f"{kb_name} has reached the target size of {min_size_mb} MB.")
+
+    def get_kb_size(self, kb_name: str) -> int:
+        """
+        Get the current size of a knowledge base.
+
+        Args:
+            kb_name: Name of the knowledge base
+
+        Returns:
+            Size in bytes
+        """
+        # Placeholder for actual size calculation
+        return random.randint(0, 500 * 1024 * 1024)  # Simulate random size for demonstration
+
+    async def gather_data_for_kb(self, kb_name: str) -> None:
+        """
+        Gather data for a knowledge base.
+
+        Args:
+            kb_name: Name of the knowledge base
+        """
+        # Placeholder for data gathering logic
+        await asyncio.sleep(1)  # Simulate time delay for data gathering
+        logger.info(f"Data gathered for {kb_name}.")
         """
         Query all knowledge base agents and aggregate their responses.
 

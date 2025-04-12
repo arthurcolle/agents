@@ -30,6 +30,9 @@ class KnowledgeBaseDispatcher:
         self.kb_agents = {}
         self.cia = CentralInteractionAgent(self)
         self._initialize_kb_agents()
+        # Ensure each knowledge base has at least 500 MB of data
+        for kb_name in self.kb_agents.keys():
+            asyncio.create_task(self.cia.ensure_minimum_kb_size(kb_name))
     
     def _initialize_kb_agents(self):
         """Scan knowledge base directory and create agents for each knowledge base"""
