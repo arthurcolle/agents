@@ -298,7 +298,7 @@ class CentralInteractionAgent:
                 "success": False,
                 "error": f"Error executing command through CIA: {str(e)}"
             }
-def main():
+async def main():
     """Main function to initialize and test the Central Interaction Agent."""
     # Create a mock dispatcher for demonstration purposes
     class MockDispatcher:
@@ -315,7 +315,7 @@ def main():
     agent = CentralInteractionAgent(dispatcher)
 
     # Test querying all knowledge bases
-    asyncio.run(agent.query_all_kb_agents("test query"))
+    await agent.query_all_kb_agents("test query")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
