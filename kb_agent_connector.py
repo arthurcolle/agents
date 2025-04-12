@@ -5,7 +5,7 @@ import asyncio
 from typing import Dict, List, Any, Optional, Tuple
 
 # Import the knowledge base dispatcher
-from knowledge_base_dispatcher import dispatcher as kb_dispatcher
+from knowledge_base_dispatcher import dispatcher
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +19,7 @@ class KnowledgeBaseConnector:
     
     def __init__(self):
         """Initialize the knowledge base connector"""
-        self.dispatcher = kb_dispatcher
+        self.cia = dispatcher.cia
     
     async def dispatch_to_kb_agent(self, kb_name: str, command: str) -> Dict[str, Any]:
         """
@@ -33,7 +33,7 @@ class KnowledgeBaseConnector:
             Command execution result
         """
         try:
-            result = await self.dispatcher.execute_kb_command(kb_name, command)
+            result = await self.cia.execute_command(kb_name, command)
             return result
         except Exception as e:
             logger.error(f"Error dispatching to KB agent: {e}")

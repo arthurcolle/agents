@@ -3,6 +3,7 @@ import json
 import glob
 import logging
 import asyncio
+from central_interaction_agent import CentralInteractionAgent
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
@@ -27,6 +28,7 @@ class KnowledgeBaseDispatcher:
         """
         self.knowledge_base_dir = knowledge_base_dir
         self.kb_agents = {}
+        self.cia = CentralInteractionAgent(self)
         self._initialize_kb_agents()
     
     def _initialize_kb_agents(self):
