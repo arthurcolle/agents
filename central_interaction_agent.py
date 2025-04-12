@@ -320,6 +320,27 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+async def main():
+    """Main function to initialize and test the Central Interaction Agent."""
+    # Create a mock dispatcher for demonstration purposes
+    class MockDispatcher:
+        def list_knowledge_bases(self):
+            return [{"name": "kb1"}, {"name": "kb2"}]
+
+        async def search_knowledge_base(self, kb_name, query):
+            return {"success": True, "data": [{"result": f"Result from {kb_name} for query {query}"}]}
+
+        async def execute_kb_command(self, kb_name, command):
+            return {"success": True, "result": f"Executed {command} on {kb_name}"}
+
+    dispatcher = MockDispatcher()
+    agent = CentralInteractionAgent(dispatcher)
+
+    # Test querying all knowledge bases
+    logger.info("Starting query to all knowledge bases.")
+    await agent.query_all_kb_agents("test query")
+
     # Simulate task prioritization
     tasks = [
         {"info_value": 75, "classification_level": 2, "sentiment": 0.5},
