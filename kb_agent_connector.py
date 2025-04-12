@@ -80,6 +80,9 @@ class KnowledgeBaseConnector:
             task = self.dispatcher.search_knowledge_base(kb_info["name"], query)
             tasks.append(task)
         
+        # Real-time monitoring setup
+        logger.info("Starting real-time monitoring of knowledge base queries")
+
         # Execute all search tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
         

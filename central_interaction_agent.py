@@ -4,6 +4,8 @@ import random
 import asyncio
 from sklearn.ensemble import RandomForestRegressor
 import numpy as np
+from textblob import TextBlob  # For sentiment analysis
+from sklearn.feature_extraction.text import TfidfVectorizer  # For NLP processing
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +21,7 @@ class CentralInteractionAgent:
         self.dispatcher = dispatcher
         self.feedback_data = []  # Store feedback data for learning
         self.model = RandomForestRegressor(n_estimators=100)  # Advanced model for task prioritization
+        self.vectorizer = TfidfVectorizer()  # NLP vectorizer for processing text data
         """Initialize the Central Interaction Agent with a dispatcher."""
         self.dispatcher = dispatcher
 
@@ -46,6 +49,14 @@ class CentralInteractionAgent:
         Returns:
             Information value score
         """
+        # NLP processing to extract features from text data
+        text_data = " ".join(str(v) for v in data.values())
+        text_features = self.vectorizer.fit_transform([text_data]).toarray()
+
+        # Sentiment analysis
+        sentiment = TextBlob(text_data).sentiment.polarity
+        logger.info(f"Sentiment score: {sentiment}")
+
         # Advanced information-theoretic calculation
         base_score = len(data) * (1 + sum(len(str(v)) for v in data.values()) / 100)
         
