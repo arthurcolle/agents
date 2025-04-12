@@ -14,6 +14,19 @@ class CentralInteractionAgent:
         """Initialize the Central Interaction Agent with a dispatcher."""
         self.dispatcher = dispatcher
 
+    def validate_classification_level(self, level: str) -> bool:
+        """
+        Validate the classification level.
+
+        Args:
+            level: Classification level to validate
+
+        Returns:
+            True if valid, False otherwise
+        """
+        valid_levels = {"public", "confidential", "secret", "top_secret"}
+        return level in valid_levels
+
     def set_classification_level(self, kb_name: str, level: str) -> None:
         """
         Set the classification level for a knowledge base.
@@ -22,8 +35,12 @@ class CentralInteractionAgent:
             kb_name: Name of the knowledge base
             level: Classification level to set
         """
-        # This is a placeholder for actual classification logic
+        if not self.validate_classification_level(level):
+            logger.error(f"Invalid classification level: {level}")
+            return
+
         logger.info(f"Setting classification level for {kb_name} to {level}")
+        # Additional logic to apply the classification level can be added here
 
     async def execute_command(self, kb_name: str, command: str) -> Dict[str, Any]:
         """
@@ -40,7 +57,7 @@ class CentralInteractionAgent:
             result = await self.dispatcher.execute_kb_command(kb_name, command)
             return result
         except Exception as e:
-            logger.error(f"Error executing command through CIA: {e}")
+            logger.error(f"Error executing command on {kb_name} through CIA: {e}")
             return {
                 "success": False,
                 "error": f"Error executing command through CIA: {str(e)}"
