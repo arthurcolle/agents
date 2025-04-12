@@ -53,6 +53,7 @@ class CentralInteractionAgent:
             aggregated_update = sum(self.model_updates) / len(self.model_updates)
             logger.info(f"Aggregated model update: {aggregated_update}")
             return aggregated_update
+    def validate_classification_level(self, level: str) -> bool:
         """
         Validate the classification level.
 
