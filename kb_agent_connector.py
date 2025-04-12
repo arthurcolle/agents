@@ -53,15 +53,13 @@ class KnowledgeBaseConnector:
             }
     
     async def dispatch_query_to_all_kbs(self, query: str, max_results_per_kb: int = 3) -> Dict[str, Any]:
-        """
-        Dispatch a search query to all knowledge bases via the CIA and aggregate the results.
-
-        Args:
-            query: Search query
-
-        Returns:
-            Aggregated search results from all knowledge bases
-        """
+        # Advanced security check
+        if not self.security_check(query):
+            logger.error("Security check failed for query")
+            return {
+                "success": False,
+                "error": "Security check failed"
+            }
         """
         Dispatch a search query to all knowledge bases and aggregate the results.
         
