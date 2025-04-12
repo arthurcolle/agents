@@ -154,7 +154,7 @@ class CentralInteractionAgent:
         Returns:
             List of prioritized tasks
         """
-        # Use an advanced model to predict task priority with additional features and logging
+        # Use ensemble learning to predict task priority with additional features and logging
         if self.feedback_data:
             X = np.array([[task['info_value'], task.get('context_score', 1.0), task.get('sentiment', 0.0)] for task in tasks])
             y = np.array([task['classification_level'] for task in tasks])
@@ -165,7 +165,7 @@ class CentralInteractionAgent:
             # Fallback to simple sorting if no feedback data is available
             prioritized_tasks = sorted(tasks, key=lambda x: (x['info_value'], x['classification_level']), reverse=True)
         
-        logger.info(f"Prioritized tasks using advanced model with feedback data: {self.feedback_data}")
+        logger.info(f"Prioritized tasks using ensemble learning model with feedback data: {self.feedback_data}")
         return prioritized_tasks
         """
         Prioritize tasks based on information value and classification level.
@@ -189,13 +189,18 @@ class CentralInteractionAgent:
             task_id: Identifier for the task
             outcome: Outcome score of the task
         """
-        self.feedback_data.append((task_id, outcome))
-        # Update model with new feedback
-        if len(self.feedback_data) > 10:  # Update model after collecting enough feedback
+        # Calculate weighted feedback
+        weight = 0.1 if len(self.feedback_data) < 10 else 0.5
+        self.feedback_data.append((task_id, outcome * weight))
+        
+        # Update model with new feedback using ensemble learning
+        if len(self.feedback_data) > 10:
             X = np.array([[data[0], 1.0] for data in self.feedback_data])
             y = np.array([data[1] for data in self.feedback_data])
             self.model.fit(X, y)
-        logger.info(f"Feedback received for task {task_id}: {outcome}")
+            logger.debug(f"Model updated with feedback data: {self.feedback_data}")
+        
+        logger.info(f"Feedback received for task {task_id}: {outcome} with weight: {weight}")
 
     async def ensure_minimum_kb_size(self, kb_name: str, min_size_mb: int = 500) -> None:
         """
