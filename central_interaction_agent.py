@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Any, List, Optional
 import random
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
 import numpy as np
 
 # Set up logging
@@ -17,7 +17,7 @@ class CentralInteractionAgent:
         """Initialize the Central Interaction Agent with a dispatcher."""
         self.dispatcher = dispatcher
         self.feedback_data = []  # Store feedback data for learning
-        self.model = LinearRegression()  # Simple model for task prioritization
+        self.model = RandomForestRegressor(n_estimators=100)  # Advanced model for task prioritization
         """Initialize the Central Interaction Agent with a dispatcher."""
         self.dispatcher = dispatcher
 
@@ -45,17 +45,19 @@ class CentralInteractionAgent:
         Returns:
             Information value score
         """
-        # Placeholder for a complex information-theoretic calculation
-        # For demonstration, we use a simple heuristic based on data size and complexity
+        # Advanced information-theoretic calculation
         base_score = len(data) * (1 + sum(len(str(v)) for v in data.values()) / 100)
         
-        # Adjust score based on context and historical data
+        # Contextual analysis
+        context_score = 1.0
         if context:
-            base_score *= (1 + context.get("relevance_factor", 0.1))
+            context_score += context.get("relevance_factor", 0.1)
+            context_score += context.get("urgency", 0.1)
         
-        # Simulate adaptive learning by introducing a random adjustment
-        adjustment_factor = random.uniform(0.9, 1.1)
-        value_score = base_score * adjustment_factor
+        # Machine learning-based adjustment
+        features = np.array([[base_score, context_score]])
+        adjustment_factor = self.model.predict(features)[0] if self.feedback_data else random.uniform(0.9, 1.1)
+        value_score = base_score * context_score * adjustment_factor
         logger.info(f"Assessed information value: {value_score}")
         return value_score
         """
@@ -108,7 +110,7 @@ class CentralInteractionAgent:
         """
         # Use a simple linear regression model to predict task priority
         if self.feedback_data:
-            X = np.array([task['info_value'] for task in tasks]).reshape(-1, 1)
+            X = np.array([[task['info_value'], task.get('context_score', 1.0)] for task in tasks])
             y = np.array([task['classification_level'] for task in tasks])
             self.model.fit(X, y)
             priorities = self.model.predict(X)
@@ -142,6 +144,11 @@ class CentralInteractionAgent:
             outcome: Outcome score of the task
         """
         self.feedback_data.append((task_id, outcome))
+        # Update model with new feedback
+        if len(self.feedback_data) > 10:  # Update model after collecting enough feedback
+            X = np.array([[data[0], 1.0] for data in self.feedback_data])
+            y = np.array([data[1] for data in self.feedback_data])
+            self.model.fit(X, y)
         logger.info(f"Feedback received for task {task_id}: {outcome}")
 
     async def execute_command(self, kb_name: str, command: str) -> Dict[str, Any]:
