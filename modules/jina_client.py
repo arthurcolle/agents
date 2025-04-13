@@ -48,8 +48,13 @@ class JinaClient:
         if OPENAI_AVAILABLE:
             openai_api_key = openai_key or os.getenv("OPENAI_API_KEY")
             if openai_api_key:
-                self.openai_client = openai.AsyncOpenAI(api_key=openai_api_key)
-                print("OpenAI client initialized for content extraction")
+                try:
+                    self.openai_client = openai.AsyncClient(api_key=openai_api_key)
+                    print("OpenAI client initialized for content extraction")
+                except TypeError:
+                    # Handle older version of OpenAI client that doesn't accept proxies
+                    self.openai_client = openai.AsyncClient(api_key=openai_api_key)
+                    print("OpenAI client initialized for content extraction")
     
     async def search(self, query: str) -> Dict:
         """
