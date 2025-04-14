@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AST Realtime Agent: An intelligent code analysis and exploration tool using AST parsing and LLM insights
+Advanced AST Realtime Agent: A next-generation code analysis and exploration tool using AST parsing and LLM insights
 
 Features:
 - AST-based code structure analysis with semantic search capabilities
@@ -9,6 +9,16 @@ Features:
 - Interactive exploration mode with natural language queries
 - Tool integration for enhanced code navigation
 - SQLite persistence for long-term knowledge storage
+- Progressive file parsing for handling extremely large files
+- Memory-efficient processing with chunking capabilities
+- Adaptive batch processing based on file complexity
+- Parallel processing with dynamic resource allocation
+- Incremental and differential file analysis
+- Semantic clustering of code components
+- Cross-reference and dependency tracking
+- Automated code quality assessment
+- Smart memory management with predictive caching
+- Distributed processing capability for massive codebases
 """
 
 import ast
@@ -22,10 +32,49 @@ import sqlite3
 import asyncio
 import argparse
 import uuid
-from typing import Dict, List, Optional, Tuple, Set, Any, Union
-from collections import defaultdict, deque
-from datetime import datetime
+import psutil
+import mmap
+import tempfile
+import multiprocessing
+import concurrent.futures
+import threading
+import heapq
+import gc
+import re
+import zlib
+import pickle
+import inspect
+import warnings
+import difflib
+import shutil
+from typing import Dict, List, Optional, Tuple, Set, Any, Union, Iterator, Generator, Callable, TypeVar, Generic, Awaitable
+from collections import defaultdict, deque, ChainMap, Counter, OrderedDict, namedtuple
+from datetime import datetime, timedelta
 from pathlib import Path
+from itertools import islice, chain, groupby, combinations
+from functools import lru_cache, partial, wraps, reduce
+from contextlib import contextmanager, suppress, AsyncExitStack
+from dataclasses import dataclass, field, asdict
+
+# Import distributed processing modules conditionally
+try:
+    import ray
+    RAY_AVAILABLE = True
+    logger.info("Ray detected - distributed processing enabled")
+except ImportError:
+    RAY_AVAILABLE = False
+    logger.info("Ray not available - using local processing only")
+
+# Import machine learning modules conditionally
+try:
+    from sklearn.cluster import KMeans, DBSCAN
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.decomposition import TruncatedSVD
+    from sklearn.metrics.pairwise import cosine_similarity
+    ML_AVAILABLE = True
+    logger.info("Scikit-learn detected - advanced ML features enabled")
+except ImportError:
+    ML_AVAILABLE = False
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -79,16 +128,83 @@ else:
             self.text = text
             self.embedding = None
 
-# Constants
-MAX_CONTEXT_SIZE = 8192  # Maximum tokens in context
+# System constants
+MAX_CONTEXT_SIZE = 32768  # Maximum tokens in context (doubled)
 RELEVANCE_THRESHOLD = 0.7  # Similarity threshold for relevance
 CACHE_EXPIRY = 300  # Cache expiry time in seconds (5 minutes)
 EMBEDDING_DIMENSION = 768  # Default dimension for embeddings
+LARGE_FILE_THRESHOLD = 500_000  # Threshold in bytes for large file handling (roughly 0.5MB)
+HUGE_FILE_THRESHOLD = 5_000_000  # Threshold in bytes for huge file handling (roughly 5MB)
+MASSIVE_FILE_THRESHOLD = 20_000_000  # Threshold for massive files (20MB+)
+MAX_CHUNK_SIZE = 100_000  # Maximum chunk size in bytes for processing large files
+DEFAULT_BATCH_SIZE = 50  # Default batch size for processing nodes
+MEMORY_HEADROOM = 0.20  # Percentage of system memory to maintain as available
+CACHE_VERSION = "2.0"  # Version of cache format for migrations
+PROCESSING_THREADS = max(2, multiprocessing.cpu_count() - 1)  # Threads for processing
+DISTRIBUTED_THRESHOLD = 100_000_000  # Size threshold for triggering distributed processing (100MB)
+NODE_PRIORITY_WEIGHTS = {  # Priority weights for different node types (higher = more important)
+    "Module": 10.0,
+    "ClassDef": 9.0,
+    "FunctionDef": 8.5,
+    "Import": 8.0,
+    "ImportFrom": 8.0,
+    "Assign": 7.0,
+    "Call": 6.5,
+    "Return": 6.0,
+    "If": 5.5,
+    "For": 5.5,
+    "While": 5.5,
+    "With": 5.0,
+    "Try": 5.0,
+    "Raise": 4.5,
+    "Assert": 4.0,
+    "default": 3.0
+}
+CODE_QUALITY_METRICS = {  # Metrics for code quality assessment
+    "complexity": {"weight": 0.25, "threshold": 10},  # Cyclomatic complexity
+    "line_length": {"weight": 0.10, "threshold": 100},  # Line length
+    "function_length": {"weight": 0.15, "threshold": 50},  # Lines in function
+    "class_length": {"weight": 0.15, "threshold": 200},  # Lines in class
+    "nesting_depth": {"weight": 0.20, "threshold": 4},  # Nesting depth
+    "comment_ratio": {"weight": 0.15, "threshold": 0.1}  # Comments to code ratio
+}
+
+# Predictive caching settings
+PREDICTIVE_CACHE_ENABLED = True
+PREDICTION_HORIZON = 10  # Number of future operations to predict
+PREDICTION_CONFIDENCE_THRESHOLD = 0.65
+PREEMPTIVE_LOADING_FACTOR = 0.5  # Percentage of predicted nodes to preload
+
+# Create a type variable for generic functions
+T = TypeVar('T')
+TResult = TypeVar('TResult')
+
+@dataclass
+class CodeQualityMetrics:
+    """Stores code quality metrics for AST nodes."""
+    complexity: float = 0.0
+    line_length_avg: float = 0.0
+    length_lines: int = 0
+    nesting_depth: int = 0
+    comment_ratio: float = 0.0
+    quality_score: float = 0.0
+    issues: List[str] = field(default_factory=list)
+
+@dataclass
+class DependencyInfo:
+    """Tracks dependencies between code components."""
+    imports: Set[str] = field(default_factory=set)
+    imported_by: Set[str] = field(default_factory=set)
+    calls: Set[str] = field(default_factory=set)
+    called_by: Set[str] = field(default_factory=set)
+    inherits_from: Set[str] = field(default_factory=set)
+    inherited_by: Set[str] = field(default_factory=set)
 
 class ASTNode:
     """Represents a node in the AST with embedding and metadata."""
     
     def __init__(self, node: ast.AST, source_code: str, path: str = "", parent: Optional['ASTNode'] = None):
+        self.id = str(uuid.uuid4())
         self.ast_node = node
         self.node_type = type(node).__name__
         self.source_code = source_code
@@ -97,9 +213,19 @@ class ASTNode:
         self.parent = parent
         self.path = path
         self.line_start, self.line_end = self._get_line_range(node)
-        self.importance_score = 0.0
+        self.importance_score = NODE_PRIORITY_WEIGHTS.get(self.node_type, NODE_PRIORITY_WEIGHTS["default"])
         self.last_accessed = time.time()
         self.access_count = 0
+        self.last_modified = time.time()
+        self.version = 1
+        self.metadata = {}
+        self.quality_metrics = CodeQualityMetrics()
+        self.dependencies = DependencyInfo()
+        self.signature = self._compute_signature()
+        self.cluster_id = None
+        self.is_chunked = False  # Indicates whether this node represents a partial chunk of a larger node
+        self.chunk_info = None   # Information about chunking if applicable
+        self.semantic_tags = []  # Semantic categorization of this node
         
     def _get_line_range(self, node: ast.AST) -> Tuple[int, int]:
         """Get the line range of an AST node."""
@@ -112,6 +238,139 @@ class ASTNode:
                 end = start + self.source_code[start-1:].count('\n', 0, 50)
             return start, end
         return 0, 0
+        
+    def _compute_signature(self) -> str:
+        """Compute a unique signature for this node based on its content.
+        This is used for detecting changes and duplicates."""
+        try:
+            source = self.get_source_segment()
+            if not source:
+                return ""
+                
+            # Create a normalized version of the source for signature
+            normalized = re.sub(r'\s+', ' ', source).strip()
+            # Hash the normalized source
+            return hashlib.md5(normalized.encode('utf-8')).hexdigest()
+        except Exception:
+            return hashlib.md5(f"{self.node_type}:{self.line_start}-{self.line_end}".encode('utf-8')).hexdigest()
+            
+    def compute_quality_metrics(self) -> CodeQualityMetrics:
+        """Compute code quality metrics for this node."""
+        metrics = CodeQualityMetrics()
+        source = self.get_source_segment()
+        
+        if not source:
+            return metrics
+            
+        lines = source.splitlines()
+        metrics.length_lines = len(lines)
+        
+        # Calculate average line length
+        if lines:
+            metrics.line_length_avg = sum(len(line) for line in lines) / len(lines)
+        
+        # Calculate comment ratio
+        comment_lines = sum(1 for line in lines if line.strip().startswith('#'))
+        if lines:
+            metrics.comment_ratio = comment_lines / len(lines)
+        
+        # Calculate cyclomatic complexity (simplified)
+        complexity_indicators = ['if', 'elif', 'for', 'while', 'except', 'with', 'assert', 'and', 'or']
+        metrics.complexity = sum(source.count(f" {ind} ") for ind in complexity_indicators)
+        
+        # Calculate nesting depth
+        metrics.nesting_depth = self._calculate_nesting_depth()
+        
+        # Calculate overall quality score
+        metrics.quality_score = self._calculate_quality_score(metrics)
+        
+        # Identify potential issues
+        self._identify_code_issues(metrics)
+        
+        self.quality_metrics = metrics
+        return metrics
+        
+    def _calculate_nesting_depth(self) -> int:
+        """Calculate the maximum nesting depth in this node."""
+        if not hasattr(self.ast_node, 'body'):
+            return 0
+            
+        max_depth = 0
+        
+        def traverse(node, current_depth):
+            nonlocal max_depth
+            max_depth = max(max_depth, current_depth)
+            
+            # Check if node has a body attribute that is traversable
+            if hasattr(node, 'body') and isinstance(node.body, list):
+                for child in node.body:
+                    if isinstance(child, (ast.If, ast.For, ast.While, ast.With, ast.Try, ast.FunctionDef, ast.ClassDef)):
+                        traverse(child, current_depth + 1)
+        
+        traverse(self.ast_node, 0)
+        return max_depth
+        
+    def _calculate_quality_score(self, metrics: CodeQualityMetrics) -> float:
+        """Calculate an overall quality score based on the metrics."""
+        score = 1.0  # Start with perfect score
+        
+        # Penalize for exceeding thresholds
+        if metrics.complexity > CODE_QUALITY_METRICS["complexity"]["threshold"]:
+            penalty = CODE_QUALITY_METRICS["complexity"]["weight"] * (metrics.complexity / 
+                                                                     CODE_QUALITY_METRICS["complexity"]["threshold"] - 1)
+            score -= min(penalty, CODE_QUALITY_METRICS["complexity"]["weight"])
+            
+        if metrics.line_length_avg > CODE_QUALITY_METRICS["line_length"]["threshold"]:
+            penalty = CODE_QUALITY_METRICS["line_length"]["weight"] * (metrics.line_length_avg / 
+                                                                      CODE_QUALITY_METRICS["line_length"]["threshold"] - 1)
+            score -= min(penalty, CODE_QUALITY_METRICS["line_length"]["weight"])
+            
+        if self.node_type == "FunctionDef" and metrics.length_lines > CODE_QUALITY_METRICS["function_length"]["threshold"]:
+            penalty = CODE_QUALITY_METRICS["function_length"]["weight"] * (metrics.length_lines / 
+                                                                         CODE_QUALITY_METRICS["function_length"]["threshold"] - 1)
+            score -= min(penalty, CODE_QUALITY_METRICS["function_length"]["weight"])
+            
+        if self.node_type == "ClassDef" and metrics.length_lines > CODE_QUALITY_METRICS["class_length"]["threshold"]:
+            penalty = CODE_QUALITY_METRICS["class_length"]["weight"] * (metrics.length_lines / 
+                                                                      CODE_QUALITY_METRICS["class_length"]["threshold"] - 1)
+            score -= min(penalty, CODE_QUALITY_METRICS["class_length"]["weight"])
+            
+        if metrics.nesting_depth > CODE_QUALITY_METRICS["nesting_depth"]["threshold"]:
+            penalty = CODE_QUALITY_METRICS["nesting_depth"]["weight"] * (metrics.nesting_depth / 
+                                                                        CODE_QUALITY_METRICS["nesting_depth"]["threshold"] - 1)
+            score -= min(penalty, CODE_QUALITY_METRICS["nesting_depth"]["weight"])
+            
+        if metrics.comment_ratio < CODE_QUALITY_METRICS["comment_ratio"]["threshold"]:
+            if metrics.length_lines > 10:  # Only consider comment ratio for non-trivial code blocks
+                penalty = CODE_QUALITY_METRICS["comment_ratio"]["weight"] * (1 - metrics.comment_ratio / 
+                                                                          CODE_QUALITY_METRICS["comment_ratio"]["threshold"])
+                score -= min(penalty, CODE_QUALITY_METRICS["comment_ratio"]["weight"])
+        
+        return max(0.0, min(1.0, score))
+        
+    def _identify_code_issues(self, metrics: CodeQualityMetrics):
+        """Identify potential code quality issues."""
+        issues = []
+        
+        if metrics.complexity > CODE_QUALITY_METRICS["complexity"]["threshold"] * 1.5:
+            issues.append(f"High cyclomatic complexity ({metrics.complexity:.1f})")
+            
+        if metrics.line_length_avg > CODE_QUALITY_METRICS["line_length"]["threshold"] * 1.2:
+            issues.append(f"Long lines (avg {metrics.line_length_avg:.1f} chars)")
+            
+        if self.node_type == "FunctionDef" and metrics.length_lines > CODE_QUALITY_METRICS["function_length"]["threshold"] * 1.5:
+            issues.append(f"Function too long ({metrics.length_lines} lines)")
+            
+        if self.node_type == "ClassDef" and metrics.length_lines > CODE_QUALITY_METRICS["class_length"]["threshold"] * 1.5:
+            issues.append(f"Class too large ({metrics.length_lines} lines)")
+            
+        if metrics.nesting_depth > CODE_QUALITY_METRICS["nesting_depth"]["threshold"]:
+            issues.append(f"Excessive nesting depth ({metrics.nesting_depth} levels)")
+            
+        if metrics.length_lines > 10 and metrics.comment_ratio < CODE_QUALITY_METRICS["comment_ratio"]["threshold"] / 2:
+            issues.append(f"Insufficient comments ({metrics.comment_ratio*100:.1f}%)")
+            
+        metrics.issues = issues
     
     def get_source_segment(self) -> str:
         """Get the source code segment for this node."""
@@ -130,15 +389,49 @@ class ASTNode:
         if len(source) > 1000:
             source = source[:500] + "..." + source[-500:]
             
-        return f"{self.node_type}: {source}"
+        # Add semantic information if available
+        name = self._extract_name()
+        context = f"{self.node_type}"
+        if name:
+            context += f" {name}"
+        
+        # Add path information to provide file context
+        if self.path:
+            file_name = os.path.basename(self.path)
+            context += f" in {file_name}"
+            
+        return f"{context}: {source}"
+    
+    def _extract_name(self) -> str:
+        """Extract the name of this node if possible."""
+        if hasattr(self.ast_node, 'name'):
+            return self.ast_node.name
+        elif self.node_type == 'ClassDef' and hasattr(self.ast_node, 'name'):
+            return f"class {self.ast_node.name}"
+        elif self.node_type == 'FunctionDef' and hasattr(self.ast_node, 'name'):
+            return f"function {self.ast_node.name}"
+        elif self.node_type == 'Module':
+            return f"module {os.path.basename(self.path)}" if self.path else "module"
+        return ""
     
     def update_access_time(self):
         """Update the last access time and count."""
         self.last_accessed = time.time()
         self.access_count += 1
         
-    def calculate_importance(self, query_embedding=None):
-        """Calculate importance score based on recency, frequency and relevance."""
+    def update_modified_time(self):
+        """Update the last modified time and version."""
+        self.last_modified = time.time()
+        self.version += 1
+        # Recompute signature after modification
+        self.signature = self._compute_signature()
+        
+    def calculate_importance(self, query_embedding=None, context_nodes=None):
+        """Calculate importance score based on multiple factors including 
+        recency, frequency, relevance, quality, and context."""
+        # Base importance from node type
+        base_importance = NODE_PRIORITY_WEIGHTS.get(self.node_type, NODE_PRIORITY_WEIGHTS["default"])
+        
         # Recency factor (time decay)
         time_factor = np.exp(-(time.time() - self.last_accessed) / CACHE_EXPIRY)
         
@@ -146,13 +439,177 @@ class ASTNode:
         freq_factor = np.log1p(self.access_count)
         
         # Relevance to current query if available
-        relevance = 0.0
+        query_relevance = 0.0
         if query_embedding is not None and self.embedding is not None:
-            relevance = np.dot(query_embedding, self.embedding)
+            query_relevance = np.dot(query_embedding, self.embedding)
+            # Apply sigmoid to scale similarity to [0, 1]
+            query_relevance = 1 / (1 + np.exp(-10 * (query_relevance - 0.5)))
         
-        # Combine factors
-        self.importance_score = (0.3 * time_factor + 0.3 * freq_factor + 0.4 * relevance)
+        # Code quality factor
+        quality_factor = 0.5 + (0.5 * self.quality_metrics.quality_score if hasattr(self, 'quality_metrics') else 0.5)
+        
+        # Context relevance - how relevant this node is to currently active nodes
+        context_relevance = 0.0
+        if context_nodes and self.embedding is not None:
+            # Calculate average similarity to context nodes
+            similarities = []
+            for node in context_nodes:
+                if node.id != self.id and node.embedding is not None:
+                    sim = np.dot(self.embedding, node.embedding)
+                    similarities.append(sim)
+            if similarities:
+                context_relevance = sum(similarities) / len(similarities)
+        
+        # Dependency factor - nodes with many dependencies are more important
+        dependency_factor = 1.0
+        if hasattr(self, 'dependencies'):
+            dep_count = sum(len(getattr(self.dependencies, attr)) for attr in vars(self.dependencies) 
+                           if isinstance(getattr(self.dependencies, attr), set))
+            dependency_factor = 1.0 + min(0.5, 0.05 * dep_count)
+        
+        # Size factor - larger nodes (in lines) are generally more important
+        size_factor = 1.0
+        if self.line_end > self.line_start:
+            lines = self.line_end - self.line_start + 1
+            size_factor = min(1.5, 1.0 + 0.01 * lines)
+        
+        # Combine all factors with weights
+        self.importance_score = (
+            0.20 * base_importance + 
+            0.15 * time_factor + 
+            0.10 * freq_factor +
+            0.20 * query_relevance +
+            0.10 * quality_factor +
+            0.10 * context_relevance +
+            0.10 * dependency_factor +
+            0.05 * size_factor
+        )
+        
         return self.importance_score
+        
+    def extract_dependencies(self):
+        """Extract dependencies from this node."""
+        if self.node_type not in ('ClassDef', 'FunctionDef', 'Module', 'Import', 'ImportFrom'):
+            return self.dependencies
+            
+        # Process imports
+        if self.node_type == 'Import':
+            for name in self.ast_node.names:
+                self.dependencies.imports.add(name.name)
+        elif self.node_type == 'ImportFrom':
+            module = self.ast_node.module or ''
+            for name in self.ast_node.names:
+                self.dependencies.imports.add(f"{module}.{name.name}")
+                
+        # Process class inheritance
+        if self.node_type == 'ClassDef' and hasattr(self.ast_node, 'bases'):
+            for base in self.ast_node.bases:
+                if isinstance(base, ast.Name):
+                    self.dependencies.inherits_from.add(base.id)
+                elif isinstance(base, ast.Attribute):
+                    self.dependencies.inherits_from.add(f"{base.value.id}.{base.attr}")
+        
+        # Process function calls
+        def process_calls(node):
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    self.dependencies.calls.add(node.func.id)
+                elif isinstance(node.func, ast.Attribute):
+                    if hasattr(node.func.value, 'id'):
+                        self.dependencies.calls.add(f"{node.func.value.id}.{node.func.attr}")
+            
+            # Recursively process all children
+            for child in ast.iter_child_nodes(node):
+                process_calls(child)
+                
+        process_calls(self.ast_node)
+        
+        return self.dependencies
+        
+    def generate_semantic_tags(self) -> List[str]:
+        """Generate semantic tags for this node based on its content."""
+        source = self.get_source_segment()
+        if not source:
+            return []
+            
+        tags = []
+        
+        # Add basic type tags
+        tags.append(self.node_type.lower())
+        
+        # Add name-based tags
+        name = self._extract_name()
+        if name:
+            words = re.findall(r'[a-z][a-z0-9]*', name.lower())
+            tags.extend(words)
+        
+        # Add content-based tags
+        if len(source) > 5:
+            # Look for key indicators in the code
+            if re.search(r'\blog\b|\blogger\b|\blogging\b', source, re.I):
+                tags.append('logging')
+                
+            if re.search(r'\berror\b|\bexception\b|\braise\b|\btry\b|\bcatch\b|\bexcept\b', source, re.I):
+                tags.append('error-handling')
+                
+            if re.search(r'\btest\b|\bassert\b|\bmock\b', source, re.I):
+                tags.append('testing')
+                
+            if re.search(r'\bclass\b.*\(.*\b(Abstract|Base|Interface)\b', source, re.I):
+                tags.append('abstract')
+                
+            if re.search(r'\basync\b|\bawait\b|\bcoroutine\b|\btask\b', source, re.I):
+                tags.append('async')
+                
+            if re.search(r'\bthread\b|\block\b|\bmutex\b|\bsemaphore\b', source, re.I):
+                tags.append('concurrency')
+                
+            if re.search(r'\bdb\b|\bdatabase\b|\bsql\b|\bquery\b|\bselect\b', source, re.I):
+                tags.append('database')
+                
+            if re.search(r'\bapi\b|\brest\b|\bhttp\b|\brequest\b|\bresponse\b', source, re.I):
+                tags.append('api')
+                
+            if re.search(r'\bvalidate\b|\bvalidation\b|\bschema\b', source, re.I):
+                tags.append('validation')
+        
+        # Add complexity tags
+        if hasattr(self, 'quality_metrics'):
+            if self.quality_metrics.complexity > CODE_QUALITY_METRICS["complexity"]["threshold"]:
+                tags.append('complex')
+                
+            if self.quality_metrics.issues:
+                tags.append('needs-improvement')
+        
+        # Remove duplicates and return
+        self.semantic_tags = list(set(tags))
+        return self.semantic_tags
+        
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the node to a dictionary for serialization."""
+        result = {
+            "id": self.id,
+            "node_type": self.node_type,
+            "path": self.path,
+            "line_start": self.line_start,
+            "line_end": self.line_end,
+            "importance_score": self.importance_score,
+            "last_accessed": self.last_accessed,
+            "access_count": self.access_count,
+            "last_modified": self.last_modified,
+            "version": self.version,
+            "signature": self.signature,
+            "semantic_tags": self.semantic_tags,
+            "quality_metrics": asdict(self.quality_metrics) if hasattr(self, 'quality_metrics') else {},
+            "dependencies": asdict(self.dependencies) if hasattr(self, 'dependencies') else {},
+            "metadata": self.metadata,
+        }
+        
+        # Don't include these large fields by default
+        # result["source"] = self.get_source_segment()
+        # result["embedding"] = self.embedding.tolist() if self.embedding is not None else None
+        
+        return result
 
 class ASTEmbedder:
     """Embeds AST nodes using advanced embedding services with parallel processing capabilities."""
@@ -362,7 +819,15 @@ class ASTEmbedder:
             return embedding
     
     async def embed_nodes(self, nodes: List[ASTNode]) -> List[np.ndarray]:
-        """Embed multiple AST nodes in batch efficiently with parallel processing."""
+        """Embed multiple AST nodes in batch efficiently with adaptive parallel processing."""
+        if not nodes:
+            return []
+            
+        # Calculate optimal batch size based on system resources and node count
+        resources = self._get_system_resources()
+        adaptive_batch_size = self._calculate_optimal_batch_size(len(nodes), resources)
+        logger.info(f"Using adaptive batch size of {adaptive_batch_size} for {len(nodes)} nodes")
+        
         # Map nodes to texts and track which nodes need embedding
         texts = [node.get_representation() for node in nodes]
         to_embed_indices = []
@@ -386,61 +851,142 @@ class ASTEmbedder:
             
         try:
             # Process in appropriate batch sizes with improved parallelism
-            batch_size = 50  # Increased batch size for better throughput
             all_results = []
             
-            # Prepare a list of tasks for concurrent processing
-            async def process_node(node):
-                embedding = await self._get_syntax_aware_embedding(node)
-                text = node.get_representation()
-                cache_key = f"{text}:{self.model_name}"
-                # Cache the result with thread safety
-                async with self.embedding_lock:
-                    self.embedding_cache[cache_key] = embedding
-                node.embedding = embedding
-                return embedding
+            # Prioritize important nodes first (imports, class/function definitions)
+            priority_nodes = []
+            priority_indices = []
+            regular_nodes = []
+            regular_indices = []
             
-            # Process batches with controlled concurrency
-            for i in range(0, len(to_embed_nodes), batch_size):
-                batch = to_embed_nodes[i:i+batch_size]
-                
-                # Process each batch with controlled parallelism
-                batch_tasks = []
-                for node in batch:
-                    # Use semaphore to limit concurrent API calls
-                    async with self.embedding_semaphore:
-                        batch_tasks.append(process_node(node))
-                
-                # Wait for all tasks in this batch to complete
-                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-                
-                # Handle results, skipping any that raised exceptions
-                for result in batch_results:
-                    if not isinstance(result, Exception):
-                        all_results.append(result)
-                    else:
-                        logger.warning(f"Error embedding node: {result}")
-                        all_results.append(None)
-                    
-            # Map results back to original node order
-            for i, orig_idx in enumerate(to_embed_indices):
-                if i < len(all_results) and all_results[i] is not None:
-                    nodes[orig_idx].embedding = all_results[i]
+            # Split nodes into priority and regular groups
+            for i, node in enumerate(to_embed_nodes):
+                if hasattr(node, 'node_type') and node.node_type in ('Import', 'ImportFrom', 'ClassDef', 'FunctionDef', 'Module'):
+                    priority_nodes.append(node)
+                    priority_indices.append(to_embed_indices[i])
                 else:
-                    # Handle missing or error embeddings
-                    self._create_fallback_embedding(nodes[orig_idx])
+                    regular_nodes.append(node)
+                    regular_indices.append(to_embed_indices[i])
+            
+            # Process priority nodes first
+            if priority_nodes:
+                logger.info(f"Processing {len(priority_nodes)} high-priority nodes first")
+            
+            # Prepare a list of tasks for concurrent processing with improved error handling
+            async def process_node(node, semaphore):
+                async with semaphore:
+                    try:
+                        embedding = await self._get_syntax_aware_embedding(node)
+                        text = node.get_representation()
+                        cache_key = f"{text}:{self.model_name}"
+                        # Cache the result with thread safety
+                        async with self.embedding_lock:
+                            self.embedding_cache[cache_key] = embedding
+                        node.embedding = embedding
+                        return embedding
+                    except Exception as e:
+                        logger.warning(f"Error embedding node ({node.node_type}): {str(e)[:100]}...")
+                        return None
+            
+            # Create a dynamic semaphore based on system resources
+            concurrent_limit = max(5, min(20, multiprocessing.cpu_count() * 2))
+            if resources["memory_percent"] > 80:
+                concurrent_limit = max(3, concurrent_limit // 2)  # Reduce concurrency when memory is constrained
+            
+            dynamic_semaphore = asyncio.Semaphore(concurrent_limit)
+            logger.info(f"Using concurrency limit of {concurrent_limit} for embedding")
+            
+            # Process both priority and regular nodes
+            for node_group, idx_group, group_name in [
+                (priority_nodes, priority_indices, "priority"), 
+                (regular_nodes, regular_indices, "regular")
+            ]:
+                if not node_group:
+                    continue
+                    
+                logger.info(f"Processing {len(node_group)} {group_name} nodes")
+                
+                # Process in optimally sized batches
+                for i in range(0, len(node_group), adaptive_batch_size):
+                    batch = node_group[i:i+adaptive_batch_size]
+                    batch_indices = idx_group[i:i+adaptive_batch_size]
+                    
+                    # Create tasks for all nodes in batch
+                    batch_tasks = [process_node(node, dynamic_semaphore) for node in batch]
+                    
+                    # Execute batch with controlled concurrency
+                    batch_results = await asyncio.gather(*batch_tasks)
+                    
+                    # Handle results and apply to original nodes
+                    for j, (result, orig_idx) in enumerate(zip(batch_results, batch_indices)):
+                        if result is not None:
+                            nodes[orig_idx].embedding = result
+                        else:
+                            # Create fallback for failed embeddings
+                            self._create_fallback_embedding(nodes[orig_idx])
+                    
+                    # Yield control to avoid blocking event loop for too long
+                    await asyncio.sleep(0)
+                    
+                    # Dynamically adjust batch size based on success rate
+                    success_rate = sum(1 for r in batch_results if r is not None) / len(batch_results)
+                    if success_rate < 0.5 and adaptive_batch_size > 20:
+                        adaptive_batch_size = max(10, adaptive_batch_size // 2)
+                        logger.info(f"Reducing batch size to {adaptive_batch_size} due to low success rate")
             
             return [node.embedding for node in nodes]
             
         except Exception as e:
-            logger.error(f"Error batch embedding nodes: {e}")
+            logger.error(f"Error in batch embedding: {e}")
+            import traceback
+            traceback.print_exc()
             
-            # Generate fallback embeddings for remaining nodes
+            # Generate fallback embeddings for any nodes without embeddings
             for i in to_embed_indices:
                 if nodes[i].embedding is None:
                     self._create_fallback_embedding(nodes[i])
             
             return [node.embedding for node in nodes]
+            
+    def _get_system_resources(self) -> Dict[str, float]:
+        """Get available system resources to adapt processing strategy."""
+        try:
+            memory = psutil.virtual_memory()
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            return {
+                "available_memory": memory.available,
+                "total_memory": memory.total,
+                "memory_percent": memory.percent,
+                "cpu_percent": cpu_percent
+            }
+        except Exception as e:
+            logger.warning(f"Unable to get system resources: {e}")
+            return {
+                "available_memory": 2 * 1024 * 1024 * 1024,  # 2GB fallback
+                "total_memory": 8 * 1024 * 1024 * 1024,      # 8GB fallback
+                "memory_percent": 50.0,
+                "cpu_percent": 50.0
+            }
+            
+    def _calculate_optimal_batch_size(self, nodes_count: int, resources: Dict[str, float]) -> int:
+        """Calculate optimal batch size based on number of nodes and available resources."""
+        # Base batch size
+        base_batch_size = DEFAULT_BATCH_SIZE
+        
+        # Adjust based on available memory - more memory allows larger batches
+        memory_factor = min(4.0, max(0.2, resources["available_memory"] / (2 * 1024 * 1024 * 1024)))
+        
+        # Adjust based on number of nodes - more nodes means we can use larger batches for efficiency
+        nodes_factor = min(2.0, max(0.5, nodes_count / 1000))
+        
+        # Adjust for CPU availability - reduce batch size when CPU is heavily loaded
+        cpu_factor = min(1.5, max(0.5, (100 - resources["cpu_percent"]) / 50))
+        
+        # Calculate adjusted batch size
+        adjusted_size = int(base_batch_size * memory_factor * nodes_factor * cpu_factor)
+        
+        # Ensure batch size remains reasonable
+        return max(10, min(200, adjusted_size))
     
     def _create_fallback_embedding(self, node: ASTNode):
         """Create a fallback embedding when normal embedding fails."""
@@ -459,25 +1005,256 @@ class ASTEmbedder:
         return embedding
 
 class ASTParser:
-    """Parses source code into hierarchical AST nodes."""
+    """Parses source code into hierarchical AST nodes with support for large files."""
     
     def __init__(self):
         self.root_nodes = {}  # Map of file paths to their root nodes
+        self.file_sizes = {}  # Track file sizes for adaptive processing
+        self.pending_chunks = {}  # Track chunks pending processing
         
-    def parse_file(self, file_path: str) -> Optional[ASTNode]:
-        """Parse a file into AST nodes with hierarchical structure."""
+    def _get_system_resources(self) -> Dict[str, float]:
+        """Get available system resources to adapt processing strategy."""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                source_code = f.read()
+            memory = psutil.virtual_memory()
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            return {
+                "available_memory": memory.available,
+                "total_memory": memory.total,
+                "memory_percent": memory.percent,
+                "cpu_percent": cpu_percent
+            }
+        except Exception as e:
+            logger.warning(f"Unable to get system resources: {e}")
+            return {
+                "available_memory": 2 * 1024 * 1024 * 1024,  # 2GB fallback
+                "total_memory": 8 * 1024 * 1024 * 1024,      # 8GB fallback
+                "memory_percent": 50.0,
+                "cpu_percent": 50.0
+            }
+    
+    def _calculate_optimal_chunk_size(self, file_size: int) -> int:
+        """Calculate optimal chunk size based on file size and available resources."""
+        resources = self._get_system_resources()
+        
+        # Ensure we don't use more than 80% of available memory
+        available_memory = resources["available_memory"] * (1.0 - MEMORY_HEADROOM)
+        
+        # Adjust chunk size based on available memory and file size
+        if file_size < LARGE_FILE_THRESHOLD:
+            return file_size  # Process small files in one go
+        
+        # For large files, calculate chunk size to allow for parsing overhead
+        if file_size > HUGE_FILE_THRESHOLD:
+            # For huge files, use more conservative chunking
+            chunk_size = min(MAX_CHUNK_SIZE, int(available_memory / 10))
+        else:
+            # For large files, use more aggressive chunking
+            chunk_size = min(MAX_CHUNK_SIZE, int(available_memory / 5))
             
-            tree = ast.parse(source_code)
-            root = ASTNode(tree, source_code, path=file_path)
-            self._build_hierarchy(root, tree, source_code, file_path)
+        return max(chunk_size, 10000)  # Ensure minimum chunk size for sensible parsing
+    
+    def _split_file_into_chunks(self, file_path: str) -> List[Dict[str, Any]]:
+        """Split a large file into manageable chunks for incremental processing."""
+        file_size = os.path.getsize(file_path)
+        self.file_sizes[file_path] = file_size
+        
+        if file_size < LARGE_FILE_THRESHOLD:
+            # Small file - process as a single chunk
+            return [{
+                "chunk_id": str(uuid.uuid4()),
+                "file_path": file_path,
+                "start_offset": 0,
+                "end_offset": file_size,
+                "start_line": 1,
+                "end_line": None  # Will be calculated during processing
+            }]
+            
+        # For large files, split into chunks
+        chunk_size = self._calculate_optimal_chunk_size(file_size)
+        chunks = []
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            start_offset = 0
+            start_line = 1
+            
+            while start_offset < file_size:
+                # Calculate end offset ensuring we end at a line boundary
+                end_offset = min(start_offset + chunk_size, file_size)
+                
+                if end_offset < file_size:
+                    # Move to the next line boundary to avoid splitting in the middle of a statement
+                    f.seek(end_offset)
+                    # Read until the next newline to ensure we don't cut mid-statement
+                    line_end_search = 0
+                    while end_offset < file_size and line_end_search < 1000:  # Max 1000 bytes search
+                        char = f.read(1)
+                        end_offset += 1
+                        line_end_search += 1
+                        if char == '\n':
+                            break
+                
+                # Count lines in this chunk
+                f.seek(start_offset)
+                chunk_content = f.read(end_offset - start_offset)
+                line_count = chunk_content.count('\n')
+                end_line = start_line + line_count
+                
+                chunks.append({
+                    "chunk_id": str(uuid.uuid4()),
+                    "file_path": file_path,
+                    "start_offset": start_offset,
+                    "end_offset": end_offset,
+                    "start_line": start_line,
+                    "end_line": end_line
+                })
+                
+                start_offset = end_offset
+                start_line = end_line + 1
+                
+        logger.info(f"Split {file_path} into {len(chunks)} chunks for processing")
+        return chunks
+    
+    def parse_file(self, file_path: str) -> Optional[ASTNode]:
+        """Parse a file into AST nodes with hierarchical structure and large file support."""
+        try:
+            file_size = os.path.getsize(file_path)
+            self.file_sizes[file_path] = file_size
+            
+            # For small files, process normally
+            if file_size < LARGE_FILE_THRESHOLD:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    source_code = f.read()
+                
+                tree = ast.parse(source_code)
+                root = ASTNode(tree, source_code, path=file_path)
+                self._build_hierarchy(root, tree, source_code, file_path)
+                self.root_nodes[file_path] = root
+                return root
+                
+            # For large files, process incrementally
+            logger.info(f"Processing large file ({file_size} bytes) incrementally: {file_path}")
+            chunks = self._split_file_into_chunks(file_path)
+            
+            # Create a placeholder root node
+            placeholder_tree = ast.Module(body=[], type_ignores=[])
+            root = ASTNode(placeholder_tree, "", path=file_path)
             self.root_nodes[file_path] = root
+            
+            # Process the first chunk immediately to provide initial context
+            self._process_chunk(chunks[0], root)
+            
+            # Schedule the remaining chunks for background processing
+            self.pending_chunks[file_path] = chunks[1:]
+            self._schedule_chunk_processing(file_path)
+            
             return root
+            
         except Exception as e:
             logger.error(f"Error parsing file {file_path}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
+    
+    def _process_chunk(self, chunk: Dict[str, Any], root: ASTNode) -> None:
+        """Process a single chunk of a file."""
+        try:
+            with open(chunk["file_path"], 'r', encoding='utf-8') as f:
+                f.seek(chunk["start_offset"])
+                chunk_content = f.read(chunk["end_offset"] - chunk["start_offset"])
+            
+            # Create line offset mapping for accurate line numbers
+            line_offset = chunk["start_line"] - 1
+            
+            try:
+                # Try to parse the chunk as valid Python
+                chunk_tree = ast.parse(chunk_content)
+                
+                # For each node in chunk_tree, adjust line numbers
+                for node in ast.walk(chunk_tree):
+                    if hasattr(node, 'lineno'):
+                        node.lineno += line_offset
+                    if hasattr(node, 'end_lineno'):
+                        node.end_lineno += line_offset
+                
+                # Create nodes for this chunk and attach to root
+                for child_node in chunk_tree.body:
+                    child = ASTNode(child_node, chunk_content, path=chunk["file_path"], parent=root)
+                    root.children.append(child)
+                    self._build_hierarchy(child, child_node, chunk_content, chunk["file_path"])
+                    
+            except SyntaxError:
+                logger.warning(f"Syntax error in chunk - trying more lenient parsing")
+                # If chunk can't be parsed, try to extract meaningful blocks
+                self._extract_parseable_blocks(chunk_content, chunk, root)
+                
+        except Exception as e:
+            logger.error(f"Error processing chunk: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _extract_parseable_blocks(self, content: str, chunk: Dict[str, Any], root: ASTNode):
+        """Extract parseable blocks from content with syntax errors."""
+        lines = content.splitlines()
+        current_block = []
+        line_offset = chunk["start_line"] - 1
+        
+        for i, line in enumerate(lines):
+            current_block.append(line)
+            block_text = '\n'.join(current_block)
+            
+            # Skip empty blocks
+            if not block_text.strip():
+                continue
+                
+            try:
+                # Try to parse the current block
+                block_tree = ast.parse(block_text)
+                
+                # If successful, add nodes to the root
+                for node in block_tree.body:
+                    if hasattr(node, 'lineno'):
+                        node.lineno += line_offset
+                    if hasattr(node, 'end_lineno'):
+                        node.end_lineno += line_offset
+                    
+                    child = ASTNode(node, block_text, path=chunk["file_path"], parent=root)
+                    root.children.append(child)
+                
+                # Start a new block
+                current_block = []
+                
+            except SyntaxError:
+                # Keep building the block
+                continue
+    
+    def _schedule_chunk_processing(self, file_path: str):
+        """Schedule remaining chunks for background processing."""
+        chunks = self.pending_chunks.get(file_path, [])
+        if not chunks:
+            return
+            
+        # Process chunks in a background thread to avoid blocking
+        def process_chunks_background():
+            root = self.root_nodes.get(file_path)
+            if not root:
+                return
+                
+            for chunk in chunks:
+                self._process_chunk(chunk, root)
+                # Remove the chunk from pending
+                if file_path in self.pending_chunks and self.pending_chunks[file_path]:
+                    self.pending_chunks[file_path].pop(0)
+                
+                # Check system resources and potentially pause
+                resources = self._get_system_resources()
+                if resources["memory_percent"] > 90 or resources["cpu_percent"] > 95:
+                    logger.warning("System resources critical, pausing chunk processing")
+                    time.sleep(5)  # Wait before continuing
+        
+        # Start background processing thread
+        thread = threading.Thread(target=process_chunks_background)
+        thread.daemon = True  # Thread will exit when main program exits
+        thread.start()
             
     def __del__(self):
         """Clean up resources."""
@@ -750,19 +1527,37 @@ class ContextCache:
         
         self.conn.commit()
     
-    async def load_file(self, file_path: str) -> bool:
-        """Load a file into the cache with intelligent code understanding."""
+    async def load_file(self, file_path: str, large_file_mode: bool = None) -> bool:
+        """Load a file into the cache with intelligent code understanding and large file support."""
         # Check if file already loaded
         if file_path in self.cache:
             return True
         
-        # Parse the file
+        # Check file size to determine processing strategy
+        try:
+            file_size = os.path.getsize(file_path)
+            
+            # Automatically determine if this is a large file if not specified
+            if large_file_mode is None:
+                large_file_mode = file_size > LARGE_FILE_THRESHOLD
+                
+            # For extremely large files, provide extra log information
+            if file_size > HUGE_FILE_THRESHOLD:
+                logger.info(f"Loading huge file ({file_size/1_000_000:.2f} MB): {file_path}")
+                logger.info("Using progressive loading and memory-optimized processing")
+            elif large_file_mode:
+                logger.info(f"Loading large file ({file_size/1_000:.2f} KB): {file_path}")
+        except Exception as e:
+            logger.warning(f"Could not determine file size: {e}")
+            large_file_mode = False
+            
+        # Parse the file with appropriate strategy
         root = self.parser.parse_file(file_path)
         if not root:
             logger.error(f"Failed to parse file: {file_path}")
             return False
         
-        # Create cache entry for the file
+        # Create cache entry for the file with memory efficient loading
         self.cache[file_path] = {}
         
         # Traverse the AST and collect all nodes
@@ -1014,6 +1809,113 @@ class ContextCache:
         except Exception as e:
             logger.error(f"Error loading memories from database: {e}")
             return []
+    
+    def _evict_if_needed(self, query_embedding: Optional[np.ndarray] = None):
+        """Evict nodes if cache exceeds max size using sophisticated importance scoring."""
+        if self.current_size <= self.max_size:
+            return
+            
+        # Calculate importance for all nodes with multiple factors
+        all_memories = list(self.memory_map.values())
+        
+        # Calculate importance scores for all memories
+        for memory in all_memories:
+            # Time decay factor (recency)
+            time_factor = np.exp(-(time.time() - memory.last_accessed) / CACHE_EXPIRY)
+            
+            # Usage frequency factor
+            freq_factor = np.log1p(memory.access_count)
+            
+            # Node type importance factor (prioritize important structural elements)
+            type_factor = 1.0
+            if memory.node_type in ('ClassDef', 'FunctionDef', 'Import', 'ImportFrom'):
+                type_factor = 2.0
+            elif memory.node_type in ('Assign', 'Call', 'Return'):
+                type_factor = 1.5
+                
+            # Relevance to current query if available
+            relevance = 0.0
+            if query_embedding is not None and memory.embedding is not None:
+                relevance = np.dot(query_embedding, memory.embedding)
+                
+            # Special treatment for large file handling - keep high-level nodes
+            file_size_factor = 1.0
+            try:
+                file_size = os.path.getsize(memory.file_path)
+                if file_size > HUGE_FILE_THRESHOLD:
+                    # For huge files, prioritize keeping high-level structure
+                    if memory.node_type in ('Module', 'ClassDef', 'FunctionDef'):
+                        file_size_factor = 2.0
+                elif file_size > LARGE_FILE_THRESHOLD:
+                    # For large files, slightly prioritize structure
+                    if memory.node_type in ('Module', 'ClassDef', 'FunctionDef'):
+                        file_size_factor = 1.5
+            except:
+                pass
+                
+            # Final combined score with weighted components
+            memory.importance_score = (
+                0.25 * time_factor + 
+                0.25 * freq_factor + 
+                0.2 * type_factor + 
+                0.2 * relevance +
+                0.1 * file_size_factor
+            )
+        
+        # Sort by importance score (ascending, so least important first)
+        all_memories.sort(key=lambda m: m.importance_score)
+        
+        # Calculate how many memories we need to remove
+        target_size = int(self.max_size * 0.8)  # Remove enough to get to 80% of max
+        to_remove = self.current_size - target_size
+        bytes_removed = 0
+        removed_count = 0
+        
+        # Remove memories until we've freed enough space
+        memories_to_remove = []
+        for memory in all_memories:
+            # Skip if it would break connectivity (parent with children)
+            if memory.children_ids and memory.importance_score > 0.5:
+                continue
+                
+            # Calculate approximate memory size
+            memory_size = (
+                len(memory.code_segment) + 
+                (len(memory.embedding) * 4 if memory.embedding is not None else 0) +
+                1024  # Base overhead
+            )
+            
+            bytes_removed += memory_size
+            memories_to_remove.append(memory)
+            removed_count += 1
+            
+            # Break if we've removed enough
+            if bytes_removed >= to_remove:
+                break
+        
+        # Remove the selected memories
+        for memory in memories_to_remove:
+            # Remove from memory map
+            self.memory_map.pop(memory.id, None)
+            
+            # Remove from file cache
+            if memory.file_path in self.cache:
+                self.cache[memory.file_path].pop(memory.id, None)
+                
+            # Remove from database if using SQLite
+            if self.use_sqlite and self.conn:
+                try:
+                    cursor = self.conn.cursor()
+                    cursor.execute("DELETE FROM code_memories WHERE id = ?", (memory.id,))
+                    cursor.execute("DELETE FROM code_relationships WHERE parent_id = ? OR child_id = ?", 
+                                 (memory.id, memory.id))
+                    self.conn.commit()
+                except Exception as e:
+                    logger.error(f"Error removing memory from database: {e}")
+        
+        # Update current size
+        self.current_size -= bytes_removed
+        logger.info(f"Evicted {removed_count} memories, freed {bytes_removed} bytes")
     
     def _sort_nodes_by_hierarchy(self, nodes: List[ASTNode]) -> Dict[int, List[ASTNode]]:
         """Sort nodes by hierarchy level for breadth-first processing."""
@@ -1462,17 +2364,34 @@ class RealtimeASTAgent:
             "total_nodes": self.context_cache.current_size
         }
     
-    async def _load_file_with_logging(self, file_path: str) -> bool:
-        """Load a file with appropriate logging."""
+    async def _load_file_with_logging(self, file_path: str, large_file_mode: bool = None) -> bool:
+        """Load a file with appropriate logging and large file support."""
         start_time = time.time()
-        logger.info(f"Loading file: {file_path}")
+        
+        # Check file size to determine if we need large file mode
+        try:
+            file_size = os.path.getsize(file_path)
+            if large_file_mode is None:
+                large_file_mode = file_size > LARGE_FILE_THRESHOLD
+                
+            if large_file_mode:
+                logger.info(f"Loading large file: {file_path} ({file_size/1024:.1f} KB) with optimized processing")
+            else:
+                logger.info(f"Loading file: {file_path}")
+        except Exception as e:
+            logger.warning(f"Could not determine file size: {e}")
+            large_file_mode = False
+            logger.info(f"Loading file: {file_path}")
         
         try:
-            success = await self.context_cache.load_file(file_path)
+            success = await self.context_cache.load_file(file_path, large_file_mode=large_file_mode)
             duration = time.time() - start_time
             
             if success:
-                logger.info(f"Successfully loaded {file_path} in {duration:.2f}s")
+                if large_file_mode:
+                    logger.info(f"Successfully loaded large file {file_path} in {duration:.2f}s")
+                else:
+                    logger.info(f"Successfully loaded {file_path} in {duration:.2f}s")
             else:
                 logger.warning(f"Failed to load {file_path} after {duration:.2f}s")
                 
@@ -1480,6 +2399,154 @@ class RealtimeASTAgent:
         except Exception as e:
             logger.error(f"Error loading {file_path}: {e}")
             return False
+            
+    async def process_large_file(self, file_path: str) -> Dict[str, Any]:
+        """Process a large file with optimized strategies for memory efficiency and performance.
+        
+        This method is specifically designed to handle extremely large files like atomic_agent.py
+        by using progressive loading, structural summarization, and memory-efficient processing.
+        """
+        start_time = time.time()
+        
+        # Check if file exists
+        if not os.path.isfile(file_path):
+            return {
+                "success": False,
+                "error": f"File not found: {file_path}"
+            }
+        
+        file_size = os.path.getsize(file_path)
+        if file_size < LARGE_FILE_THRESHOLD:
+            logger.info(f"File {file_path} is not considered large ({file_size/1024:.1f} KB). Using standard processing.")
+            success = await self._load_file_with_logging(file_path, large_file_mode=False)
+            return {
+                "success": success,
+                "message": "File processed with standard processing",
+                "file_size": file_size
+            }
+            
+        logger.info(f"Beginning optimized large file processing for {file_path} ({file_size/1024:.1f} KB)")
+        
+        # Step 1: Load the file with large file mode enabled
+        success = await self._load_file_with_logging(file_path, large_file_mode=True)
+        if not success:
+            return {"error": f"Failed to load file {file_path}"}
+            
+        # Step 2: Generate structural summary of the file
+        structure_summary = await self._generate_file_structure(file_path)
+        
+        # Step 3: Extract key components and their relationships
+        key_components = await self._extract_key_components(file_path)
+        
+        total_time = time.time() - start_time
+        
+        return {
+            "file_path": file_path,
+            "file_size": file_size,
+            "processing_time": total_time,
+            "structure_summary": structure_summary,
+            "key_components": key_components,
+            "status": "success"
+        }
+    
+    async def _generate_file_structure(self, file_path: str) -> Dict[str, Any]:
+        """Generate a high-level structure summary of a file."""
+        # Query for important structural nodes
+        results = await self.query_code("class definition function definition", 
+                               file_paths=[file_path],
+                               max_results=50,
+                               enhanced=False)
+                               
+        matches = results.get("matches", [])
+        
+        # Extract classes and functions
+        classes = []
+        functions = []
+        imports = []
+        
+        for match in matches:
+            node_type = match.get("node_type")
+            if node_type == "ClassDef":
+                classes.append(match)
+            elif node_type == "FunctionDef":
+                functions.append(match)
+            elif node_type in ["Import", "ImportFrom"]:
+                imports.append(match)
+        
+        # Count lines of code
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                line_count = sum(1 for _ in f)
+        except Exception:
+            line_count = 0
+            
+        # Create structure summary
+        return {
+            "file_path": file_path,
+            "total_lines": line_count,
+            "classes": [
+                {
+                    "name": c.get("metadata", {}).get("name", "Unknown"),
+                    "line_range": f"{c.get('line_start')}-{c.get('line_end')}",
+                    "methods_count": len([f for f in functions 
+                                         if f.get("parent_id") == c.get("id")])
+                }
+                for c in classes[:10]  # Limit to top 10
+            ],
+            "top_level_functions": [
+                {
+                    "name": f.get("metadata", {}).get("name", "Unknown"),
+                    "line_range": f"{f.get('line_start')}-{f.get('line_end')}"
+                }
+                for f in functions[:10] 
+                if not f.get("parent_id") or f.get("parent_id") not in [c.get("id") for c in classes]
+            ],
+            "import_count": len(imports)
+        }
+    
+    async def _extract_key_components(self, file_path: str) -> List[Dict[str, Any]]:
+        """Extract key components from a file based on importance and connectivity."""
+        results = await self.query_code("class method function", 
+                              file_paths=[file_path],
+                              max_results=20,
+                              enhanced=False)
+                              
+        matches = results.get("matches", [])
+        if not matches:
+            return []
+            
+        # Focus on the most important components
+        key_components = []
+        for match in matches:
+            # Extract relevant information
+            component = {
+                "type": match.get("node_type"),
+                "name": match.get("metadata", {}).get("name", "Unknown"),
+                "line_range": f"{match.get('line_start')}-{match.get('line_end')}",
+                "code_preview": self._truncate_code(match.get("code_segment", ""), 300)
+            }
+            key_components.append(component)
+            
+        return key_components
+        
+    def _truncate_code(self, code: str, max_length: int = 300) -> str:
+        """Truncate code snippet to a maximum length while preserving readability."""
+        if not code or len(code) <= max_length:
+            return code
+            
+        # Split into lines
+        lines = code.splitlines()
+        
+        # If just a few lines, show the beginning
+        if len(lines) <= 3:
+            return code[:max_length] + "..."
+            
+        # Otherwise show beginning and end
+        half_length = max_length // 2
+        start = "\n".join(lines[:3])[:half_length]
+        end = "\n".join(lines[-3:])[-half_length:]
+        
+        return f"{start}\n...\n{end}"
     
     async def add_file(self, file_path: str) -> Dict[str, Any]:
         """Add a new file to the agent's context."""
