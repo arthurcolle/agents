@@ -97,6 +97,12 @@ class AgentRole(str, Enum):
     MULTIMODAL_INTEGRATOR = "multimodal_integrator"
     EVOLUTIONARY_SPECIALIST = "evolutionary_specialist"
 
+class CollectiveRole(BaseModel):
+    """Roles agents can take in the collective"""
+    name: str
+    description: str
+    capabilities: List[str] = Field(default_factory=list)
+    
 class TaskStatus(str, Enum):
     """Status of tasks in the collective"""
     PENDING = "pending"
@@ -236,7 +242,7 @@ class AgentCollective(AgentServer):
     and evolve together through consensus-based improvements.
     """
     def __init__(self, agent_id=None, agent_name=None,
-                host="127.0.0.1", port=8700, redis_url=None, model="gpt-4"):
+                host="127.0.0.1", port=8700, redis_url=None, model="gpt-4", pubsub_service=None):
         super().__init__(
             agent_id=agent_id or f"collective-{uuid.uuid4().hex[:8]}",
             agent_name=agent_name or "Agent Collective",
@@ -246,6 +252,10 @@ class AgentCollective(AgentServer):
             redis_url=redis_url,
             model=model
         )
+        # Store the pubsub service if provided
+        self.pubsub_service = pubsub_service
+        # If we weren't provided a pubsub service, we need to create one
+        self.need_own_pubsub = self.pubsub_service is None
         # Initialize with advanced capabilities
         self.capabilities = [
             "task_management",
@@ -267,8 +277,32 @@ class AgentCollective(AgentServer):
         self.proposals: Dict[str, ImprovementProposal] = {}  # proposal_id -> proposal
         self.knowledge_graph: Dict[str, Dict[str, Any]] = {}  # concept -> knowledge
         self.knowledge_domains: Dict[str, KnowledgeDomain] = {}  # domain name -> domain
+        
+    async def add_agent(self, agent):
+        """Add a new agent to the collective
+        
+        Args:
+            agent: A CollectiveAgent instance to add to the collective
+        """
+        if agent.agent_id in self.agents:
+            self.logger.warning(f"Agent {agent.agent_id} already exists in the collective")
+            return
+            
+        self.agents[agent.agent_id] = {
+            "id": agent.agent_id,
+            "role": agent.role.name if hasattr(agent, 'role') else "unassigned",
+            "capabilities": agent.capabilities,
+            "status": "active",
+            "created_at": time.time()
+        }
+        
+        self.logger.info(f"Added agent {agent.agent_id} to the collective with capabilities: {agent.capabilities}")
+        return agent.agent_id
+        
+    def __post_init__(self):
+        """Initialize additional collections after initialization"""
         self.ontology: Dict[str, Dict[str, Any]] = {}  # Entity relationships and hierarchies
-        self.agent_roles: Dict[str, AgentRole] = {}  # agent_id -> role
+        self.agent_roles: Dict[str, str] = {}  # agent_id -> role (the role is an AgentRole enum value)
         self.agent_skills: Dict[str, Dict[str, AgentSkill]] = {}  # agent_id -> {skill_name: skill}
         self.agent_metrics: Dict[str, AgentMetrics] = {}  # agent_id -> metrics
         self.agent_relationships: Dict[str, Dict[str, AgentRelationship]] = {}  # agent_id -> {other_agent_id: relationship}
@@ -479,12 +513,35 @@ class AgentCollective(AgentServer):
             background_tasks.add_task(self.diagnose_system)
             return {"status": "diagnosing", "message": "System diagnosis started"}
     
+    async def publish_event(self, channel: str, event_data: Dict[str, Any]):
+        """Publish an event to the specified channel"""
+        try:
+            # If we have a pubsub service, use it
+            if self.pubsub_service:
+                await self.pubsub_service.publish(channel, event_data)
+            else:
+                # Log the message if no pubsub service is available
+                logger.debug(f"Would publish to {channel}: {event_data}")
+            return True
+        except Exception as e:
+            logger.error(f"Error publishing event to {channel}: {e}")
+            return False
+        
     async def start(self):
         """Start the agent collective"""
         logger.info(f"Starting agent collective {self.agent_id}...")
         
         # Connect to Redis and setup base services
         await super().start()
+        
+        # Initialize pubsub service if needed
+        if self.need_own_pubsub and not self.pubsub_service:
+            try:
+                from pubsub_service import PubSubService
+                self.pubsub_service = PubSubService(redis_url=self.redis_url)
+                logger.info("Created internal PubSubService")
+            except ImportError:
+                logger.warning("Could not import PubSubService, events will be logged only")
         
         # Start periodic tasks
         self._discovery_task = asyncio.create_task(self._periodic_agent_discovery())
@@ -2490,6 +2547,20 @@ def run_agent_collective(agent_id=None, agent_name=None, host="127.0.0.1", port=
         await collective.start()
     
     asyncio.run(main())
+
+class CollectiveAgent(BaseModel):
+    """Representation of an agent in the collective"""
+    agent_id: str
+    name: str
+    description: str
+    capabilities: List[str] = Field(default_factory=list)
+    roles: List[CollectiveRole] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    status: str = "active"
+    last_active: Optional[float] = None
+    trust_score: float = 0.5
+    performance_rating: float = 0.5
+    specialization: List[str] = Field(default_factory=list)
 
 if __name__ == "__main__":
     import argparse
