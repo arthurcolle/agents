@@ -2712,18 +2712,23 @@ class CollectiveAgent(BaseModel):
     performance_rating: float = 0.5
     specialization: List[str] = Field(default_factory=list)
 
+# Expose FastAPI app for ASGI servers like uvicorn
+# Usage: uvicorn agent_collective:app --reload
+agent_collective_instance = AgentCollective()
+app = agent_collective_instance.app
+
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Agent Collective")
     parser.add_argument("--agent-id", help="Agent ID")
     parser.add_argument("--agent-name", default="Agent Collective", help="Agent name")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8700, help="Port to bind to")
     parser.add_argument("--model", default="gpt-4", help="Model to use")
-    
+
     args = parser.parse_args()
-    
+
     run_agent_collective(
         agent_id=args.agent_id,
         agent_name=args.agent_name,
