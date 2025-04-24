@@ -411,6 +411,83 @@ class AgentCollective(AgentServer):
     def setup_extended_api(self):
         """Add additional API routes specific to the agent collective"""
 
+        # --- ROOT UI ---
+        @self.app.get("/", include_in_schema=False)
+        async def root_ui():
+            # Simple HTML UI for the Agent Collective
+            return HTMLResponse(
+                """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Agent Collective UI</title>
+                    <style>
+                        body { font-family: system-ui, sans-serif; margin: 2em; background: #f8f9fa; }
+                        h1 { color: #2c3e50; }
+                        .section { margin-bottom: 2em; }
+                        .card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 1em 2em; margin-bottom: 1em; }
+                        .card h2 { margin-top: 0; }
+                        .stat { font-size: 1.2em; margin: 0.5em 0; }
+                        .link { color: #007bff; text-decoration: none; }
+                        .link:hover { text-decoration: underline; }
+                        .small { color: #888; font-size: 0.9em; }
+                    </style>
+                </head>
+                <body>
+                    <h1>🤖 Agent Collective</h1>
+                    <div class="section card">
+                        <h2>Status</h2>
+                        <div id="status">
+                            <span class="small">Loading...</span>
+                        </div>
+                    </div>
+                    <div class="section card">
+                        <h2>Quick Links</h2>
+                        <ul>
+                            <li><a class="link" href="/docs" target="_blank">OpenAPI Docs</a></li>
+                            <li><a class="link" href="/collective/agents" target="_blank">Agents</a></li>
+                            <li><a class="link" href="/collective/tasks" target="_blank">Tasks</a></li>
+                            <li><a class="link" href="/collective/proposals" target="_blank">Proposals</a></li>
+                            <li><a class="link" href="/collective/knowledge" target="_blank">Knowledge Graph</a></li>
+                            <li><a class="link" href="/collective/logs" target="_blank">Logs</a></li>
+                        </ul>
+                    </div>
+                    <div class="section card">
+                        <h2>Live Logs</h2>
+                        <pre id="log-stream" style="background:#222;color:#eee;padding:1em;height:200px;overflow:auto;border-radius:6px;"></pre>
+                    </div>
+                    <script>
+                        // Fetch status
+                        fetch('/collective/stats').then(r => r.json()).then(data => {
+                            let html = '';
+                            html += `<div class="stat"><b>Agents:</b> ${data.agent_count}</div>`;
+                            html += `<div class="stat"><b>Tasks:</b> ${data.task_count}</div>`;
+                            html += `<div class="stat"><b>Proposals:</b> ${data.proposal_count}</div>`;
+                            html += `<div class="stat"><b>Knowledge:</b> ${data.knowledge_count}</div>`;
+                            document.getElementById('status').innerHTML = html;
+                        }).catch(() => {
+                            document.getElementById('status').innerHTML = '<span class="small">Status unavailable</span>';
+                        });
+
+                        // Live log streaming
+                        const logEl = document.getElementById('log-stream');
+                        if (!!window.EventSource) {
+                            const source = new EventSource('/collective/logs/stream');
+                            source.onmessage = function(e) {
+                                logEl.textContent += e.data + '\\n';
+                                logEl.scrollTop = logEl.scrollHeight;
+                            };
+                        } else {
+                            logEl.textContent = "Live log streaming not supported in this browser.";
+                        }
+                    </script>
+                </body>
+                </html>
+                """,
+                media_type="text/html"
+            )
+
         # --- LOGGING ENDPOINTS ---
         @self.app.get("/collective/logs")
         async def get_logs(lines: int = 100):
