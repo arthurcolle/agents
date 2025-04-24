@@ -20,9 +20,13 @@ from enum import Enum
 import aiohttp
 import redis.asyncio as redis
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import logging
+import sys
+import queue
+import threading
 
 try:
     from agent_process_manager import AgentServer
@@ -406,148 +410,237 @@ class AgentCollective(AgentServer):
     
     def setup_extended_api(self):
         """Add additional API routes specific to the agent collective"""
+
+        # --- LOGGING ENDPOINTS ---
+        @self.app.get("/collective/logs")
+        async def get_logs(lines: int = 100):
+            """Stream the last N lines of the log file (if file handler exists)"""
+            log_file = None
+            for handler in logger.handlers:
+                if hasattr(handler, "baseFilename"):
+                    log_file = handler.baseFilename
+                    break
+            if not log_file:
+                return JSONResponse({"error": "No log file configured"}, status_code=404)
+            try:
+                with open(log_file, "r") as f:
+                    all_lines = f.readlines()
+                return {"lines": all_lines[-lines:]}
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.get("/collective/logs/stream")
+        async def stream_logs():
+            """Stream logs in real time using Server-Sent Events (SSE)"""
+            def log_streamer():
+                log_file = None
+                for handler in logger.handlers:
+                    if hasattr(handler, "baseFilename"):
+                        log_file = handler.baseFilename
+                        break
+                if not log_file:
+                    yield "event: error\ndata: No log file configured\n\n"
+                    return
+                with open(log_file, "r") as f:
+                    f.seek(0, 2)
+                    while True:
+                        line = f.readline()
+                        if line:
+                            yield f"data: {line.rstrip()}\n\n"
+                        else:
+                            time.sleep(0.5)
+            return StreamingResponse(log_streamer(), media_type="text/event-stream")
+
+        # --- STREAMING TASK/PROPOSAL/KNOWLEDGE UPDATES ---
+        @self.app.get("/collective/stream/updates")
+        async def stream_updates():
+            """Stream updates for tasks, proposals, and knowledge in real time"""
+            q = queue.Queue()
+
+            def listener(record):
+                q.put(record)
+
+            class QueueHandler(logging.Handler):
+                def emit(self, record):
+                    listener(self.format(record))
+
+            handler = QueueHandler()
+            handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+            logger.addHandler(handler)
+
+            def event_stream():
+                while True:
+                    try:
+                        record = q.get(timeout=10)
+                        yield f"data: {record}\n\n"
+                    except queue.Empty:
+                        yield ":\n\n"
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        # --- EXISTING ENDPOINTS ---
         @self.app.get("/collective/agents")
         async def get_agents():
+            logger.info("GET /collective/agents called")
             return {"agents": self.agents}
-        
+
         @self.app.get("/collective/agents/{agent_id}")
         async def get_agent(agent_id: str):
             if agent_id not in self.agents:
+                logger.warning(f"Agent {agent_id} not found")
                 raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
             return self.agents[agent_id]
-        
+
         @self.app.post("/collective/discover")
         async def discover_agents(background_tasks: BackgroundTasks):
+            logger.info("POST /collective/discover called")
             background_tasks.add_task(self.discover_agents)
             return {"status": "discovering", "message": "Agent discovery started"}
-        
+
         @self.app.get("/collective/tasks")
         async def get_tasks(status: Optional[TaskStatus] = None):
+            logger.info("GET /collective/tasks called")
             if status:
                 filtered_tasks = {k: v for k, v in self.tasks.items() if v.status == status}
                 return {"tasks": filtered_tasks}
             return {"tasks": self.tasks}
-        
+
         @self.app.get("/collective/tasks/{task_id}")
         async def get_task(task_id: str):
             if task_id not in self.tasks:
+                logger.warning(f"Task {task_id} not found")
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
             return self.tasks[task_id]
-        
+
         @self.app.post("/collective/tasks")
         async def create_task(task: Task):
+            logger.info(f"POST /collective/tasks called for {task.title}")
             self.tasks[task.task_id] = task
-            
+
             # If auto assignment is enabled, try to assign the task
             if self.auto_assignment:
                 background_tasks = BackgroundTasks()
                 background_tasks.add_task(self.assign_task, task.task_id)
-            
+
             return {"status": "created", "task_id": task.task_id}
-        
+
         @self.app.put("/collective/tasks/{task_id}/assign")
         async def assign_task(task_id: str, agent_id: str):
             if task_id not in self.tasks:
+                logger.warning(f"Task {task_id} not found")
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            
+
             if agent_id not in self.agents:
+                logger.warning(f"Agent {agent_id} not found")
                 raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-            
+
             result = await self.assign_task(task_id, agent_id)
             return result
-        
+
         @self.app.get("/collective/proposals")
         async def get_proposals(status: Optional[str] = None):
+            logger.info("GET /collective/proposals called")
             if status:
                 filtered_proposals = {k: v for k, v in self.proposals.items() if v.status == status}
                 return {"proposals": filtered_proposals}
             return {"proposals": self.proposals}
-        
+
         @self.app.get("/collective/proposals/{proposal_id}")
         async def get_proposal(proposal_id: str):
             if proposal_id not in self.proposals:
+                logger.warning(f"Proposal {proposal_id} not found")
                 raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
             return self.proposals[proposal_id]
-        
+
         @self.app.post("/collective/proposals")
         async def create_proposal(proposal: ImprovementProposal):
+            logger.info(f"POST /collective/proposals called for {proposal.title}")
             self.proposals[proposal.proposal_id] = proposal
-            
+
             # Notify all agents about the new proposal
             background_tasks = BackgroundTasks()
             background_tasks.add_task(self.notify_agents_about_proposal, proposal.proposal_id)
-            
+
             return {"status": "created", "proposal_id": proposal.proposal_id}
-        
+
         @self.app.post("/collective/proposals/{proposal_id}/vote")
         async def vote_on_proposal(proposal_id: str, agent_id: str, approve: bool):
             if proposal_id not in self.proposals:
+                logger.warning(f"Proposal {proposal_id} not found")
                 raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
-            
+
             result = await self.vote_on_proposal(proposal_id, agent_id, approve)
             return result
-        
+
         @self.app.post("/collective/synthesize")
         async def synthesize_capability(
-            capability_name: str, 
+            capability_name: str,
             source_capabilities: List[str],
             background_tasks: BackgroundTasks
         ):
+            logger.info(f"POST /collective/synthesize called for {capability_name}")
             background_tasks.add_task(
                 self.synthesize_capability,
                 capability_name,
                 source_capabilities
             )
-            
+
             return {
                 "status": "synthesizing",
                 "capability": capability_name,
                 "sources": source_capabilities
             }
-        
+
         @self.app.get("/collective/knowledge")
         async def get_knowledge(concept: Optional[str] = None):
+            logger.info("GET /collective/knowledge called")
             if concept:
                 if concept in self.knowledge_graph:
                     return {concept: self.knowledge_graph[concept]}
+                logger.warning(f"Concept {concept} not found")
                 raise HTTPException(status_code=404, detail=f"Concept {concept} not found")
             return {"knowledge_graph": self.knowledge_graph}
-        
+
         @self.app.post("/collective/knowledge")
         async def add_knowledge(concept: str, knowledge: Dict[str, Any]):
+            logger.info(f"POST /collective/knowledge called for {concept}")
             result = await self.add_to_knowledge_graph(concept, knowledge)
             return result
-        
+
         @self.app.get("/collective/roles")
         async def get_agent_roles():
+            logger.info("GET /collective/roles called")
             return {"agent_roles": self.agent_roles}
-        
+
         @self.app.put("/collective/roles/{agent_id}")
         async def assign_role(agent_id: str, role: AgentRole):
             if agent_id not in self.agents:
+                logger.warning(f"Agent {agent_id} not found")
                 raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-            
+
             self.agent_roles[agent_id] = role
             return {"agent_id": agent_id, "role": role}
-        
+
         @self.app.get("/collective/stats")
         async def get_collective_stats():
+            logger.info("GET /collective/stats called")
             return {
                 "agent_count": len(self.agents),
                 "task_count": len(self.tasks),
                 "proposal_count": len(self.proposals),
                 "knowledge_count": len(self.knowledge_graph),
-                "task_status": {status.value: len([t for t in self.tasks.values() if t.status == status]) 
+                "task_status": {status.value: len([t for t in self.tasks.values() if t.status == status])
                                for status in TaskStatus},
                 "agent_roles": {role.value: len([r for r in self.agent_roles.values() if r == role])
                                for role in AgentRole}
             }
-        
+
         @self.app.post("/collective/reset")
         async def reset_collective(confirm: bool = False):
             if not confirm:
+                logger.warning("Reset collective called without confirmation")
                 raise HTTPException(status_code=400, detail="Confirmation required to reset collective")
-            
+
             # Reset all collective state
             self.agents = {}
             self.tasks = {}
@@ -557,18 +650,19 @@ class AgentCollective(AgentServer):
             self.agent_scores = {}
             self.task_history = []
             self.collective_memory = {}
-            
+
             # Rediscover agents
             background_tasks = BackgroundTasks()
             background_tasks.add_task(self.discover_agents)
-            
+
+            logger.info("Collective has been reset")
             return {"status": "reset", "message": "Collective has been reset"}
-        
+
         @self.app.post("/collective/diagnose")
         async def diagnose_system(background_tasks: BackgroundTasks):
+            logger.info("POST /collective/diagnose called")
             background_tasks.add_task(self.diagnose_system)
             return {"status": "diagnosing", "message": "System diagnosis started"}
-    
     async def publish_event(self, channel: str, event_data: Dict[str, Any]):
         """Publish an event to the specified channel"""
         try:
