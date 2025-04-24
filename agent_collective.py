@@ -241,8 +241,17 @@ class AgentCollective(AgentServer):
     Orchestrates a collective of agents that collaborate, share knowledge,
     and evolve together through consensus-based improvements.
     """
-    def __init__(self, agent_id=None, agent_name=None,
-                host="127.0.0.1", port=8700, redis_url=None, model="gpt-4", pubsub_service=None):
+    def __init__(
+        self,
+        agent_id=None,
+        agent_name=None,
+        host="127.0.0.1",
+        port=8700,
+        redis_url=None,
+        model="gpt-4",
+        pubsub_service=None
+    ):
+        # Initialize parent
         super().__init__(
             agent_id=agent_id or f"collective-{uuid.uuid4().hex[:8]}",
             agent_name=agent_name or "Agent Collective",
@@ -252,11 +261,10 @@ class AgentCollective(AgentServer):
             redis_url=redis_url,
             model=model
         )
-        # Store the pubsub service if provided
+
+        # PubSub and capabilities
         self.pubsub_service = pubsub_service
-        # If we weren't provided a pubsub service, we need to create one
         self.need_own_pubsub = self.pubsub_service is None
-        # Initialize with advanced capabilities
         self.capabilities = [
             "task_management",
             "agent_discovery",
@@ -270,13 +278,61 @@ class AgentCollective(AgentServer):
             "self_reflection",
             "system_diagnosis"
         ]
-        
-        # Collective state
+
+        # Core collective state
         self.agents: Dict[str, Dict[str, Any]] = {}  # agent_id -> agent info
         self.tasks: Dict[str, Task] = {}  # task_id -> task
         self.proposals: Dict[str, ImprovementProposal] = {}  # proposal_id -> proposal
         self.knowledge_graph: Dict[str, Dict[str, Any]] = {}  # concept -> knowledge
         self.knowledge_domains: Dict[str, KnowledgeDomain] = {}  # domain name -> domain
+
+        # Ontology and agent meta
+        self.ontology: Dict[str, Dict[str, Any]] = {}  # Entity relationships and hierarchies
+        self.agent_roles: Dict[str, str] = {}  # agent_id -> role (the role is an AgentRole enum value)
+        self.agent_skills: Dict[str, Dict[str, AgentSkill]] = {}  # agent_id -> {skill_name: skill}
+        self.agent_metrics: Dict[str, AgentMetrics] = {}  # agent_id -> metrics
+        self.agent_relationships: Dict[str, Dict[str, AgentRelationship]] = {}  # agent_id -> {other_agent_id: relationship}
+        self.development_paths: Dict[str, DevelopmentPath] = {}  # path_id -> development path
+        self.task_history: List[Dict[str, Any]] = []
+        self.collective_memory: Dict[str, Any] = {}
+        self.innovation_registry: Dict[str, Dict[str, Any]] = {}  # innovation_id -> innovation
+        self.emergent_behaviors: Dict[str, Dict[str, Any]] = {}  # behavior_id -> behavior details
+        self.system_health: Dict[str, Dict[str, Any]] = {}  # subsystem -> health metrics
+
+        # Settings
+        self.consensus_method: ConsensusMethod = ConsensusMethod.WEIGHTED_VOTE
+        self.consensus_threshold: float = 0.66  # Percentage required for approval
+        self.auto_assignment: bool = True
+        self.learning_rate: float = 0.7
+        self.discovery_interval: int = 60  # seconds between agent discovery
+        self.skill_transfer_efficiency: float = 0.85  # Effectiveness of teaching between agents
+        self.innovation_threshold: float = 0.6  # Minimum score for accepting innovations
+        self.trust_decay_rate: float = 0.05  # Rate at which trust decays without interaction
+        self.exploration_rate: float = 0.2  # Chance of trying new approaches vs. proven ones
+        self.specialization_encouragement: float = 0.75  # How much to encourage agent specialization
+        self.redundancy_factor: float = 0.3  # Desired capability redundancy across agents
+        self.skill_decay_rate: float = 0.01  # Rate at which unused skills decay
+        self.complexity_tolerance: float = 0.8  # Willingness to accept complex solutions
+        self.feedback_incorporation_rate: float = 0.9  # How much feedback is incorporated
+        self.cross_pollination_rate: float = 0.5  # Rate of sharing innovations between specialties
+
+        # Periodic/background tasks
+        self._discovery_task = None
+        self._task_processor_task = None
+        self._proposal_processor_task = None
+        self._relationship_maintenance_task = None
+        self._skill_decay_task = None
+        self._innovation_detection_task = None
+        self._knowledge_integration_task = None
+        self._emergent_behavior_detection_task = None
+        self._performance_optimization_task = None
+        self._collective_learning_task = None
+        self._social_dynamics_task = None
+
+        # Extend the API with collective-specific routes
+        self.setup_extended_api()
+
+        logger.info(f"Agent Collective {self.agent_id} initialized with {len(self.capabilities)} capabilities")
         
     async def add_agent(self, agent):
         """Add a new agent to the collective
