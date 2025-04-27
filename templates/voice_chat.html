@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen-Omni Voice Chat</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            margin: 0;
+            padding: 0 1rem;
+            max-width: 900px;
+            margin-inline: auto;
+        }
+        h1 { text-align: center; }
+        #chat {
+            border: 1px solid #ddd;
+            border-radius: .5rem;
+            height: 65vh;
+            overflow-y: auto;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            background: #fafafa;
+        }
+        .msg { margin-bottom: .75rem; line-height: 1.4; }
+        .user   { text-align: right; }
+        .assistant { text-align: left; }
+        .bubble {
+            display: inline-block;
+            padding: .5rem .75rem;
+            border-radius: .75rem;
+            max-width: 70%;
+        }
+        .user .bubble { background:#d1edff; }
+        .assistant .bubble { background:#eaeaea; }
+
+        #controls { display: flex; gap: .5rem; }
+        #text-input { flex: 1; padding:.5rem; font-size:1rem; }
+        button { padding:.5rem 1rem; font-size:1rem; cursor:pointer; }
+        .recording { background:#ff5252; color:#fff; }
+    </style>
+</head>
+<body>
+<h1>Qwen-Omni Voice Chat</h1>
+
+<div id="chat"></div>
+
+<div id="controls">
+    <input id="text-input" placeholder="Type a message…"/>
+    <button id="send-btn">Send</button>
+    <button id="mic-btn">🎤</button>
+</div>
+
+<script>
+const chatEl = document.getElementById('chat');
+const textInput = document.getElementById('text-input');
+const sendBtn = document.getElementById('send-btn');
+const micBtn  = document.getElementById('mic-btn');
+
+let conversation = [
+  {role: 'system', content:[{type:'text', text:'You are Qwen, a helpful AI assistant.'}]}
+];
+
+function addMessage(role, text) {
+  const wrap = document.createElement('div');
+  wrap.className = `msg ${role}`;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  chatEl.appendChild(wrap);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function sendText(text) {
+  addMessage('user', text);
+  conversation.push({role:'user', content:[{type:'text', text}]});
+
+  const resp = await fetch('/api/chat', {
+    method:'POST',
+    body: new URLSearchParams({
+      user_text: text,
+      conversation_json: JSON.stringify(conversation)
+    })
+  });
+  const data = await resp.json();
+  if (data.error) { alert(data.error); return; }
+  handleAssistant(data);
+}
+
+function handleAssistant(data) {
+  addMessage('assistant', data.reply_text);
+  conversation = data.conversation; // updated history from server
+
+  if (data.reply_audio_b64) {
+    const audio = new Audio('data:audio/wav;base64,' + data.reply_audio_b64);
+    audio.play();
+  }
+}
+
+sendBtn.onclick = () => {
+  const text = textInput.value.trim();
+  if (text) { textInput.value=''; sendText(text); }
+};
+
+textInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendBtn.click();
+});
+
+// ---- Audio recording with MediaRecorder ----
+let mediaRecorder, chunks = [];
+
+micBtn.onclick = async () => {
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.start();
+    chunks = [];
+    micBtn.classList.add('recording');
+    micBtn.textContent = '⏹';
+    mediaRecorder.ondataavailable = e => chunks.push(e.data);
+    mediaRecorder.onstop = () => {
+      micBtn.classList.remove('recording');
+      micBtn.textContent = '🎤';
+      const blob = new Blob(chunks, {type:'audio/webm'});
+      sendAudio(blob);
+    };
+  } else if (mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+};
+
+async function sendAudio(blob) {
+  addMessage('user', '[voice message]');
+  conversation.push({role:'user', content:[{type:'audio', audio:'(uploaded)'}]}); // placeholder for local state
+
+  const form = new FormData();
+  form.append('audio', blob, 'audio.webm');
+  form.append('conversation_json', JSON.stringify(conversation));
+
+  const resp = await fetch('/api/chat', {method:'POST', body: form});
+  const data = await resp.json();
+  if (data.error) { alert(data.error); return; }
+  handleAssistant(data);
+}
+</script>
+</body>
+</html>
