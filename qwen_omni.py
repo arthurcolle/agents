@@ -36,8 +36,8 @@ APP_NAME = "qwen-omni-runner"
 MODEL_NAME = "Qwen/Qwen2.5-Omni-7B"
 GPU_TYPE = "A100-40GB"                        # needs ~40 GB for full-featured Omni
 CACHE_DIR = modal.Volume.from_name("qwen-omni-cache", create_if_missing=True)  # persisted volume between runs
-# Use PyTorch version included in the NVIDIA base image (nvcr.io/nvidia/pytorch:24.03-py3)
-# PYTORCH_VERSION = "2.2.2"
+# Need PyTorch 2.6+ for security fix (CVE-2025-32434)
+PYTORCH_VERSION = "2.6.0"
 TRANSFORMERS_COMMIT = "main"                  # build with Omni patches
 FLASH_ATTN_VERSION = "2.4.2"  # ensure compatibility with transformer-engine in base image
 
@@ -46,12 +46,19 @@ app = modal.App(APP_NAME)
 # ---------------------------------------------------------------------
 # IMAGE DEFINITION
 # ---------------------------------------------------------------------
-# Use NVIDIA's official PyTorch image as a solid CUDA 12 runtime base
+# Use NVIDIA's CUDA image with custom PyTorch installation to meet security requirements
 image = (
-    modal.Image.from_registry("nvcr.io/nvidia/pytorch:24.03-py3")
+    modal.Image.from_registry("nvidia/cuda:12.2.0-devel-ubuntu22.04")
     .env({"PYTHONUNBUFFERED": "1"})
-    .apt_install("ffmpeg")                     # required for audio/video handling
+    .apt_install(
+        "ffmpeg",                     # required for audio/video handling
+        "python3-pip",
+        "python3-dev",
+        "build-essential",
+    )
     .pip_install(
+        # Install PyTorch 2.6+ to address security vulnerability CVE-2025-32434
+        f"torch>={PYTORCH_VERSION}",
         # Transformers from GitHub HEAD – includes the omni model class
         f"git+https://github.com/huggingface/transformers@{TRANSFORMERS_COMMIT}",
         "accelerate",
@@ -75,11 +82,18 @@ image = (
 def download_weights():
     """Downloads model & processor into persistent volume between runs."""
     from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
+    import torch
 
     os.makedirs("/cache", exist_ok=True)
     print("🔻  Downloading model and processor…")
+    print(f"Using PyTorch version: {torch.__version__}")
+    
+    # Use safetensors format when available to avoid torch.load security issues
     Qwen2_5OmniForConditionalGeneration.from_pretrained(
-        MODEL_NAME, cache_dir="/cache", torch_dtype="auto"
+        MODEL_NAME, 
+        cache_dir="/cache", 
+        torch_dtype="auto",
+        use_safetensors=True
     )
     Qwen2_5OmniProcessor.from_pretrained(MODEL_NAME, cache_dir="/cache")
     CACHE_DIR.commit()  # Ensure changes are persisted
@@ -132,6 +146,8 @@ def generate(
     # Reload the volume to ensure we have the latest model weights
     CACHE_DIR.reload()
     
+    print(f"Using PyTorch version: {torch.__version__}")
+    
     try:
         model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
             MODEL_NAME,
@@ -139,6 +155,7 @@ def generate(
             device_map="auto",
             attn_implementation="flash_attention_2",
             cache_dir="/cache",
+            use_safetensors=True             # Use safetensors format when available
         )
 
         processor = Qwen2_5OmniProcessor.from_pretrained(MODEL_NAME, cache_dir="/cache")
@@ -150,6 +167,7 @@ def generate(
             torch_dtype=torch.bfloat16,
             device_map="auto",
             attn_implementation="flash_attention_2",
+            use_safetensors=True             # Use safetensors format when available
         )
         processor = Qwen2_5OmniProcessor.from_pretrained(MODEL_NAME)
 
