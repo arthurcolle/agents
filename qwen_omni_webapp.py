@@ -57,16 +57,24 @@ image = (
     .apt_install("ffmpeg")
 )
 
-# Create a volume to store templates and static files
-template_volume = modal.Volume.from_local_dir(
-    Path(__file__).parent / "templates", 
-    remote_dir="/app/templates"
-)
-static_volume = modal.Volume.from_local_dir(
-    Path(__file__).parent / "static", 
-    remote_dir="/app/static",
-    create_if_missing=True
-)
+# Create volumes for templates and static files
+template_volume = modal.Volume.from_name("qwen-omni-templates", create_if_missing=True)
+static_volume = modal.Volume.from_name("qwen-omni-static", create_if_missing=True)
+
+# Upload local template files to the volume
+with template_volume.batch_upload() as batch:
+    templates_dir = Path(__file__).parent / "templates"
+    if templates_dir.exists():
+        batch.put_directory(str(templates_dir), "/")
+
+# Create static directory if it doesn't exist
+static_dir = Path(__file__).parent / "static"
+if not static_dir.exists():
+    static_dir.mkdir(exist_ok=True)
+
+# Upload static files to the volume
+with static_volume.batch_upload() as batch:
+    batch.put_directory(str(static_dir), "/")
 
 # Reference the already-defined GPU runner so we can call `.generate.remote`.
 qwen_app = modal.App("qwen-omni-runner")
