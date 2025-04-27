@@ -56,16 +56,18 @@ image = (
     })
     # Install ffmpeg for audio/video, git for GitHub installs, and CUDA toolkit for nvcc
     .apt_install("ffmpeg", "git", "nvidia-cuda-toolkit")
+    # Install PyTorch first since flash-attn needs it during setup
     .pip_install(
-        # Install PyTorch first since flash-attn needs it during setup
-        f"torch>={PYTORCH_VERSION}",
+        f"torch=={PYTORCH_VERSION}",
         "torchvision",
         "torchaudio",
     )
     # Now we can install flash-attention in a separate step after PyTorch is installed
     .pip_install(
         f"flash-attn=={FLASH_ATTN_VERSION}",
-        # Transformers from GitHub HEAD – includes the omni model class
+    )
+    # Install transformers and other dependencies
+    .pip_install(
         f"git+https://github.com/huggingface/transformers@{TRANSFORMERS_COMMIT}",
         "accelerate",
         # multimodal helper utils (with decord for fast video IO)
