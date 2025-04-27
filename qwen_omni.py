@@ -53,11 +53,12 @@ image = (
     .apt_install("ffmpeg", "git")  # ffmpeg for audio/video, git for GitHub installs
     .pip_install(
         # Install PyTorch first since flash-attn needs it during setup
-        "torch",
         f"torch>={PYTORCH_VERSION}",
         "torchvision",
         "torchaudio",
-        # Now we can install flash-attention
+    )
+    # Now we can install flash-attention in a separate step after PyTorch is installed
+    .pip_install(
         f"flash-attn=={FLASH_ATTN_VERSION}",
         # Transformers from GitHub HEAD – includes the omni model class
         f"git+https://github.com/huggingface/transformers@{TRANSFORMERS_COMMIT}",
