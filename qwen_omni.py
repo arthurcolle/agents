@@ -46,7 +46,7 @@ app = modal.App(APP_NAME)
 # ---------------------------------------------------------------------
 # IMAGE DEFINITION
 # ---------------------------------------------------------------------
-# Use Modal's built-in CUDA image with PyTorch for better compatibility
+# Use Modal's built-in image with PyTorch CUDA support
 image = (
     modal.Image.debian_slim(python_version="3.10")
     .env({"PYTHONUNBUFFERED": "1"})
@@ -66,7 +66,6 @@ image = (
         # flash-attention for big-speedups
         f"flash-attn=={FLASH_ATTN_VERSION}",
     )
-    .cuda()  # Add CUDA support to the image
 )
 
 # ---------------------------------------------------------------------
