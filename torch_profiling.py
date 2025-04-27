@@ -58,7 +58,7 @@ app = modal.App("example-torch-profiling")  # create an App
 
 image = modal.Image.debian_slim(  # define dependencies
     python_version="3.11"
-).pip_install("torch==2.5.1", "numpy==2.1.3")
+).pip_install("wheel", "torch==2.5.1", "numpy==2.1.3")
 
 with image.imports():  # set up common imports
     import torch
@@ -256,7 +256,7 @@ def main(
 
 
 tb_image = modal.Image.debian_slim(python_version="3.11").pip_install(
-    "tensorboard==2.18.0", "torch_tb_profiler==0.4.3"
+    "wheel", "tensorboard==2.18.0", "torch_tb_profiler==0.4.3"
 )
 
 # Because TensorBoard is a WSGI app, we can [host it on Modal](https://modal.com/docs/guide/webhooks)

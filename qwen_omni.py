@@ -60,8 +60,9 @@ image = (
     })
     # Install ffmpeg for audio/video and git for GitHub installs
     .apt_install("ffmpeg", "git")
-    # Install PyTorch first
+    # Install wheel and PyTorch
     .pip_install(
+        "wheel",
         f"torch=={PYTORCH_VERSION}",
         "torchvision",
         "torchaudio",
