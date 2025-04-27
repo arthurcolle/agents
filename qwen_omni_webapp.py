@@ -204,13 +204,23 @@ def chat_endpoint(
     conversation.append({"role": "user", "content": content})
 
     try:
+        # Add use_audio_in_video parameter to match the API requirements
         result = qwen_app.generate.remote(
             conversation,
             speaker=speaker,
             return_audio=True,
+            use_audio_in_video=True,
         )
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Model invocation failed: {e}"})
+        import traceback
+        error_details = traceback.format_exc()
+        return JSONResponse(
+            status_code=500, 
+            content={
+                "error": f"Model invocation failed: {e}",
+                "details": error_details
+            }
+        )
 
     # The GPU app already returns base64 encoded WAV so we can forward as-is.
     assistant_message = {
