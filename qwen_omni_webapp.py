@@ -57,6 +57,17 @@ image = (
     .apt_install("ffmpeg")
 )
 
+# Create a volume to store templates and static files
+template_volume = modal.Volume.from_local_dir(
+    Path(__file__).parent / "templates", 
+    remote_dir="/app/templates"
+)
+static_volume = modal.Volume.from_local_dir(
+    Path(__file__).parent / "static", 
+    remote_dir="/app/static",
+    create_if_missing=True
+)
+
 # Reference the already-defined GPU runner so we can call `.generate.remote`.
 qwen_app = modal.App("qwen-omni-runner")
 
@@ -72,17 +83,6 @@ app = modal.App("qwen-omni-web", image=image, volumes={
 # ---------------------------------------------------------------------------
 
 web_app = FastAPI(title="Qwen-Omni Voice Chat")
-
-# Create a volume to store templates and static files
-template_volume = modal.Volume.from_local_dir(
-    Path(__file__).parent / "templates", 
-    remote_dir="/app/templates"
-)
-static_volume = modal.Volume.from_local_dir(
-    Path(__file__).parent / "static", 
-    remote_dir="/app/static",
-    create_if_missing=True
-)
 
 # Set the templates directory to the mounted volume path
 TEMPLATES_DIR = Path("/app/templates")
