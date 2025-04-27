@@ -52,9 +52,15 @@ image = (
     .env({"PYTHONUNBUFFERED": "1"})
     .apt_install(
         "ffmpeg",                     # required for audio/video handling
+        "python3",
         "python3-pip",
         "python3-dev",
         "build-essential",
+        "python-is-python3",          # make python command work
+    )
+    .run_commands(
+        # Ensure pip is properly set up
+        "python -m pip install --upgrade pip"
     )
     .pip_install(
         # Install PyTorch 2.6+ to address security vulnerability CVE-2025-32434
