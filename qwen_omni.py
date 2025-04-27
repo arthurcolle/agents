@@ -50,7 +50,7 @@ app = modal.App(APP_NAME)
 image = (
     modal.Image.debian_slim(python_version="3.10")
     .env({"PYTHONUNBUFFERED": "1"})
-    .apt_install("ffmpeg")  # required for audio/video handling
+    .apt_install("ffmpeg", "git")  # ffmpeg for audio/video, git for GitHub installs
     .pip_install(
         # Install PyTorch 2.6+ to address security vulnerability CVE-2025-32434
         f"torch>={PYTORCH_VERSION}",
