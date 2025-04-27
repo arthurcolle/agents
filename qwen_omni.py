@@ -49,8 +49,13 @@ app = modal.App(APP_NAME)
 # Use Modal's built-in image with PyTorch CUDA support
 image = (
     modal.Image.debian_slim(python_version="3.10")
-    .env({"PYTHONUNBUFFERED": "1"})
-    .apt_install("ffmpeg", "git")  # ffmpeg for audio/video, git for GitHub installs
+    # Ensure unbuffered output and point CUDA_HOME to nvcc location
+    .env({
+        "PYTHONUNBUFFERED": "1",
+        "CUDA_HOME": "/usr"
+    })
+    # Install ffmpeg for audio/video, git for GitHub installs, and CUDA toolkit for nvcc
+    .apt_install("ffmpeg", "git", "nvidia-cuda-toolkit")
     .pip_install(
         # Install PyTorch first since flash-attn needs it during setup
         f"torch>={PYTORCH_VERSION}",
