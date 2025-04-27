@@ -46,6 +46,9 @@ app = modal.App(APP_NAME)
 # ---------------------------------------------------------------------
 # IMAGE DEFINITION
 # ---------------------------------------------------------------------
+# Base image with torch
+torch_image = modal.Image.debian_slim().pip_install("torch")
+
 # Use Modal's built-in image with PyTorch CUDA support
 image = (
     modal.Image.debian_slim(python_version="3.10")
@@ -95,6 +98,16 @@ def download_weights():
     CACHE_DIR.commit()  # Ensure changes are persisted
     print("✅  Pre-download complete")
 
+
+# ---------------------------------------------------------------------
+# TORCH TEST FUNCTION
+# ---------------------------------------------------------------------
+@app.function(gpu="any", image=torch_image)
+def run_torch():
+    import torch
+    has_cuda = torch.cuda.is_available()
+    print(f"It is {has_cuda} that torch can access CUDA")
+    return has_cuda
 
 # ---------------------------------------------------------------------
 # RUNTIME FUNCTION
