@@ -46,25 +46,16 @@ app = modal.App(APP_NAME)
 # ---------------------------------------------------------------------
 # IMAGE DEFINITION
 # ---------------------------------------------------------------------
-# Use NVIDIA's CUDA image with custom PyTorch installation to meet security requirements
+# Use Modal's built-in CUDA image with PyTorch for better compatibility
 image = (
-    modal.Image.from_registry("nvidia/cuda:12.2.0-devel-ubuntu22.04")
+    modal.Image.debian_slim(python_version="3.10")
     .env({"PYTHONUNBUFFERED": "1"})
-    .apt_install(
-        "ffmpeg",                     # required for audio/video handling
-        "python3",
-        "python3-pip",
-        "python3-dev",
-        "build-essential",
-        "python-is-python3",          # make python command work
-    )
-    .run_commands(
-        # Ensure pip is properly set up
-        "python -m pip install --upgrade pip"
-    )
+    .apt_install("ffmpeg")  # required for audio/video handling
     .pip_install(
         # Install PyTorch 2.6+ to address security vulnerability CVE-2025-32434
         f"torch>={PYTORCH_VERSION}",
+        "torchvision",
+        "torchaudio",
         # Transformers from GitHub HEAD – includes the omni model class
         f"git+https://github.com/huggingface/transformers@{TRANSFORMERS_COMMIT}",
         "accelerate",
@@ -72,10 +63,10 @@ image = (
         "qwen-omni-utils[decord]",
         # soundfile for audio I/O
         "soundfile",
-        # flash-attention for big-speedups (build from source), matching transformer-engine constraints
+        # flash-attention for big-speedups
         f"flash-attn=={FLASH_ATTN_VERSION}",
-        extra_options="--no-binary flash-attn --no-build-isolation",
     )
+    .cuda()  # Add CUDA support to the image
 )
 
 # ---------------------------------------------------------------------
