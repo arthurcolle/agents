@@ -46,24 +46,30 @@ app = modal.App(APP_NAME)
 # ---------------------------------------------------------------------
 # IMAGE DEFINITION
 # ---------------------------------------------------------------------
-# Use Modal's built-in image with PyTorch CUDA support
+# Use NVIDIA's CUDA image as base to ensure proper CUDA toolkit installation
+cuda_version = "12.1.1"  # Compatible with Modal's infrastructure
+flavor = "devel"         # Includes full CUDA toolkit needed for flash-attention
+operating_sys = "ubuntu22.04"
+tag = f"{cuda_version}-{flavor}-{operating_sys}"
+
 image = (
-    modal.Image.debian_slim(python_version="3.10")
+    modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.10")
     # Ensure unbuffered output
     .env({
         "PYTHONUNBUFFERED": "1"
     })
     # Install ffmpeg for audio/video and git for GitHub installs
     .apt_install("ffmpeg", "git")
-    # Install PyTorch first since flash-attn needs it during setup
+    # Install PyTorch first
     .pip_install(
         f"torch=={PYTORCH_VERSION}",
         "torchvision",
         "torchaudio",
     )
-    # Now we can install flash-attention in a separate step after PyTorch is installed
+    # Install flash-attention with proper CUDA toolkit available
     .pip_install(
         f"flash-attn=={FLASH_ATTN_VERSION}",
+        extra_options="--no-build-isolation"
     )
     # Install transformers and other dependencies
     .pip_install(
