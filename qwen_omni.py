@@ -58,8 +58,8 @@ image = (
     .env({
         "PYTHONUNBUFFERED": "1"
     })
-    # Install ffmpeg for audio/video and git for GitHub installs
-    .apt_install("ffmpeg", "git")
+    # Install ffmpeg for audio/video, git for GitHub installs, and clang for compiling flash-attention
+    .apt_install("ffmpeg", "git", "clang")
     # Install wheel and PyTorch
     .pip_install(
         "wheel",
