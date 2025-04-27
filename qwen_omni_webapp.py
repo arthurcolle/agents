@@ -58,7 +58,7 @@ image = (
 )
 
 # Reference the already-defined GPU runner so we can call `.generate.remote`.
-qwen_stub = modal.Stub.from_name("qwen-omni-runner")
+qwen_app = modal.App.from_name("qwen-omni-runner")
 
 # This app only handles HTTP so CPU is fine.
 app = modal.App("qwen-omni-web", image=image)
@@ -186,7 +186,7 @@ def chat_endpoint(
     conversation.append({"role": "user", "content": content})
 
     try:
-        result = qwen_stub.generate.remote(
+        result = qwen_app.generate.remote(
             conversation,
             speaker=speaker,
             return_audio=True,
