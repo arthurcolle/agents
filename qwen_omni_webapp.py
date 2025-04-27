@@ -61,10 +61,12 @@ image = (
 template_volume = modal.Volume.from_name("qwen-omni-templates", create_if_missing=True)
 static_volume = modal.Volume.from_name("qwen-omni-static", create_if_missing=True)
 
-# Upload local template files to the volume
-with template_volume.batch_upload() as batch:
-    templates_dir = Path(__file__).parent / "templates"
-    if templates_dir.exists():
+# Upload local template files to the volume if they exist
+templates_dir = Path(__file__).parent / "templates"
+if templates_dir.exists():
+    # Clear the volume first to avoid conflicts
+    template_volume.clear()
+    with template_volume.batch_upload() as batch:
         batch.put_directory(str(templates_dir), "/")
 
 # Create static directory if it doesn't exist
@@ -72,9 +74,12 @@ static_dir = Path(__file__).parent / "static"
 if not static_dir.exists():
     static_dir.mkdir(exist_ok=True)
 
-# Upload static files to the volume
-with static_volume.batch_upload() as batch:
-    batch.put_directory(str(static_dir), "/")
+# Upload static files to the volume if directory exists
+if static_dir.exists():
+    # Clear the volume first to avoid conflicts
+    static_volume.clear()
+    with static_volume.batch_upload() as batch:
+        batch.put_directory(str(static_dir), "/")
 
 # Reference the already-defined GPU runner so we can call `.generate.remote`.
 qwen_app = modal.App("qwen-omni-runner")
