@@ -52,11 +52,13 @@ image = (
     .env({"PYTHONUNBUFFERED": "1"})
     .apt_install("ffmpeg", "git")  # ffmpeg for audio/video, git for GitHub installs
     .pip_install(
-        "torch",  # Base torch installation
-        # Install PyTorch 2.6+ to address security vulnerability CVE-2025-32434
+        # Install PyTorch first since flash-attn needs it during setup
+        "torch",
         f"torch>={PYTORCH_VERSION}",
         "torchvision",
         "torchaudio",
+        # Now we can install flash-attention
+        f"flash-attn=={FLASH_ATTN_VERSION}",
         # Transformers from GitHub HEAD – includes the omni model class
         f"git+https://github.com/huggingface/transformers@{TRANSFORMERS_COMMIT}",
         "accelerate",
@@ -64,8 +66,6 @@ image = (
         "qwen-omni-utils[decord]",
         # soundfile for audio I/O
         "soundfile",
-        # flash-attention for big-speedups
-        f"flash-attn=={FLASH_ATTN_VERSION}",
     )
 )
 
