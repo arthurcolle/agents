@@ -58,7 +58,7 @@ image = (
 )
 
 # Reference the already-defined GPU runner so we can call `.generate.remote`.
-qwen_app = modal.App.from_name("qwen-omni-runner")
+qwen_app = modal.App("qwen-omni-runner")
 
 # This app only handles HTTP so CPU is fine.
 app = modal.App("qwen-omni-web", image=image)
