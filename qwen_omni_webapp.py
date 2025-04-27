@@ -61,7 +61,10 @@ image = (
 qwen_app = modal.App("qwen-omni-runner")
 
 # This app only handles HTTP so CPU is fine.
-app = modal.App("qwen-omni-web", image=image)
+app = modal.App("qwen-omni-web", image=image, volumes={
+    "/app/templates": template_volume,
+    "/app/static": static_volume
+})
 
 
 # ---------------------------------------------------------------------------
@@ -70,13 +73,20 @@ app = modal.App("qwen-omni-web", image=image)
 
 web_app = FastAPI(title="Qwen-Omni Voice Chat")
 
-# Serve the template & static files packaged below.
-TEMPLATES_DIR = Path(__file__).parent / "templates"
-STATIC_DIR = Path(__file__).parent / "static"
+# Create a volume to store templates and static files
+template_volume = modal.Volume.from_local_dir(
+    Path(__file__).parent / "templates", 
+    remote_dir="/app/templates"
+)
+static_volume = modal.Volume.from_local_dir(
+    Path(__file__).parent / "static", 
+    remote_dir="/app/static",
+    create_if_missing=True
+)
 
-# Make sure the directories exist inside the image.
-os.makedirs(TEMPLATES_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
+# Set the templates directory to the mounted volume path
+TEMPLATES_DIR = Path("/app/templates")
+STATIC_DIR = Path("/app/static")
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 

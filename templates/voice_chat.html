@@ -146,3 +146,306 @@ async function sendAudio(blob) {
 </script>
 </body>
 </html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen Omni Voice Chat</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #chat-container {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            height: 400px;
+            overflow-y: auto;
+            padding: 10px;
+            margin-bottom: 20px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 80%;
+        }
+        .user-message {
+            background-color: #e1f5fe;
+            margin-left: auto;
+            text-align: right;
+        }
+        .assistant-message {
+            background-color: #f1f1f1;
+            margin-right: auto;
+        }
+        #input-container {
+            display: flex;
+            gap: 10px;
+        }
+        #user-input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #mic-button {
+            background-color: #2196F3;
+        }
+        #mic-button:hover {
+            background-color: #0b7dda;
+        }
+        #mic-button.recording {
+            background-color: #f44336;
+        }
+        #status {
+            text-align: center;
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+        .voice-selector {
+            margin-bottom: 15px;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+    <h1>Qwen Omni Voice Chat</h1>
+    
+    <div class="voice-selector">
+        <label for="voice-select">Assistant voice:</label>
+        <select id="voice-select">
+            <option value="Chelsie">Chelsie (Default)</option>
+            <option value="Ethan">Ethan</option>
+        </select>
+    </div>
+    
+    <div id="chat-container"></div>
+    
+    <div id="input-container">
+        <input type="text" id="user-input" placeholder="Type your message here..." autocomplete="off">
+        <button id="mic-button" title="Record voice message">🎤</button>
+        <button id="send-button">Send</button>
+    </div>
+    
+    <div id="status"></div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const chatContainer = document.getElementById('chat-container');
+            const userInput = document.getElementById('user-input');
+            const sendButton = document.getElementById('send-button');
+            const micButton = document.getElementById('mic-button');
+            const statusDiv = document.getElementById('status');
+            const voiceSelect = document.getElementById('voice-select');
+            
+            let conversation = [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "You are Qwen, a virtual human developed by the Qwen Team, Alibaba Group, capable of perceiving auditory and visual inputs, as well as generating text and speech."
+                        }
+                    ]
+                }
+            ];
+            
+            let mediaRecorder;
+            let audioChunks = [];
+            let isRecording = false;
+            
+            // Initialize the chat with a welcome message
+            addMessage("assistant", "Hello! I'm Qwen. You can type a message or click the microphone button to speak to me.");
+            
+            // Handle send button click
+            sendButton.addEventListener('click', () => {
+                const message = userInput.value.trim();
+                if (message) {
+                    sendTextMessage(message);
+                }
+            });
+            
+            // Handle Enter key press
+            userInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    const message = userInput.value.trim();
+                    if (message) {
+                        sendTextMessage(message);
+                    }
+                }
+            });
+            
+            // Handle microphone button click
+            micButton.addEventListener('click', toggleRecording);
+            
+            function toggleRecording() {
+                if (!isRecording) {
+                    startRecording();
+                } else {
+                    stopRecording();
+                }
+            }
+            
+            async function startRecording() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    
+                    mediaRecorder.addEventListener('dataavailable', event => {
+                        audioChunks.push(event.data);
+                    });
+                    
+                    mediaRecorder.addEventListener('stop', () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        sendAudioMessage(audioBlob);
+                        
+                        // Stop all tracks to release the microphone
+                        stream.getTracks().forEach(track => track.stop());
+                    });
+                    
+                    mediaRecorder.start();
+                    isRecording = true;
+                    micButton.classList.add('recording');
+                    micButton.textContent = '⏹️';
+                    statusDiv.textContent = 'Recording... Click the button again to stop.';
+                } catch (err) {
+                    console.error('Error accessing microphone:', err);
+                    statusDiv.textContent = 'Error accessing microphone. Please check permissions.';
+                }
+            }
+            
+            function stopRecording() {
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                    isRecording = false;
+                    micButton.classList.remove('recording');
+                    micButton.textContent = '🎤';
+                    statusDiv.textContent = 'Processing audio...';
+                }
+            }
+            
+            function sendTextMessage(message) {
+                addMessage("user", message);
+                userInput.value = '';
+                
+                statusDiv.textContent = 'Thinking...';
+                disableInputs(true);
+                
+                const formData = new FormData();
+                formData.append('user_text', message);
+                formData.append('conversation_json', JSON.stringify(conversation));
+                formData.append('speaker', voiceSelect.value);
+                
+                fetch('/api/chat', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    handleResponse(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    statusDiv.textContent = 'Error communicating with the server.';
+                    disableInputs(false);
+                });
+            }
+            
+            function sendAudioMessage(audioBlob) {
+                statusDiv.textContent = 'Sending audio...';
+                disableInputs(true);
+                
+                const formData = new FormData();
+                formData.append('audio', audioBlob);
+                formData.append('conversation_json', JSON.stringify(conversation));
+                formData.append('speaker', voiceSelect.value);
+                
+                fetch('/api/chat', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    handleResponse(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    statusDiv.textContent = 'Error communicating with the server.';
+                    disableInputs(false);
+                });
+            }
+            
+            function handleResponse(data) {
+                if (data.error) {
+                    statusDiv.textContent = `Error: ${data.error}`;
+                    disableInputs(false);
+                    return;
+                }
+                
+                // Update conversation history
+                conversation = data.conversation;
+                
+                // Add assistant's response to the chat
+                addMessage("assistant", data.reply_text);
+                
+                // Play audio if available
+                if (data.reply_audio_b64) {
+                    playAudio(data.reply_audio_b64);
+                    statusDiv.textContent = 'Playing response...';
+                } else {
+                    statusDiv.textContent = '';
+                }
+                
+                disableInputs(false);
+            }
+            
+            function addMessage(role, text) {
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('message');
+                messageDiv.classList.add(role === 'user' ? 'user-message' : 'assistant-message');
+                messageDiv.textContent = text;
+                chatContainer.appendChild(messageDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+            
+            function playAudio(base64Audio) {
+                const audio = new Audio(`data:audio/wav;base64,${base64Audio}`);
+                audio.play();
+            }
+            
+            function disableInputs(disabled) {
+                userInput.disabled = disabled;
+                sendButton.disabled = disabled;
+                micButton.disabled = disabled;
+            }
+        });
+    </script>
+</body>
+</html>
