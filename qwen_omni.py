@@ -46,15 +46,13 @@ app = modal.App(APP_NAME)
 # ---------------------------------------------------------------------
 # IMAGE DEFINITION
 # ---------------------------------------------------------------------
-# Base image with torch
-torch_image = modal.Image.debian_slim().pip_install("torch")
-
 # Use Modal's built-in image with PyTorch CUDA support
 image = (
     modal.Image.debian_slim(python_version="3.10")
     .env({"PYTHONUNBUFFERED": "1"})
     .apt_install("ffmpeg", "git")  # ffmpeg for audio/video, git for GitHub installs
     .pip_install(
+        "torch",  # Base torch installation
         # Install PyTorch 2.6+ to address security vulnerability CVE-2025-32434
         f"torch>={PYTORCH_VERSION}",
         "torchvision",
@@ -102,12 +100,29 @@ def download_weights():
 # ---------------------------------------------------------------------
 # TORCH TEST FUNCTION
 # ---------------------------------------------------------------------
-@app.function(gpu="any", image=torch_image)
+@app.function(gpu="any", image=image)
 def run_torch():
     import torch
     has_cuda = torch.cuda.is_available()
     print(f"It is {has_cuda} that torch can access CUDA")
+    
+    if has_cuda:
+        print(f"CUDA Device Name: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA Device Count: {torch.cuda.device_count()}")
+        print(f"CUDA Current Device: {torch.cuda.current_device()}")
+    
     return has_cuda
+
+# ---------------------------------------------------------------------
+# WHISPER TRANSCRIPTION FUNCTION
+# ---------------------------------------------------------------------
+@app.function(gpu="any", image=image)
+def run_whisper():
+    from transformers import pipeline
+    transcriber = pipeline(model="openai/whisper-tiny.en", device="cuda")
+    result = transcriber("https://modal-cdn.com/mlk.flac")
+    print(result["text"])
+    return result["text"]
 
 # ---------------------------------------------------------------------
 # RUNTIME FUNCTION
