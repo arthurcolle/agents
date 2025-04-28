@@ -34,7 +34,11 @@ from pathlib import Path
 from typing import List
 
 import modal
-from modal import Stub
+# NOTE: The `Stub` helper class was renamed to `App` in recent versions of
+# Modal. Import the new name directly to silence the deprecation warning and
+# use the modern helper methods (`from_name`, etc.) when referencing a remote
+# application.
+from modal import App
 from fastapi import FastAPI, File, Form, UploadFile, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -88,8 +92,15 @@ if static_dir.exists():
     with static_volume.batch_upload(force=True) as batch:
         batch.put_directory(str(static_dir), "/")
 
-# Reference the already-defined GPU runner so we can call `.generate.remote`.
-qwen_app = Stub("qwen-omni-runner")
+# ---------------------------------------------------------------------------
+# Reference the already-deployed GPU runner.
+#
+# Using `App.from_name` ensures we attach to the existing Modal application
+# (created in `qwen_omni.py`) **with all its remote functions bound**, so
+# calling `qwen_app.generate.remote(...)` works as expected.
+# ---------------------------------------------------------------------------
+
+qwen_app = App.from_name("qwen-omni-runner")
 
 # This app only handles HTTP so CPU is fine.
 app = modal.App("qwen-omni-web", image=image, volumes={
