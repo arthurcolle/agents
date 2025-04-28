@@ -119,6 +119,9 @@ web_app = FastAPI(title="Qwen-Omni Voice Chat")
 TEMPLATES_DIR = Path("/app/templates")
 STATIC_DIR = Path("/app/static")
 
+# Mount static files for FastAPI
+web_app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
