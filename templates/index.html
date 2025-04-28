@@ -240,6 +240,12 @@
             <option value="Chelsie" selected>Chelsie (Default)</option>
             <option value="Ethan">Ethan</option>
         </select>
+        <label for="output-select">Output:</label>
+        <select id="output-select">
+            <option value="text" selected>Text Only</option>
+            <option value="audio">Audio Only</option>
+            <option value="both">Text + Audio</option>
+        </select>
         <label for="file-input" class="file-upload-label">Upload
             <input type="file" id="file-input" accept="audio/*,video/*,image/*">
         </label>
@@ -465,6 +471,7 @@
             if (imageFile) form.append('image', imageFile, imageFile.name);
             form.append('conversation_json', JSON.stringify(conversation));
             form.append('speaker', voiceSelect.value);
+            form.append('output_mode', document.getElementById('output-select').value);
 
             const thinking = document.createElement('div');
             thinking.className = 'message agent-message';
@@ -487,9 +494,15 @@
                         return;
                     }
                     conversation = data.conversation;
-                    addMessage(data.reply_text, 'agent');
-                    if (data.reply_audio_b64) {
+                    // Show both text and audio if present
+                    if (data.reply_text && data.reply_audio_b64) {
+                        addMessage(data.reply_text, 'agent');
                         new Audio('data:audio/wav;base64,' + data.reply_audio_b64).play().catch(() => {});
+                    } else if (data.reply_audio_b64) {
+                        addMessage('[Audio reply]', 'agent');
+                        new Audio('data:audio/wav;base64,' + data.reply_audio_b64).play().catch(() => {});
+                    } else if (data.reply_text) {
+                        addMessage(data.reply_text, 'agent');
                     }
                 })
                 .catch(err => {

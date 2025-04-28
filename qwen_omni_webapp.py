@@ -176,6 +176,8 @@ def chat_endpoint(
     conversation_json: str = Form(...),
     # Optional voice id for TTS (Chelsie default)
     speaker: str | None = Form(None),
+    # Output mode: "text", "audio", "both"
+    output_mode: str = Form("both"),
 ):
     """Main inference endpoint.
 
@@ -263,6 +265,28 @@ def chat_endpoint(
     # Log before invoking model
     logger.info("Invoking GPU runner with conversation length=%d", len(conversation))
 
+    # Determine system prompt based on task (from frontend)
+    # Default: "chat"
+    task = None
+    sys_prompt = None
+    if len(conversation) > 0 and conversation[0]["role"] == "system":
+        sys_prompt = conversation[0]["content"][0].get("text", "")
+        # Try to infer task from system prompt
+        if "speech recognition" in sys_prompt.lower():
+            task = "asr"
+        elif "translation" in sys_prompt.lower():
+            task = "translation"
+        elif "classification" in sys_prompt.lower():
+            task = "classification"
+        else:
+            task = "chat"
+    else:
+        task = "chat"
+
+    # Output mode logic
+    return_audio = output_mode in ("audio", "both")
+    return_text = output_mode in ("text", "both")
+
     # Use Modal's new explicit handle-lookup helper to get the remote function.
     import modal
     qwen_generate = modal.Function.from_name(
@@ -276,7 +300,7 @@ def chat_endpoint(
         result = qwen_generate.remote(
             conversation,
             speaker=speaker,
-            return_audio=True,
+            return_audio=return_audio,
             use_audio_in_video=True,
         )
     except Exception as e:
@@ -296,8 +320,12 @@ def chat_endpoint(
                 len(result.get("text", "")), bool(result.get("audio_b64")))
     assistant_message = {
         "role": "assistant",
-        "content": [{"type": "text", "text": result["text"]}],
+        "content": [],
     }
+    if return_text and result.get("text"):
+        assistant_message["content"].append({"type": "text", "text": result["text"]})
+    if return_audio and result.get("audio_b64"):
+        assistant_message["content"].append({"type": "audio", "audio": "(omitted)"})
     conversation.append(assistant_message)
 
     # Don't send huge waveforms back to the browser – replace them with a stub.
@@ -318,8 +346,8 @@ def chat_endpoint(
     logger.info("Returning response: conversation length=%d messages", len(cleaned_history))
 
     return {
-        "reply_text": result["text"],
-        "reply_audio_b64": result.get("audio_b64"),
+        "reply_text": result["text"] if return_text else "",
+        "reply_audio_b64": result.get("audio_b64") if return_audio else None,
         "conversation": cleaned_history,
     }
 
