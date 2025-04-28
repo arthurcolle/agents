@@ -251,9 +251,12 @@ def chat_endpoint(
     # Log before invoking model
     logger.info("Invoking GPU runner with conversation length=%d", len(conversation))
 
-    # Dynamically resolve the remote `generate` function to avoid `InvalidError`
-    # during local development when the remote runner may not be present.
-    qwen_generate = qwen_app.function("generate")
+    # Use Modal's new explicit handle-lookup helper to get the remote function.
+    import modal
+    qwen_generate = modal.Function.from_name(
+        "qwen-omni-runner",          # the App name you passed to modal.App(...)
+        "generate"                   # the function’s decorator name
+    )
 
     try:
         # Call the remote function with additional parameters required by the API
