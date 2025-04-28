@@ -101,6 +101,7 @@
     
     <div id="input-container">
         <input type="text" id="user-input" placeholder="Type your message here..." autocomplete="off">
+        <input type="file" id="image-input" accept="image/*" style="max-width: 180px;">
         <button id="mic-button" title="Record voice message">🎤</button>
         <button id="send-button">Send</button>
     </div>
@@ -111,6 +112,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             const chatContainer = document.getElementById('chat-container');
             const userInput = document.getElementById('user-input');
+            const imageInput = document.getElementById('image-input');
             const sendButton = document.getElementById('send-button');
             const micButton = document.getElementById('mic-button');
             const statusDiv = document.getElementById('status');
@@ -214,6 +216,11 @@
                 formData.append('user_text', message);
                 formData.append('conversation_json', JSON.stringify(conversation));
                 formData.append('speaker', voiceSelect.value);
+
+                // If an image is selected, append it
+                if (imageInput.files && imageInput.files.length > 0) {
+                    formData.append('image', imageInput.files[0]);
+                }
                 
                 fetch('/api/chat', {
                     method: 'POST',
@@ -222,6 +229,8 @@
                 .then(response => response.json())
                 .then(data => {
                     handleResponse(data);
+                    // Clear image input after sending
+                    imageInput.value = '';
                 })
                 .catch(error => {
                     console.error('Error:', error);
@@ -296,6 +305,7 @@
                 userInput.disabled = disabled;
                 sendButton.disabled = disabled;
                 micButton.disabled = disabled;
+                imageInput.disabled = disabled;
             }
         });
     </script>
