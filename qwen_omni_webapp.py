@@ -333,3 +333,19 @@ def chat_endpoint(
 @modal.asgi_app()
 def fastapi_app():
     return web_app
+
+
+# ---------------------------------------------------------------------------
+# Local development entrypoint
+# ---------------------------------------------------------------------------
+@app.local_entrypoint()
+def main(port: int = 8000):
+    """Run the FastAPI application locally with live-reload.
+
+    Allows quick iteration without deploying to Modal.  Once the server is
+    running, open http://localhost:{port} in your browser.
+    """
+    import uvicorn
+
+    logger.info("Starting local FastAPI server at http://127.0.0.1:%d", port)
+    uvicorn.run("qwen_omni_webapp:web_app", host="0.0.0.0", port=port, reload=True)
