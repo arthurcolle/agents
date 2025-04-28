@@ -167,9 +167,10 @@ def home(request: Request):
 
 @web_app.post("/api/chat")
 def chat_endpoint(
-    # One of these two must be provided by the browser ↓
+    # One of these must be provided by the browser ↓
     user_text: str | None = Form(None),
     audio: UploadFile | None = File(None),
+    image: UploadFile | None = File(None),
     # The entire conversation so far (list[dict] serialised as JSON str)
     conversation_json: str = Form(...),
     # Optional voice id for TTS (Chelsie default)
@@ -206,11 +207,12 @@ def chat_endpoint(
     logger.info("Parsed conversation: %d messages", len(conversation))
 
     # ------------------------------------------------------------------
-    # Figure out what the user sent (plain text vs. recorded audio)
+    # Figure out what the user sent (plain text, audio, or image)
     # ------------------------------------------------------------------
-    if user_text is None and audio is None:
-        return JSONResponse(status_code=400, content={"error": "Provide either text or audio"})
+    if user_text is None and audio is None and image is None:
+        return JSONResponse(status_code=400, content={"error": "Provide either text, audio, or image"})
 
+    content = []
     if audio is not None:
         # FastAPI gives us a SpooledTemporaryFile; read raw bytes.
         webm_bytes = audio.file.read()
@@ -239,10 +241,19 @@ def chat_endpoint(
         if waveform.ndim == 2:
             waveform = np.mean(waveform, axis=1)
         audio_item = {"type": "audio", "audio": waveform.tolist()}  # list so it's JSON-serialisable
-        content = [audio_item]
-    else:
+        content.append(audio_item)
+    if image is not None:
+        # Read image bytes and encode as base64 for JSON-serializable transfer
+        image_bytes = image.file.read()
+        logger.info("Image uploaded: bytes=%d, filename=%s", len(image_bytes), getattr(image, "filename", None))
+        image_b64 = base64.b64encode(image_bytes).decode()
+        image_item = {"type": "image", "image": image_b64}
+        content.append(image_item)
+    if user_text is not None:
         logger.info("User text provided: %s", user_text)
-        content = [{"type": "text", "text": user_text}]
+        content.append({"type": "text", "text": user_text})
+    if not content:
+        return JSONResponse(status_code=400, content={"error": "No valid content provided"})
 
     # ------------------------------------------------------------------
     # Append user message to history and call the GPU function.

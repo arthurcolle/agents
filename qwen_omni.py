@@ -243,6 +243,24 @@ def generate(
         conversation, add_generation_prompt=True, tokenize=False
     )
 
+    import base64
+    import numpy as np
+
+    # Convert any base64-encoded images in the conversation to numpy arrays
+    for msg in conversation:
+        for item in msg.get("content", []):
+            if item.get("type") == "image" and isinstance(item.get("image"), str):
+                try:
+                    img_bytes = base64.b64decode(item["image"])
+                    # Try to load with PIL
+                    from PIL import Image
+                    import io
+                    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                    item["image"] = np.array(img)
+                except Exception as e:
+                    print(f"Failed to decode image: {e}")
+                    item["image"] = None
+
     audios, images, videos = process_mm_info(
         conversation, use_audio_in_video=use_audio_in_video
     )
