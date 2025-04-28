@@ -115,9 +115,9 @@ app = modal.App("qwen-omni-web", image=image, volumes={
 
 web_app = FastAPI(title="Qwen-Omni Voice Chat")
 
-# Set the templates directory to the mounted volume path
-TEMPLATES_DIR = Path("/app/templates")
-STATIC_DIR = Path("/app/static")
+# Set the templates and static directories to the local folders
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 
 # Mount static files for FastAPI
 web_app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
