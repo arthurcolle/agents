@@ -27,6 +27,10 @@ import tempfile
 from pathlib import Path
 
 import modal
+# Insert global caching variables after imports
+# Global model and processor to persist across invocations
+_GLOBAL_MODEL = None
+_GLOBAL_PROCESSOR = None
 
 
 # ---------------------------------------------------------------------
@@ -39,7 +43,7 @@ CACHE_DIR = modal.Volume.from_name("qwen-omni-cache", create_if_missing=True)  #
 # Need PyTorch 2.6+ for security fix (CVE-2025-32434)
 PYTORCH_VERSION = "2.6.0"
 TRANSFORMERS_COMMIT = "main"                  # build with Omni patches
-FLASH_ATTN_VERSION = "2.4.2"  # ensure compatibility with transformer-engine in base image
+FLASH_ATTN_VERSION = "2.7.4.post1"  # upgrade to latest prebuilt Flash-Attn wheel
 
 app = modal.App(APP_NAME)
 
@@ -47,38 +51,38 @@ app = modal.App(APP_NAME)
 # IMAGE DEFINITION
 # ---------------------------------------------------------------------
 # Use NVIDIA's CUDA image as base to ensure proper CUDA toolkit installation
-cuda_version = "12.1.1"  # Compatible with Modal's infrastructure
+cuda_version = "12.8.0"  # Should be ≤ host-driver's CUDA version
 flavor = "devel"         # Includes full CUDA toolkit needed for flash-attention
 operating_sys = "ubuntu22.04"
 tag = f"{cuda_version}-{flavor}-{operating_sys}"
 
 image = (
-    modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.10")
+    modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.11")
     # Ensure unbuffered output
     .env({
         "PYTHONUNBUFFERED": "1"
     })
-    # Install ffmpeg for audio/video, git for GitHub installs, and clang for compiling flash-attention
+    # Install ffmpeg for audio/video, git and clang for building native extensions
     .apt_install("ffmpeg", "git", "clang")
-    # Install wheel and PyTorch
+    # Install build helpers and PyTorch
     .pip_install(
+        "ninja",
+        "packaging",
         "wheel",
         f"torch=={PYTORCH_VERSION}",
         "torchvision",
         "torchaudio",
     )
-    # Install flash-attention with proper CUDA toolkit available
+    # Install Flash-Attention wheel (prebuilt) from PyPI
     .pip_install(
         f"flash-attn=={FLASH_ATTN_VERSION}",
         extra_options="--no-build-isolation"
     )
-    # Install transformers and other dependencies
+    # Install transformers and other runtime dependencies
     .pip_install(
         f"git+https://github.com/huggingface/transformers@{TRANSFORMERS_COMMIT}",
         "accelerate",
-        # multimodal helper utils (with decord for fast video IO)
         "qwen-omni-utils[decord]",
-        # soundfile for audio I/O
         "soundfile",
     )
 )
@@ -137,6 +141,23 @@ def run_whisper():
     result = transcriber("https://modal-cdn.com/mlk.flac")
     print(result["text"])
     return result["text"]
+ 
+# ---------------------------------------------------------------------
+# FLASH-ATTENTION TEST FUNCTION
+# ---------------------------------------------------------------------
+@app.function(gpu=GPU_TYPE, image=image)
+def run_flash_attn_test():
+    """Sanity-check Flash-Attention integration by running a small attention kernel."""
+    import torch
+    from flash_attn import flash_attn_func
+
+    B, S, H, D = 2, 4, 3, 16
+    q = torch.randn(B, S, H, D, dtype=torch.float16, device="cuda")
+    k = torch.randn(B, S, H, D, dtype=torch.float16, device="cuda")
+    v = torch.randn(B, S, H, D, dtype=torch.float16, device="cuda")
+
+    out = flash_attn_func(q, k, v)
+    return {"output_shape": list(out.shape)}
 
 # ---------------------------------------------------------------------
 # RUNTIME FUNCTION
@@ -185,29 +206,37 @@ def generate(
     CACHE_DIR.reload()
     
     print(f"Using PyTorch version: {torch.__version__}")
-    
-    try:
-        model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
-            MODEL_NAME,
-            torch_dtype=torch.bfloat16,      # ↳ bfloat16 keeps memory low, FA2 supported
-            device_map="auto",
-            attn_implementation="flash_attention_2",
-            cache_dir="/cache",
-            use_safetensors=True             # Use safetensors format when available
-        )
 
-        processor = Qwen2_5OmniProcessor.from_pretrained(MODEL_NAME, cache_dir="/cache")
-    except Exception as e:
-        print(f"Error loading model from cache: {e}")
-        # Fall back to loading from HF directly
-        model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
-            MODEL_NAME,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            attn_implementation="flash_attention_2",
-            use_safetensors=True             # Use safetensors format when available
-        )
-        processor = Qwen2_5OmniProcessor.from_pretrained(MODEL_NAME)
+    # Use global model and processor to avoid reloading weights on each invocation
+    global _GLOBAL_MODEL, _GLOBAL_PROCESSOR
+    if _GLOBAL_MODEL is None or _GLOBAL_PROCESSOR is None:
+        print("Loading model and processor into memory...")
+        try:
+            _GLOBAL_MODEL = Qwen2_5OmniForConditionalGeneration.from_pretrained(
+                MODEL_NAME,
+                torch_dtype=torch.bfloat16,      # ↳ bfloat16 keeps memory low, FA2 supported
+                device_map="auto",
+                attn_implementation="flash_attention_2",
+                cache_dir="/cache",
+                use_safetensors=True             # Use safetensors format when available
+            )
+            _GLOBAL_PROCESSOR = Qwen2_5OmniProcessor.from_pretrained(MODEL_NAME, cache_dir="/cache")
+        except Exception as e:
+            print(f"Error loading model from cache: {e}")
+            print("Falling back to direct load of model and processor...")
+            _GLOBAL_MODEL = Qwen2_5OmniForConditionalGeneration.from_pretrained(
+                MODEL_NAME,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                attn_implementation="flash_attention_2",
+                use_safetensors=True             # Use safetensors format when available
+            )
+            _GLOBAL_PROCESSOR = Qwen2_5OmniProcessor.from_pretrained(MODEL_NAME)
+    else:
+        print("Using cached model and processor")
+
+    model = _GLOBAL_MODEL
+    processor = _GLOBAL_PROCESSOR
 
     # ------------------------- PREPARE INPUTS ---------------------------------
     text = processor.apply_chat_template(
