@@ -6,6 +6,7 @@
     <!-- Tailwind CSS (shadcn/ui style) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <title>Dynamic Generative UI Agent</title>
+    <link rel="icon" href="https://avatars.githubusercontent.com/u/150858867?s=200&v=4">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -14,20 +15,23 @@
             max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
+            background: linear-gradient(120deg, #f8fafc 0%, #e0e7ef 100%);
         }
         .chat-container {
             display: flex;
             flex-direction: column;
             height: 70vh;
             border: 1px solid #ddd;
-            border-radius: 8px;
+            border-radius: 12px;
             overflow: hidden;
+            box-shadow: 0 2px 16px 0 rgba(0,0,0,0.07);
+            background: #fff;
         }
         .chat-messages {
             flex: 1;
             overflow-y: auto;
             padding: 20px;
-            background-color: #f9f9f9;
+            background: linear-gradient(120deg, #f9f9f9 0%, #f1f5f9 100%);
         }
         .message {
             margin-bottom: 15px;
@@ -35,53 +39,70 @@
             border-radius: 18px;
             max-width: 70%;
             word-wrap: break-word;
+            font-size: 1.05em;
+            box-shadow: 0 1px 4px 0 rgba(0,0,0,0.03);
+            transition: background 0.2s;
         }
         .user-message {
             background-color: #e1f5fe;
             align-self: flex-end;
             margin-left: auto;
+            border-bottom-right-radius: 4px;
         }
         .agent-message {
             background-color: #f0f0f0;
             align-self: flex-start;
+            border-bottom-left-radius: 4px;
         }
         .input-area {
             display: flex;
             padding: 10px;
-            background-color: #fff;
+            background-color: #f8fafc;
             border-top: 1px solid #ddd;
+            align-items: center;
         }
         #message-input {
             flex: 1;
             padding: 10px;
             border: 1px solid #ddd;
-            border-radius: 4px;
+            border-radius: 6px;
             margin-right: 10px;
+            background: #f9fafb;
+            font-size: 1em;
         }
-        button {
+        button, select {
             padding: 10px 15px;
             background-color: #2196F3;
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
+            font-size: 1em;
+            margin-right: 0.5em;
+            transition: background 0.2s;
         }
-        button:hover {
+        button:hover, select:hover {
             background-color: #0b7dda;
         }
+        select {
+            background: #e3f2fd;
+            color: #222;
+            border: 1px solid #b3e5fc;
+        }
         .dynamic-ui {
-            margin-top: 20px;
-            padding: 20px;
+            margin-top: 24px;
+            padding: 24px;
             border: 1px solid #ddd;
-            border-radius: 8px;
-            background-color: #fff;
+            border-radius: 12px;
+            background: #fff;
+            box-shadow: 0 2px 12px 0 rgba(0,0,0,0.04);
         }
         .system-goal {
             margin-bottom: 20px;
             padding: 15px;
-            background-color: #e8f5e9;
+            background: linear-gradient(90deg, #e8f5e9 0%, #e3fcec 100%);
             border-left: 4px solid #4caf50;
-            border-radius: 4px;
+            border-radius: 6px;
         }
         pre {
             background-color: #f5f5f5;
@@ -101,49 +122,153 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        .settings-panel {
+            margin-bottom: 18px;
+            padding: 12px 18px;
+            background: #f3f6fb;
+            border-radius: 8px;
+            border: 1px solid #e0e7ef;
+            display: flex;
+            align-items: center;
+            gap: 1.5em;
+        }
+        .settings-panel label {
+            font-weight: 500;
+            margin-right: 0.5em;
+        }
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            margin-right: 10px;
+            vertical-align: middle;
+            border: 2px solid #b3e5fc;
+        }
+        .message.agent-message {
+            display: flex;
+            align-items: flex-start;
+        }
+        .message.agent-message .avatar {
+            margin-right: 10px;
+        }
+        .message-content {
+            flex: 1;
+        }
+        .file-upload-label {
+            display: inline-block;
+            cursor: pointer;
+            background: #e3f2fd;
+            color: #1976d2;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-right: 0.5em;
+            font-size: 0.98em;
+            border: 1px solid #b3e5fc;
+            transition: background 0.2s;
+        }
+        .file-upload-label:hover {
+            background: #bbdefb;
+        }
+        .file-upload-label input[type="file"] {
+            display: none;
+        }
+        .theme-toggle {
+            background: #fff;
+            color: #1976d2;
+            border: 1px solid #b3e5fc;
+            margin-right: 0;
+        }
+        .theme-toggle:hover {
+            background: #e3f2fd;
+        }
+        .dark-mode body {
+            background: #181a20;
+            color: #e3e3e3;
+        }
+        .dark-mode .chat-container,
+        .dark-mode .dynamic-ui {
+            background: #23262f;
+            border-color: #333;
+        }
+        .dark-mode .chat-messages {
+            background: #23262f;
+        }
+        .dark-mode .system-goal {
+            background: #1e2a22;
+            border-left-color: #43a047;
+        }
+        .dark-mode .input-area {
+            background: #23262f;
+            border-top: 1px solid #333;
+        }
+        .dark-mode #message-input {
+            background: #23262f;
+            color: #e3e3e3;
+            border-color: #333;
+        }
+        .dark-mode button, .dark-mode select {
+            background: #1976d2;
+            color: #fff;
+            border-color: #1565c0;
+        }
+        .dark-mode .file-upload-label {
+            background: #23262f;
+            color: #90caf9;
+            border-color: #1976d2;
+        }
+        .dark-mode .file-upload-label:hover {
+            background: #1565c0;
+        }
     </style>
 </head>
 <body>
-    <h1>Dynamic Generative UI Agent</h1>
-    
+    <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode">🌙</button>
+    <h1>
+        <img src="https://avatars.githubusercontent.com/u/150858867?s=200&v=4" class="avatar" alt="Qwen logo">
+        Dynamic Generative UI Agent
+    </h1>
+    <div class="settings-panel">
+        <label for="task-select">Task:</label>
+        <select id="task-select">
+            <option value="chat" selected>Chat</option>
+            <option value="asr">Speech Recognition</option>
+            <option value="translation">Speech Translation</option>
+            <option value="classification">Sound Classification</option>
+        </select>
+        <label for="voice-select">Voice:</label>
+        <select id="voice-select">
+            <option value="Chelsie" selected>Chelsie (Default)</option>
+            <option value="Ethan">Ethan</option>
+        </select>
+        <label for="file-input" class="file-upload-label">Upload
+            <input type="file" id="file-input" accept="audio/*,video/*,image/*">
+        </label>
+        <span id="rec-timer" class="text-sm text-gray-500 mr-2 hidden">00:00</span>
+        <button id="mic-button" title="Record audio">🎤</button>
+    </div>
     <div class="system-goal">
         <h3>System Goal:</h3>
         <p id="system-goal-text">Loading system goal...</p>
     </div>
-    
     <div class="chat-container">
         <div class="chat-messages" id="chat-messages">
             <div class="message agent-message">
-                Hello! I'm Qwen. You can type a message or click the microphone button to speak to me.
+                <img src="https://avatars.githubusercontent.com/u/150858867?s=200&v=4" class="avatar" alt="Qwen">
+                <div class="message-content">
+                    Hello! I'm Qwen. You can type a message, upload a file, or click the microphone button to speak to me.<br>
+                    <span style="font-size:0.95em;color:#888;">(Tip: Try uploading an image, audio, or video for multimodal tasks!)</span>
+                </div>
             </div>
         </div>
         <div class="input-area">
-            <!-- Task selector -->
-            <select id="task-select" class="mr-2 border rounded px-2">
-                <option value="chat" selected>Chat</option>
-                <option value="asr">Speech Recognition</option>
-                <option value="translation">Speech Translation</option>
-                <option value="classification">Sound Classification</option>
-            </select>
-
-            <!-- Voice selector -->
-            <select id="voice-select" class="mr-2 border rounded px-2">
-                <option value="Chelsie" selected>Chelsie (Default)</option>
-                <option value="Ethan">Ethan</option>
-            </select>
             <input type="text" id="message-input" class="flex-1 mr-2" placeholder="Type your message here...">
-            <input type="file" id="file-input" class="hidden" accept="audio/*,video/*,image/*">
-            <button id="mic-button" title="Record audio" class="mr-2">🎤</button>
-            <span id="rec-timer" class="text-sm text-gray-500 mr-2 hidden">00:00</span>
             <button id="send-button">Send</button>
         </div>
     </div>
-    
     <div class="dynamic-ui" id="dynamic-ui">
         <h2>Dynamic UI Area</h2>
         <p>This area will update with dynamically generated UI elements based on your conversation.</p>
     </div>
-    
     <script>
         const chatMessages   = document.getElementById('chat-messages');
         const messageInput   = document.getElementById('message-input');
@@ -208,29 +333,38 @@
             }
         }
         
-        // Add message to chat
+        // Add message to chat (advanced: avatar, markdown, code, etc)
         function addMessage(content, sender) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${sender}-message`;
-            messageDiv.textContent = content;
-            chatMessages.appendChild(messageDiv);
+            const div = document.createElement('div');
+            div.className = `message ${sender}-message`;
+            if (sender === 'agent') {
+                div.innerHTML = `
+                    <img src="https://avatars.githubusercontent.com/u/150858867?s=200&v=4" class="avatar" alt="Qwen">
+                    <div class="message-content">${renderMarkdown(content)}</div>
+                `;
+            } else {
+                div.innerHTML = `<div class="message-content">${renderMarkdown(content)}</div>`;
+            }
+            chatMessages.appendChild(div);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
-        
+
         // Show thinking indicator
         function showThinking(message) {
             const thinkingDiv = document.createElement('div');
             thinkingDiv.className = 'message agent-message thinking';
-            thinkingDiv.innerHTML = message + ' <span class="loading"></span>';
+            thinkingDiv.innerHTML = `
+                <img src="https://avatars.githubusercontent.com/u/150858867?s=200&v=4" class="avatar" alt="Qwen">
+                <div class="message-content">${message} <span class="loading"></span></div>
+            `;
             thinkingDiv.id = 'thinking-indicator';
             chatMessages.appendChild(thinkingDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
-        
+
         // Update dynamic UI area
         function updateDynamicUI(htmlContent) {
             dynamicUI.innerHTML = htmlContent;
-            
             // Execute any scripts in the dynamic UI
             const scripts = dynamicUI.querySelectorAll('script');
             scripts.forEach(script => {
@@ -242,14 +376,38 @@
                 script.parentNode.replaceChild(newScript, script);
             });
         }
-        
-        /* -------------------- System goal -------------------- */
+
+        // Simple markdown renderer (code, bold, italics, links, line breaks)
+        function renderMarkdown(text) {
+            if (!text) return '';
+            let html = text
+                .replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/\*\*([^\*]+)\*\*/g, '<b>$1</b>')
+                .replace(/\*([^\*]+)\*/g, '<i>$1</i>')
+                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+                .replace(/\n/g, '<br>');
+            // Code blocks
+            html = html.replace(/```([\s\S]+?)```/g, function(_, code) {
+                return `<pre><code>${code.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code></pre>`;
+            });
+            return html;
+        }
+
+        // Theme toggle
+        const themeToggle = document.getElementById('theme-toggle');
+        themeToggle.addEventListener('click', () => {
+            document.documentElement.classList.toggle('dark-mode');
+            themeToggle.textContent = document.documentElement.classList.contains('dark-mode') ? '☀️' : '🌙';
+        });
+
+        // System goal fetch (already present, but ensure update)
         fetch('/api/system-goal')
             .then(r => r.json())
             .then(d => systemGoalText.textContent = d.goal)
             .catch(() => {});
 
-        /* -------------------- Conversation ------------------- */
+        // Conversation state
         let conversation = [
             {
                 role: "system",
@@ -267,16 +425,7 @@
             classification: "You are a vocal sound classification model."
         };
 
-        /* -------------------- Chat helpers ------------------- */
-        function addMessage(content, sender) {
-            const div = document.createElement('div');
-            div.className = `message ${sender}-message`;
-            div.textContent = content;
-            chatMessages.appendChild(div);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-
-        /* -------------------- Recording timer ------------------ */
+        // Recording timer
         let timerInterval = null;
         function startTimer() {
             let seconds = 0;
@@ -295,15 +444,16 @@
             timerInterval = null;
         }
 
-        /* -------------------- Send message ------------------- */
+        // Send message (advanced: supports text, audio, image, disables UI while waiting)
         function sendMessage({text = '', audioBlob = null, imageFile = null} = {}) {
-            // Update system prompt based on selected task
             conversation[0].content[0].text = systemPrompts[taskSelect.value] || systemPrompts.chat;
             text = text || messageInput.value.trim();
             if (!text && !audioBlob && !imageFile) return;
 
             if (text) addMessage(text, 'user');
             messageInput.value = '';
+            messageInput.disabled = true;
+            sendButton.disabled = true;
 
             const form = new FormData();
             if (text) form.append('user_text', text);
@@ -314,7 +464,10 @@
 
             const thinking = document.createElement('div');
             thinking.className = 'message agent-message';
-            thinking.innerHTML = 'Thinking <span class="loading"></span>';
+            thinking.innerHTML = `
+                <img src="https://avatars.githubusercontent.com/u/150858867?s=200&v=4" class="avatar" alt="Qwen">
+                <div class="message-content">Thinking <span class="loading"></span></div>
+            `;
             chatMessages.appendChild(thinking);
             chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -322,6 +475,8 @@
                 .then(r => r.json())
                 .then(data => {
                     thinking.remove();
+                    messageInput.disabled = false;
+                    sendButton.disabled = false;
                     if (data.error) {
                         addMessage('Error: ' + data.error, 'agent');
                         console.error(data.details || data.error);
@@ -335,12 +490,14 @@
                 })
                 .catch(err => {
                     thinking.remove();
+                    messageInput.disabled = false;
+                    sendButton.disabled = false;
                     addMessage('Error: ' + err.message, 'agent');
                     console.error(err);
                 });
         }
 
-        /* -------------------- UI events ---------------------- */
+        // UI events
         sendButton.addEventListener('click', () => sendMessage());
         taskSelect.addEventListener('change', () => {
             messageInput.placeholder = taskSelect.value === 'chat'
@@ -354,7 +511,7 @@
             }
         });
 
-        /* -------------------- Microphone --------------------- */
+        // Microphone
         let recorder, chunks = [];
         micButton.addEventListener('click', async () => {
             if (recorder && recorder.state === 'recording') {
@@ -383,12 +540,37 @@
             }
         });
 
-        /* -------------------- File upload -------------------- */
+        // File upload
         fileInput.addEventListener('change', e => {
             const f = e.target.files[0];
             if (f) sendMessage({imageFile: f});
             fileInput.value = '';
         });
+
+        // Drag & drop support for chat container
+        document.querySelector('.chat-container').addEventListener('dragover', e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        });
+        document.querySelector('.chat-container').addEventListener('drop', e => {
+            e.preventDefault();
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                sendMessage({imageFile: e.dataTransfer.files[0]});
+            }
+        });
+
+        // Keyboard shortcut: Ctrl+Enter to send
+        messageInput.addEventListener('keydown', e => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Focus input on load
+        window.onload = () => {
+            messageInput.focus();
+        };
     </script>
 </body>
 </html>
