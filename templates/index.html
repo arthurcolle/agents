@@ -134,6 +134,7 @@
             <input type="text" id="message-input" class="flex-1 mr-2" placeholder="Type your message here...">
             <input type="file" id="file-input" class="hidden" accept="audio/*,video/*,image/*">
             <button id="mic-button" title="Record audio" class="mr-2">🎤</button>
+            <span id="rec-timer" class="text-sm text-gray-500 mr-2 hidden">00:00</span>
             <button id="send-button">Send</button>
         </div>
     </div>
@@ -148,6 +149,7 @@
         const messageInput   = document.getElementById('message-input');
         const sendButton     = document.getElementById('send-button');
         const micButton      = document.getElementById('mic-button');
+        const recTimer       = document.getElementById('rec-timer');
         const voiceSelect    = document.getElementById('voice-select');
         const taskSelect     = document.getElementById('task-select');
         const fileInput      = document.getElementById('file-input');
@@ -274,6 +276,25 @@
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
+        /* -------------------- Recording timer ------------------ */
+        let timerInterval = null;
+        function startTimer() {
+            let seconds = 0;
+            recTimer.classList.remove('hidden');
+            recTimer.textContent = '00:00';
+            timerInterval = setInterval(() => {
+                seconds += 1;
+                const m = String(Math.floor(seconds / 60)).padStart(2, '0');
+                const s = String(seconds % 60).padStart(2, '0');
+                recTimer.textContent = `${m}:${s}`;
+            }, 1000);
+        }
+        function stopTimer() {
+            clearInterval(timerInterval);
+            recTimer.classList.add('hidden');
+            timerInterval = null;
+        }
+
         /* -------------------- Send message ------------------- */
         function sendMessage({text = '', audioBlob = null, imageFile = null} = {}) {
             // Update system prompt based on selected task
@@ -321,6 +342,11 @@
 
         /* -------------------- UI events ---------------------- */
         sendButton.addEventListener('click', () => sendMessage());
+        taskSelect.addEventListener('change', () => {
+            messageInput.placeholder = taskSelect.value === 'chat'
+                ? 'Type your message here...'
+                : 'Upload / record audio or type your prompt…';
+        });
         messageInput.addEventListener('keypress', e => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -334,6 +360,7 @@
             if (recorder && recorder.state === 'recording') {
                 recorder.stop();
                 micButton.textContent = '🎤';
+                stopTimer();
                 return;
             }
             try {
@@ -342,12 +369,14 @@
                 recorder = new MediaRecorder(stream);
                 recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
                 recorder.onstop = () => {
+                    stopTimer();
                     const blob = new Blob(chunks, {type: 'audio/webm'});
                     sendMessage({audioBlob: blob});
                     stream.getTracks().forEach(t => t.stop());
                 };
                 recorder.start();
                 micButton.textContent = '⏹️';
+                startTimer();
             } catch (err) {
                 console.error(err);
                 addMessage('Microphone permission denied.', 'agent');

@@ -325,6 +325,17 @@ def chat_endpoint(
 
 
 # ---------------------------------------------------------------------------
+# Auxiliary API routes
+# ---------------------------------------------------------------------------
+
+@web_app.get("/api/system-goal")
+def system_goal():
+    """Return the current high-level objective of the agent (for UI banner)."""
+    goal = os.getenv("SYSTEM_GOAL", "Assist users with multimodal interactions using Qwen2.5-Omni.")
+    return {"goal": goal}
+
+
+# ---------------------------------------------------------------------------
 # Bind ASGI to Modal
 # ---------------------------------------------------------------------------
 
