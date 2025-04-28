@@ -162,7 +162,8 @@ from fastapi import Request
 def home(request: Request):
     """Serve the single-page chat UI."""
     logger.info("Home page requested: %s", request.url.path)
-    return templates.TemplateResponse("voice_chat.html", {"request": request})
+    # Serve the new unified chat UI
+    return templates.TemplateResponse("index.html", {"request": request, "assistant_voice": "Chelsie"})
 
 
 @web_app.post("/api/chat")

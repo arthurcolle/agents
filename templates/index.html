@@ -114,12 +114,17 @@
     <div class="chat-container">
         <div class="chat-messages" id="chat-messages">
             <div class="message agent-message">
-                Hello! I'm your assistant. I can help you build a web app with dynamic generative UI.
-                What would you like to work on today?
+                Hello! I'm Qwen. You can type a message or click the microphone button to speak to me.
             </div>
         </div>
         <div class="input-area">
-            <input type="text" id="message-input" placeholder="Type your message here...">
+            <select id="voice-select" class="mr-2 border rounded px-2">
+                <option value="Chelsie" selected>Chelsie (Default)</option>
+                <option value="Ethan">Ethan</option>
+            </select>
+            <input type="text" id="message-input" class="flex-1 mr-2" placeholder="Type your message here...">
+            <input type="file" id="file-input" class="hidden" accept="audio/*,video/*,image/*">
+            <button id="mic-button" title="Record audio" class="mr-2">🎤</button>
             <button id="send-button">Send</button>
         </div>
     </div>
