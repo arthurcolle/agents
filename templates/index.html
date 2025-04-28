@@ -118,6 +118,15 @@
             </div>
         </div>
         <div class="input-area">
+            <!-- Task selector -->
+            <select id="task-select" class="mr-2 border rounded px-2">
+                <option value="chat" selected>Chat</option>
+                <option value="asr">Speech Recognition</option>
+                <option value="translation">Speech Translation</option>
+                <option value="classification">Sound Classification</option>
+            </select>
+
+            <!-- Voice selector -->
             <select id="voice-select" class="mr-2 border rounded px-2">
                 <option value="Chelsie" selected>Chelsie (Default)</option>
                 <option value="Ethan">Ethan</option>
@@ -140,6 +149,7 @@
         const sendButton     = document.getElementById('send-button');
         const micButton      = document.getElementById('mic-button');
         const voiceSelect    = document.getElementById('voice-select');
+        const taskSelect     = document.getElementById('task-select');
         const fileInput      = document.getElementById('file-input');
         const dynamicUI      = document.getElementById('dynamic-ui');
         const systemGoalText = document.getElementById('system-goal-text');
@@ -247,6 +257,14 @@
             }
         ];
 
+        // Map task → system prompt
+        const systemPrompts = {
+            chat: "You are Qwen, a virtual human developed by the Qwen Team, Alibaba Group, capable of perceiving auditory and visual inputs, as well as generating text and speech.",
+            asr: "You are a speech recognition model.",
+            translation: "You are a speech translation model.",
+            classification: "You are a vocal sound classification model."
+        };
+
         /* -------------------- Chat helpers ------------------- */
         function addMessage(content, sender) {
             const div = document.createElement('div');
@@ -258,6 +276,8 @@
 
         /* -------------------- Send message ------------------- */
         function sendMessage({text = '', audioBlob = null, imageFile = null} = {}) {
+            // Update system prompt based on selected task
+            conversation[0].content[0].text = systemPrompts[taskSelect.value] || systemPrompts.chat;
             text = text || messageInput.value.trim();
             if (!text && !audioBlob && !imageFile) return;
 
