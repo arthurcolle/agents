@@ -101,6 +101,7 @@ if static_dir.exists():
 # ---------------------------------------------------------------------------
 
 qwen_app = App.lookup("qwen-omni-runner")
+qwen_generate = qwen_app.function("generate")
 
 # This app only handles HTTP so CPU is fine.
 app = modal.App("qwen-omni-web", image=image, volumes={
@@ -252,7 +253,7 @@ def chat_endpoint(
 
     try:
         # Add use_audio_in_video parameter to match the API requirements
-        result = qwen_app.generate.remote(
+        result = qwen_generate.remote(
             conversation,
             speaker=speaker,
             return_audio=True,
