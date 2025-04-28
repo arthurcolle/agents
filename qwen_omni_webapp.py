@@ -89,7 +89,7 @@ if static_dir.exists():
         batch.put_directory(str(static_dir), "/")
 
 # Reference the already-defined GPU runner so we can call `.generate.remote`.
-qwen_app = Stub.from_name("qwen-omni-runner")
+qwen_app = Stub("qwen-omni-runner")
 
 # This app only handles HTTP so CPU is fine.
 app = modal.App("qwen-omni-web", image=image, volumes={
