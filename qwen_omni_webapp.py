@@ -253,7 +253,6 @@ def chat_endpoint(
 
     try:
         # Look up the remote function at call time to avoid InvalidError in local dev
-        qwen_generate = qwen_app.function("generate")
         # Add use_audio_in_video parameter to match the API requirements
         result = qwen_generate.remote(
             conversation,
