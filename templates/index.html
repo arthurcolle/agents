@@ -135,10 +135,13 @@
     </div>
     
     <script>
-        const chatMessages = document.getElementById('chat-messages');
-        const messageInput = document.getElementById('message-input');
-        const sendButton = document.getElementById('send-button');
-        const dynamicUI = document.getElementById('dynamic-ui');
+        const chatMessages   = document.getElementById('chat-messages');
+        const messageInput   = document.getElementById('message-input');
+        const sendButton     = document.getElementById('send-button');
+        const micButton      = document.getElementById('mic-button');
+        const voiceSelect    = document.getElementById('voice-select');
+        const fileInput      = document.getElementById('file-input');
+        const dynamicUI      = document.getElementById('dynamic-ui');
         const systemGoalText = document.getElementById('system-goal-text');
         
         // Fetch system goal
@@ -228,12 +231,114 @@
             });
         }
         
-        // Event listeners
-        sendButton.addEventListener('click', sendMessage);
-        messageInput.addEventListener('keypress', function(e) {
+        /* -------------------- System goal -------------------- */
+        fetch('/api/system-goal')
+            .then(r => r.json())
+            .then(d => systemGoalText.textContent = d.goal)
+            .catch(() => {});
+
+        /* -------------------- Conversation ------------------- */
+        let conversation = [
+            {
+                role: "system",
+                content: [
+                    { type: "text", text: "You are Qwen, a virtual human developed by the Qwen Team, Alibaba Group, capable of perceiving auditory and visual inputs, as well as generating text and speech." }
+                ]
+            }
+        ];
+
+        /* -------------------- Chat helpers ------------------- */
+        function addMessage(content, sender) {
+            const div = document.createElement('div');
+            div.className = `message ${sender}-message`;
+            div.textContent = content;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        /* -------------------- Send message ------------------- */
+        function sendMessage({text = '', audioBlob = null, imageFile = null} = {}) {
+            text = text || messageInput.value.trim();
+            if (!text && !audioBlob && !imageFile) return;
+
+            if (text) addMessage(text, 'user');
+            messageInput.value = '';
+
+            const form = new FormData();
+            if (text) form.append('user_text', text);
+            if (audioBlob) form.append('audio', new File([audioBlob], 'recording.webm', {type: 'audio/webm'}));
+            if (imageFile) form.append('image', imageFile, imageFile.name);
+            form.append('conversation_json', JSON.stringify(conversation));
+            form.append('speaker', voiceSelect.value);
+
+            const thinking = document.createElement('div');
+            thinking.className = 'message agent-message';
+            thinking.innerHTML = 'Thinking <span class="loading"></span>';
+            chatMessages.appendChild(thinking);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            fetch('/api/chat', {method: 'POST', body: form})
+                .then(r => r.json())
+                .then(data => {
+                    thinking.remove();
+                    if (data.error) {
+                        addMessage('Error: ' + data.error, 'agent');
+                        console.error(data.details || data.error);
+                        return;
+                    }
+                    conversation = data.conversation;
+                    addMessage(data.reply_text, 'agent');
+                    if (data.reply_audio_b64) {
+                        new Audio('data:audio/wav;base64,' + data.reply_audio_b64).play().catch(() => {});
+                    }
+                })
+                .catch(err => {
+                    thinking.remove();
+                    addMessage('Error: ' + err.message, 'agent');
+                    console.error(err);
+                });
+        }
+
+        /* -------------------- UI events ---------------------- */
+        sendButton.addEventListener('click', () => sendMessage());
+        messageInput.addEventListener('keypress', e => {
             if (e.key === 'Enter') {
+                e.preventDefault();
                 sendMessage();
             }
+        });
+
+        /* -------------------- Microphone --------------------- */
+        let recorder, chunks = [];
+        micButton.addEventListener('click', async () => {
+            if (recorder && recorder.state === 'recording') {
+                recorder.stop();
+                micButton.textContent = '🎤';
+                return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+                chunks = [];
+                recorder = new MediaRecorder(stream);
+                recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+                recorder.onstop = () => {
+                    const blob = new Blob(chunks, {type: 'audio/webm'});
+                    sendMessage({audioBlob: blob});
+                    stream.getTracks().forEach(t => t.stop());
+                };
+                recorder.start();
+                micButton.textContent = '⏹️';
+            } catch (err) {
+                console.error(err);
+                addMessage('Microphone permission denied.', 'agent');
+            }
+        });
+
+        /* -------------------- File upload -------------------- */
+        fileInput.addEventListener('change', e => {
+            const f = e.target.files[0];
+            if (f) sendMessage({imageFile: f});
+            fileInput.value = '';
         });
     </script>
 </body>
