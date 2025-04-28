@@ -101,7 +101,7 @@ if static_dir.exists():
 # ---------------------------------------------------------------------------
 
 qwen_app = App.lookup("qwen-omni-runner")
-qwen_generate = qwen_app.function("generate")
+# Defer function lookup until inside the endpoint to avoid InvalidError in local dev
 
 # This app only handles HTTP so CPU is fine.
 app = modal.App("qwen-omni-web", image=image, volumes={
@@ -252,6 +252,8 @@ def chat_endpoint(
     logger.info("Invoking GPU runner with conversation length=%d", len(conversation))
 
     try:
+        # Look up the remote function at call time to avoid InvalidError in local dev
+        qwen_generate = qwen_app.function("generate")
         # Add use_audio_in_video parameter to match the API requirements
         result = qwen_generate.remote(
             conversation,
