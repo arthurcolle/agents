@@ -36,7 +36,7 @@ from typing import List
 import modal
 # NOTE: The `Stub` helper class was renamed to `App` in recent versions of
 # Modal. Import the new name directly to silence the deprecation warning and
-# use the modern helper methods (`from_name`, etc.) when referencing a remote
+# use the modern helper methods (`lookup`, etc.) when referencing a remote
 # application.
 from modal import App
 from fastapi import FastAPI, File, Form, UploadFile, Request
@@ -95,12 +95,12 @@ if static_dir.exists():
 # ---------------------------------------------------------------------------
 # Reference the already-deployed GPU runner.
 #
-# Using `App.from_name` ensures we attach to the existing Modal application
+# Using `App.lookup` ensures we attach to the existing Modal application
 # (created in `qwen_omni.py`) **with all its remote functions bound**, so
 # calling `qwen_app.generate.remote(...)` works as expected.
 # ---------------------------------------------------------------------------
 
-qwen_app = App.from_name("qwen-omni-runner")
+qwen_app = App.lookup("qwen-omni-runner")
 
 # This app only handles HTTP so CPU is fine.
 app = modal.App("qwen-omni-web", image=image, volumes={
