@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- Tailwind CSS (shadcn/ui style) -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind CSS (built locally, production safe) -->
+    <link href="/static/tailwind.css" rel="stylesheet">
     <title>Dynamic Generative UI Agent</title>
     <link rel="icon" href="https://avatars.githubusercontent.com/u/150858867?s=200&v=4">
     <style>
@@ -288,16 +288,20 @@
                 systemGoalText.textContent = data.goal;
             });
         
-        // WebSocket connection
-        const ws = new WebSocket(`ws://${window.location.host}/ws`);
-        
+        // WebSocket connection (auto-detect ws/wss)
+        function getWebSocketURL() {
+            const proto = window.location.protocol === "https:" ? "wss" : "ws";
+            return `${proto}://${window.location.host}/ws`;
+        }
+        const ws = new WebSocket(getWebSocketURL());
+
         ws.onopen = function(e) {
             console.log('WebSocket connection established');
         };
-        
+
         ws.onmessage = function(event) {
             const data = JSON.parse(event.data);
-            
+
             if (data.type === 'message') {
                 addMessage(data.content, 'agent');
             } else if (data.type === 'ui_update') {
@@ -306,7 +310,7 @@
                 showThinking(data.content);
             }
         };
-        
+
         ws.onclose = function(event) {
             if (event.wasClean) {
                 console.log(`Connection closed cleanly, code=${event.code}, reason=${event.reason}`);
@@ -315,7 +319,7 @@
                 addMessage('Connection to server lost. Please refresh the page.', 'agent');
             }
         };
-        
+
         ws.onerror = function(error) {
             console.log(`WebSocket error: ${error.message}`);
         };
