@@ -251,8 +251,12 @@ def chat_endpoint(
     # Log before invoking model
     logger.info("Invoking GPU runner with conversation length=%d", len(conversation))
 
+    # Dynamically resolve the remote `generate` function to avoid `InvalidError`
+    # during local development when the remote runner may not be present.
+    qwen_generate = qwen_app.function("generate")
+
     try:
-        # Look up the remote function at call time to avoid InvalidError in local dev
+        # Call the remote function with additional parameters required by the API
         # Add use_audio_in_video parameter to match the API requirements
         result = qwen_generate.remote(
             conversation,
