@@ -122,7 +122,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 # Mount static files for FastAPI
 web_app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates = Jinja2Templates(directory="/app/templates")
 
 
 # ---------------------------------------------------------------------------
