@@ -168,15 +168,12 @@ def home(request: Request):
 
 @web_app.post("/api/chat")
 def chat_endpoint(
-    # One of these must be provided by the browser ↓
     user_text: str | None = Form(None),
     audio: UploadFile | None = File(None),
     image: UploadFile | None = File(None),
-    # The entire conversation so far (list[dict] serialised as JSON str)
+    video: UploadFile | None = File(None),
     conversation_json: str = Form(...),
-    # Optional voice id for TTS (Chelsie default)
     speaker: str | None = Form(None),
-    # Output mode: "text", "audio", "both"
     output_mode: str = Form("both"),
 ):
     """Main inference endpoint.
@@ -189,35 +186,28 @@ def chat_endpoint(
     import json
     import soundfile as sf
 
-    # Log request details
     logger.info(
-        "Chat request received: user_text=%r, audio_provided=%s, conversation_json length=%d, speaker=%r",
+        "Chat request received: user_text=%r, audio_provided=%s, image_provided=%s, video_provided=%s, conversation_json length=%d, speaker=%r",
         user_text,
         bool(audio),
+        bool(image),
+        bool(video),
         len(conversation_json),
         speaker,
     )
 
-    # ------------------------------------------------------------------
-    # Reconstruct conversation list from JSON string sent by the client.
-    # ------------------------------------------------------------------
     try:
         conversation: List[dict] = json.loads(conversation_json)
     except json.JSONDecodeError:
         logger.error("Failed to parse conversation JSON: %s", conversation_json)
         return JSONResponse(status_code=400, content={"error": "Invalid conversation JSON"})
-    # Log conversation length
     logger.info("Parsed conversation: %d messages", len(conversation))
 
-    # ------------------------------------------------------------------
-    # Figure out what the user sent (plain text, audio, or image)
-    # ------------------------------------------------------------------
-    if user_text is None and audio is None and image is None:
-        return JSONResponse(status_code=400, content={"error": "Provide either text, audio, or image"})
+    if user_text is None and audio is None and image is None and video is None:
+        return JSONResponse(status_code=400, content={"error": "Provide either text, audio, image, or video"})
 
     content = []
     if audio is not None:
-        # FastAPI gives us a SpooledTemporaryFile; read raw bytes.
         webm_bytes = audio.file.read()
         logger.info("Audio uploaded: bytes=%d, filename=%s", len(webm_bytes), getattr(audio, "filename", None))
         try:
@@ -225,36 +215,28 @@ def chat_endpoint(
         except Exception as e:
             logger.exception("Audio conversion failed")
             return JSONResponse(status_code=500, content={"error": f"Audio conversion failed: {e}"})
-        # Log successful audio conversion
         logger.info("Audio conversion to WAV successful: bytes=%d", len(wav_bytes))
-        # Encode WAV as base64 and include in conversation
         audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
         audio_item = {"type": "audio", "audio": audio_b64}
         content.append(audio_item)
     if image is not None:
-        # Read image bytes and encode as base64
         image_bytes = image.file.read()
         logger.info("Image uploaded: bytes=%d, filename=%s", len(image_bytes), getattr(image, "filename", None))
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
         image_item = {"type": "image", "image": image_b64}
         content.append(image_item)
+    if video is not None:
+        video_bytes = video.file.read()
+        logger.info("Video uploaded: bytes=%d, filename=%s", len(video_bytes), getattr(video, "filename", None))
+        video_b64 = base64.b64encode(video_bytes).decode("utf-8")
+        video_item = {"type": "video", "video": video_b64}
+        content.append(video_item)
     if user_text is not None:
         logger.info("User text provided: %s", user_text)
         content.append({"type": "text", "text": user_text})
     if not content:
         return JSONResponse(status_code=400, content={"error": "No valid content provided"})
 
-    # (Optional) Support for video uploads in the future
-    # if video is not None:
-    #     video_bytes = video.file.read()
-    #     logger.info("Video uploaded: bytes=%d, filename=%s", len(video_bytes), getattr(video, "filename", None))
-    #     video_b64 = base64.b64encode(video_bytes).decode("utf-8")
-    #     video_item = {"type": "video", "video": video_b64}
-    #     content.append(video_item)
-
-    # ------------------------------------------------------------------
-    # Append user message to history and call the GPU function.
-    # ------------------------------------------------------------------
     conversation.append({"role": "user", "content": content})
     # Log before invoking model
     logger.info("Invoking GPU runner with conversation length=%d", len(conversation))

@@ -246,23 +246,15 @@ def generate(
     import base64
     import numpy as np
 
-    # Convert any base64-encoded images in the conversation to numpy arrays,
-    # but skip if the value is "(omitted)" or a file path (from webapp history).
+    # Convert any base64-encoded images, audio, and videos in the conversation to numpy arrays or bytes.
     for msg in conversation:
         for item in msg.get("content", []):
             if item.get("type") == "image" and isinstance(item.get("image"), str):
-                # If the image is a stub or a file path, skip decoding
-                if item["image"] == "(omitted)" or (
-                    item["image"].startswith("/") and Path(item["image"]).exists()
-                ):
-                    # If it's a file path, check if it exists before passing to model
-                    if not Path(item["image"]).exists():
-                        print(f"Image file not found: {item['image']}")
-                        item["image"] = None
+                if item["image"] == "(omitted)":
+                    item["image"] = None
                     continue
                 try:
                     img_bytes = base64.b64decode(item["image"])
-                    # Try to load with PIL
                     from PIL import Image
                     import io
                     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -271,28 +263,34 @@ def generate(
                     print(f"Failed to decode image: {e}")
                     item["image"] = None
             if item.get("type") == "audio" and isinstance(item.get("audio"), str):
-                # If the audio is a stub or a file path, skip decoding
-                if item["audio"] == "(omitted)" or (
-                    item["audio"].startswith("/") and Path(item["audio"]).exists()
-                ):
-                    # If it's a file path, check if it exists before passing to model
-                    if not Path(item["audio"]).exists():
-                        print(f"Audio file not found: {item['audio']}")
-                        item["audio"] = None
-                    else:
-                        # If it's a valid file path, leave as is
-                        pass
+                if item["audio"] == "(omitted)":
+                    item["audio"] = None
                     continue
-                # If it's a base64 string, you could decode here if needed
-                # (but the webapp should only ever send file paths now)
+                try:
+                    audio_bytes = base64.b64decode(item["audio"])
+                    item["audio"] = audio_bytes
+                except Exception as e:
+                    print(f"Failed to decode audio: {e}")
+                    item["audio"] = None
+            if item.get("type") == "video" and isinstance(item.get("video"), str):
+                if item["video"] == "(omitted)":
+                    item["video"] = None
+                    continue
+                try:
+                    video_bytes = base64.b64decode(item["video"])
+                    item["video"] = video_bytes
+                except Exception as e:
+                    print(f"Failed to decode video: {e}")
+                    item["video"] = None
 
-    # Remove any audio/image fields that are None (from stub/file path) before process_mm_info
+    # Remove any audio/image/video fields that are None before process_mm_info
     for msg in conversation:
         msg["content"] = [
             item for item in msg.get("content", [])
             if not (
                 (item.get("type") == "audio" and item.get("audio") is None) or
-                (item.get("type") == "image" and item.get("image") is None)
+                (item.get("type") == "image" and item.get("image") is None) or
+                (item.get("type") == "video" and item.get("video") is None)
             )
         ]
 

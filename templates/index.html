@@ -665,13 +665,13 @@
             timerInterval = null;
         }
 
-        // Send message (advanced: supports text, audio, image, disables UI while waiting)
-        function sendMessage({text = '', audioBlob = null, imageFile = null} = {}) {
+        // Send message (supports text, audio, image, video; disables UI while waiting)
+        function sendMessage({text = '', audioBlob = null, imageFile = null, videoFile = null} = {}) {
             conversation[0].content[0].text = systemPrompts[taskSelect.value] || systemPrompts.chat;
             text = text || messageInput.value.trim();
-            if (!text && !audioBlob && !imageFile) return;
+            if (!text && !audioBlob && !imageFile && !videoFile) return;
 
-            // File/image preview
+            // File/image/video preview
             let filePreview = '';
             if (imageFile) {
                 if (imageFile.type.startsWith('image/')) {
@@ -681,9 +681,13 @@
                     filePreview = `${imageFile.name}`;
                 }
             }
+            if (videoFile) {
+                filePreview = `${videoFile.name}`;
+            }
 
             if (text) addMessage(text, 'user', {filePreview});
             else if (imageFile) addMessage('[Image uploaded]', 'user', {filePreview});
+            else if (videoFile) addMessage('[Video uploaded]', 'user', {filePreview});
             messageInput.value = '';
             messageInput.disabled = true;
             sendButton.disabled = true;
@@ -692,6 +696,7 @@
             if (text) form.append('user_text', text);
             if (audioBlob) form.append('audio', new File([audioBlob], 'recording.webm', {type: 'audio/webm'}));
             if (imageFile) form.append('image', imageFile, imageFile.name);
+            if (videoFile) form.append('video', videoFile, videoFile.name);
             form.append('conversation_json', JSON.stringify(conversation));
             form.append('speaker', voiceSelect.value);
             form.append('output_mode', document.getElementById('output-select').value);
@@ -717,7 +722,6 @@
                         return;
                     }
                     conversation = data.conversation;
-                    // Show both text and audio if present
                     if (data.reply_text && data.reply_audio_b64) {
                         addMessage(data.reply_text, 'agent', {audioB64: data.reply_audio_b64});
                     } else if (data.reply_audio_b64) {
@@ -781,7 +785,16 @@
         // File upload
         fileInput.addEventListener('change', e => {
             const f = e.target.files[0];
-            if (f) sendMessage({imageFile: f});
+            if (f) {
+                if (f.type.startsWith('image/')) {
+                    sendMessage({imageFile: f});
+                } else if (f.type.startsWith('video/')) {
+                    sendMessage({videoFile: f});
+                } else if (f.type.startsWith('audio/')) {
+                    // For audio files, treat as audio upload (not mic recording)
+                    sendMessage({audioBlob: f});
+                }
+            }
             fileInput.value = '';
         });
 
@@ -793,7 +806,14 @@
         document.querySelector('.chat-container').addEventListener('drop', e => {
             e.preventDefault();
             if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                sendMessage({imageFile: e.dataTransfer.files[0]});
+                const f = e.dataTransfer.files[0];
+                if (f.type.startsWith('image/')) {
+                    sendMessage({imageFile: f});
+                } else if (f.type.startsWith('video/')) {
+                    sendMessage({videoFile: f});
+                } else if (f.type.startsWith('audio/')) {
+                    sendMessage({audioBlob: f});
+                }
             }
         });
 

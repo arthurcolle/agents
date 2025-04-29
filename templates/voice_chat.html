@@ -103,7 +103,7 @@
     
     <div id="input-container">
         <input type="text" id="user-input" placeholder="Type your message here..." autocomplete="off">
-        <input type="file" id="image-input" accept="image/*" style="max-width: 180px;">
+        <input type="file" id="file-input" accept="audio/*,video/*,image/*" style="max-width: 180px;">
         <button id="mic-button" title="Record voice message">🎤</button>
         <button id="send-button">Send</button>
     </div>
@@ -114,7 +114,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             const chatContainer = document.getElementById('chat-container');
             const userInput = document.getElementById('user-input');
-            const imageInput = document.getElementById('image-input');
+            const fileInput = document.getElementById('file-input');
             const sendButton = document.getElementById('send-button');
             const micButton = document.getElementById('mic-button');
             const statusDiv = document.getElementById('status');
@@ -219,9 +219,16 @@
                 formData.append('conversation_json', JSON.stringify(conversation));
                 formData.append('speaker', voiceSelect.value);
 
-                // If an image is selected, append it
-                if (imageInput.files && imageInput.files.length > 0) {
-                    formData.append('image', imageInput.files[0]);
+                // If a file is selected, append it as the correct type
+                if (fileInput.files && fileInput.files.length > 0) {
+                    const f = fileInput.files[0];
+                    if (f.type.startsWith('image/')) {
+                        formData.append('image', f);
+                    } else if (f.type.startsWith('video/')) {
+                        formData.append('video', f);
+                    } else if (f.type.startsWith('audio/')) {
+                        formData.append('audio', f);
+                    }
                 }
                 
                 fetch('/api/chat', {
@@ -231,8 +238,8 @@
                 .then(response => response.json())
                 .then(data => {
                     handleResponse(data);
-                    // Clear image input after sending
-                    imageInput.value = '';
+                    // Clear file input after sending
+                    fileInput.value = '';
                 })
                 .catch(error => {
                     console.error('Error:', error);
