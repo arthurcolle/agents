@@ -271,6 +271,8 @@ def generate(
                 if item["audio"] == "(omitted)" or (
                     item["audio"].startswith("/") and Path(item["audio"]).exists()
                 ):
+                    # If it's a stub or a file path, set to None so downstream doesn't try to load it
+                    item["audio"] = None
                     continue
                 # If it's a base64 string, you could decode here if needed
                 # (but the webapp should only ever send file paths now)
