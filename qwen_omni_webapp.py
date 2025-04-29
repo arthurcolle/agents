@@ -228,29 +228,22 @@ def chat_endpoint(
         # Log successful audio conversion
         logger.info("Audio conversion to WAV successful: bytes=%d", len(wav_bytes))
 
-        # Decode WAV to numpy float32 so it can go straight into the model.
-        waveform, sr = sf.read(io.BytesIO(wav_bytes))
-        logger.info("WAV decoded: sample_rate=%d, waveform_shape=%s", sr, waveform.shape)
-        if sr != 24_000:
-            # Resample with soundfile if needed; Omni wants 24 kHz.
-            import numpy as np
-            import librosa  # heavy but already in qwen runner; cheap here because CPU
-
-            waveform = librosa.resample(waveform, orig_sr=sr, target_sr=24_000)
-
-        # Make sure mono + float32 shape (T,)
-        import numpy as np
-
-        if waveform.ndim == 2:
-            waveform = np.mean(waveform, axis=1)
-        audio_item = {"type": "audio", "audio": waveform.tolist()}  # list so it's JSON-serialisable
+        # Save the WAV to a temporary file and use the file path in the conversation
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+            tmp_wav.write(wav_bytes)
+            tmp_wav_path = tmp_wav.name
+        audio_item = {"type": "audio", "audio": tmp_wav_path}
         content.append(audio_item)
     if image is not None:
-        # Read image bytes and encode as base64 for JSON-serializable transfer
+        # Read image bytes and save to a temporary file, use the file path in the conversation
         image_bytes = image.file.read()
         logger.info("Image uploaded: bytes=%d, filename=%s", len(image_bytes), getattr(image, "filename", None))
-        image_b64 = base64.b64encode(image_bytes).decode()
-        image_item = {"type": "image", "image": image_b64}
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
+            tmp_img.write(image_bytes)
+            tmp_img_path = tmp_img.name
+        image_item = {"type": "image", "image": tmp_img_path}
         content.append(image_item)
     if user_text is not None:
         logger.info("User text provided: %s", user_text)
