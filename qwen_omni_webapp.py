@@ -321,7 +321,7 @@ def chat_endpoint(
         assistant_message["content"].append({"type": "audio", "audio": "(omitted)"})
     conversation.append(assistant_message)
 
-    # Don't send huge waveforms back to the browser – replace them with a stub.
+    # Don't send huge waveforms or file paths back to the browser – replace them with a stub.
     def _strip_audio(payload: List[dict]):
         cleaned: List[dict] = []
         for msg in payload:
@@ -329,6 +329,12 @@ def chat_endpoint(
             for item in msg["content"]:
                 if item["type"] == "audio":
                     new_msg["content"].append({"type": "audio", "audio": "(omitted)"})
+                elif item["type"] == "image" and isinstance(item.get("image"), str):
+                    # If the image is a temp file path, replace with stub
+                    if item["image"].startswith("/tmp/") or item["image"].startswith("/var/"):
+                        new_msg["content"].append({"type": "image", "image": "(omitted)"})
+                    else:
+                        new_msg["content"].append(item)
                 else:
                     new_msg["content"].append(item)
             cleaned.append(new_msg)

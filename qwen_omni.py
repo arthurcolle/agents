@@ -246,10 +246,16 @@ def generate(
     import base64
     import numpy as np
 
-    # Convert any base64-encoded images in the conversation to numpy arrays
+    # Convert any base64-encoded images in the conversation to numpy arrays,
+    # but skip if the value is "(omitted)" or a file path (from webapp history).
     for msg in conversation:
         for item in msg.get("content", []):
             if item.get("type") == "image" and isinstance(item.get("image"), str):
+                # If the image is a stub or a file path, skip decoding
+                if item["image"] == "(omitted)" or (
+                    item["image"].startswith("/") and Path(item["image"]).exists()
+                ):
+                    continue
                 try:
                     img_bytes = base64.b64decode(item["image"])
                     # Try to load with PIL
@@ -260,6 +266,14 @@ def generate(
                 except Exception as e:
                     print(f"Failed to decode image: {e}")
                     item["image"] = None
+            if item.get("type") == "audio" and isinstance(item.get("audio"), str):
+                # If the audio is a stub or a file path, skip decoding
+                if item["audio"] == "(omitted)" or (
+                    item["audio"].startswith("/") and Path(item["audio"]).exists()
+                ):
+                    continue
+                # If it's a base64 string, you could decode here if needed
+                # (but the webapp should only ever send file paths now)
 
     audios, images, videos = process_mm_info(
         conversation, use_audio_in_video=use_audio_in_video
