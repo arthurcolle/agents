@@ -227,34 +227,30 @@ def chat_endpoint(
             return JSONResponse(status_code=500, content={"error": f"Audio conversion failed: {e}"})
         # Log successful audio conversion
         logger.info("Audio conversion to WAV successful: bytes=%d", len(wav_bytes))
-
-        # Save the WAV to a temporary file and use the file path in the conversation
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
-            tmp_wav.write(wav_bytes)
-            tmp_wav_path = tmp_wav.name
-        audio_item = {"type": "audio", "audio": tmp_wav_path}
+        # Encode WAV as base64 and include in conversation
+        audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+        audio_item = {"type": "audio", "audio": audio_b64}
         content.append(audio_item)
     if image is not None:
-        # Read image bytes and save to a temporary file, use the file path in the conversation
+        # Read image bytes and encode as base64
         image_bytes = image.file.read()
         logger.info("Image uploaded: bytes=%d, filename=%s", len(image_bytes), getattr(image, "filename", None))
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
-            tmp_img.write(image_bytes)
-            tmp_img.flush()
-            tmp_img_path = tmp_img.name
-        # Ensure the file is flushed and exists before passing to model
-        if Path(tmp_img_path).exists():
-            image_item = {"type": "image", "image": tmp_img_path}
-            content.append(image_item)
-        else:
-            logger.error("Temporary image file not found after write: %s", tmp_img_path)
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        image_item = {"type": "image", "image": image_b64}
+        content.append(image_item)
     if user_text is not None:
         logger.info("User text provided: %s", user_text)
         content.append({"type": "text", "text": user_text})
     if not content:
         return JSONResponse(status_code=400, content={"error": "No valid content provided"})
+
+    # (Optional) Support for video uploads in the future
+    # if video is not None:
+    #     video_bytes = video.file.read()
+    #     logger.info("Video uploaded: bytes=%d, filename=%s", len(video_bytes), getattr(video, "filename", None))
+    #     video_b64 = base64.b64encode(video_bytes).decode("utf-8")
+    #     video_item = {"type": "video", "video": video_b64}
+    #     content.append(video_item)
 
     # ------------------------------------------------------------------
     # Append user message to history and call the GPU function.
