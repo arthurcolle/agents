@@ -277,6 +277,16 @@ def generate(
                 # If it's a base64 string, you could decode here if needed
                 # (but the webapp should only ever send file paths now)
 
+    # Remove any audio/image fields that are None (from stub/file path) before process_mm_info
+    for msg in conversation:
+        msg["content"] = [
+            item for item in msg.get("content", [])
+            if not (
+                (item.get("type") == "audio" and item.get("audio") is None) or
+                (item.get("type") == "image" and item.get("image") is None)
+            )
+        ]
+
     audios, images, videos = process_mm_info(
         conversation, use_audio_in_video=use_audio_in_video
     )
