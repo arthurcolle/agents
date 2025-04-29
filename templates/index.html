@@ -42,6 +42,7 @@
             font-size: 1.05em;
             box-shadow: 0 1px 4px 0 rgba(0,0,0,0.03);
             transition: background 0.2s;
+            position: relative;
         }
         .user-message {
             background-color: #e1f5fe;
@@ -53,6 +54,107 @@
             background-color: #f0f0f0;
             align-self: flex-start;
             border-bottom-left-radius: 4px;
+        }
+        .message-reactions {
+            margin-top: 4px;
+            font-size: 1.15em;
+            display: flex;
+            gap: 0.5em;
+            align-items: center;
+        }
+        .reaction-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.15em;
+            padding: 0 2px;
+            opacity: 0.7;
+            transition: opacity 0.15s;
+        }
+        .reaction-btn.selected, .reaction-btn:hover {
+            opacity: 1;
+        }
+        .message-actions {
+            position: absolute;
+            top: 4px;
+            right: 8px;
+            display: flex;
+            gap: 0.3em;
+            opacity: 0.5;
+            transition: opacity 0.15s;
+        }
+        .message:hover .message-actions {
+            opacity: 1;
+        }
+        .message-action-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            color: #888;
+        }
+        .message-action-btn:hover {
+            color: #1976d2;
+        }
+        .message-edited {
+            font-size: 0.85em;
+            color: #888;
+            margin-left: 0.5em;
+        }
+        .audio-player {
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }
+        .audio-waveform {
+            width: 120px;
+            height: 24px;
+            background: #e3f2fd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .file-preview {
+            margin-top: 8px;
+            font-size: 0.97em;
+            color: #1976d2;
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }
+        .file-preview img {
+            max-width: 60px;
+            max-height: 60px;
+            border-radius: 6px;
+            border: 1px solid #b3e5fc;
+        }
+        .prompt-suggestions {
+            margin: 12px 0 0 0;
+            display: flex;
+            gap: 0.5em;
+            flex-wrap: wrap;
+        }
+        .prompt-suggestion-btn {
+            background: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #b3e5fc;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 0.98em;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .prompt-suggestion-btn:hover {
+            background: #bbdefb;
+        }
+        .export-btn {
+            background: #fff;
+            color: #1976d2;
+            border: 1px solid #b3e5fc;
+            margin-left: 0.5em;
+        }
+        .export-btn:hover {
+            background: #e3f2fd;
         }
         .input-area {
             display: flex;
@@ -266,6 +368,17 @@
                 </div>
             </div>
         </div>
+        <div class="prompt-suggestions" id="prompt-suggestions">
+            <button class="prompt-suggestion-btn">Summarize this conversation</button>
+            <button class="prompt-suggestion-btn">Explain this image</button>
+            <button class="prompt-suggestion-btn">What can you do?</button>
+            <button class="prompt-suggestion-btn">Generate a story</button>
+            <button class="prompt-suggestion-btn">Show me a math example</button>
+        </div>
+        <div style="margin-top:8px; text-align:right;">
+            <button class="export-btn" id="export-md-btn" title="Export chat as Markdown">Export as Markdown</button>
+            <button class="export-btn" id="export-json-btn" title="Export chat as JSON">Export as JSON</button>
+        </div>
         <div class="input-area">
             <input type="text" id="message-input" class="flex-1 mr-2" placeholder="Type your message here...">
             <button id="send-button">Send</button>
@@ -344,19 +457,117 @@
         }
         
         // Add message to chat (advanced: avatar, markdown, code, etc)
-        function addMessage(content, sender) {
+        function addMessage(content, sender, opts = {}) {
             const div = document.createElement('div');
             div.className = `message ${sender}-message`;
+            // Message actions (edit/delete for user, reactions for all)
+            let actionsHtml = '';
+            if (sender === 'user') {
+                actionsHtml = `
+                    <span class="message-actions">
+                        <button class="message-action-btn edit-btn" title="Edit">✏️</button>
+                        <button class="message-action-btn delete-btn" title="Delete">🗑️</button>
+                    </span>
+                `;
+            }
+            // Reactions
+            let reactionsHtml = `<div class="message-reactions">
+                <button class="reaction-btn" data-emoji="👍">👍</button>
+                <button class="reaction-btn" data-emoji="❤️">❤️</button>
+                <button class="reaction-btn" data-emoji="😂">😂</button>
+                <button class="reaction-btn" data-emoji="😮">😮</button>
+                <button class="reaction-btn" data-emoji="👎">👎</button>
+            </div>`;
+            // Audio player (assistant only, if audio present)
+            let audioHtml = '';
+            if (opts.audioB64) {
+                audioHtml = `
+                    <div class="audio-player">
+                        <button class="audio-play-btn">▶️</button>
+                        <div class="audio-waveform"></div>
+                    </div>
+                `;
+            }
+            // File/image preview
+            let fileHtml = '';
+            if (opts.filePreview) {
+                fileHtml = `<div class="file-preview">${opts.filePreview}</div>`;
+            }
+            // Edited marker
+            let editedHtml = opts.edited ? `<span class="message-edited">(edited)</span>` : '';
             if (sender === 'agent') {
                 div.innerHTML = `
                     <img src="https://avatars.githubusercontent.com/u/150858867?s=200&v=4" class="avatar" alt="Qwen">
-                    <div class="message-content">${renderMarkdown(content)}</div>
+                    <div class="message-content">${renderMarkdown(content)}${editedHtml}${audioHtml}${fileHtml}${reactionsHtml}</div>
                 `;
             } else {
-                div.innerHTML = `<div class="message-content">${renderMarkdown(content)}</div>`;
+                div.innerHTML = `
+                    <div class="message-content">${renderMarkdown(content)}${editedHtml}${fileHtml}${reactionsHtml}</div>
+                    ${actionsHtml}
+                `;
             }
             chatMessages.appendChild(div);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            // Audio player logic
+            if (opts.audioB64) {
+                const playBtn = div.querySelector('.audio-play-btn');
+                const audio = new Audio(`data:audio/wav;base64,${opts.audioB64}`);
+                let playing = false;
+                playBtn.addEventListener('click', () => {
+                    if (!playing) {
+                        audio.play();
+                        playBtn.textContent = '⏸️';
+                        playing = true;
+                    } else {
+                        audio.pause();
+                        playBtn.textContent = '▶️';
+                        playing = false;
+                    }
+                });
+                audio.addEventListener('ended', () => {
+                    playBtn.textContent = '▶️';
+                    playing = false;
+                });
+                // Simple waveform visualization (random for demo)
+                const wf = div.querySelector('.audio-waveform');
+                if (wf) {
+                    wf.innerHTML = '<svg width="120" height="24">' +
+                        Array.from({length: 30}).map((_,i) =>
+                            `<rect x="${i*4}" y="${12-Math.random()*10}" width="3" height="${Math.random()*20+2}" fill="#1976d2" />`
+                        ).join('') + '</svg>';
+                }
+            }
+            // Reaction logic
+            div.querySelectorAll('.reaction-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    btn.classList.toggle('selected');
+                });
+            });
+            // Edit/delete logic (user only)
+            if (sender === 'user') {
+                const editBtn = div.querySelector('.edit-btn');
+                const deleteBtn = div.querySelector('.delete-btn');
+                editBtn.addEventListener('click', () => {
+                    const msgContent = div.querySelector('.message-content');
+                    const oldText = msgContent.textContent.replace(/\(edited\)$/, '').trim();
+                    messageInput.value = oldText;
+                    messageInput.focus();
+                    div.classList.add('editing');
+                    // On send, replace this message's text
+                    sendButton.onclick = () => {
+                        const newText = messageInput.value.trim();
+                        if (newText) {
+                            msgContent.innerHTML = renderMarkdown(newText) + `<span class="message-edited">(edited)</span>`;
+                            div.classList.remove('editing');
+                            messageInput.value = '';
+                        }
+                        sendButton.onclick = () => sendMessage();
+                    };
+                });
+                deleteBtn.addEventListener('click', () => {
+                    div.remove();
+                });
+            }
         }
 
         // Show thinking indicator
@@ -460,7 +671,19 @@
             text = text || messageInput.value.trim();
             if (!text && !audioBlob && !imageFile) return;
 
-            if (text) addMessage(text, 'user');
+            // File/image preview
+            let filePreview = '';
+            if (imageFile) {
+                if (imageFile.type.startsWith('image/')) {
+                    const url = URL.createObjectURL(imageFile);
+                    filePreview = `<img src="${url}" alt="Image" onload="URL.revokeObjectURL('${url}')"> ${imageFile.name}`;
+                } else {
+                    filePreview = `${imageFile.name}`;
+                }
+            }
+
+            if (text) addMessage(text, 'user', {filePreview});
+            else if (imageFile) addMessage('[Image uploaded]', 'user', {filePreview});
             messageInput.value = '';
             messageInput.disabled = true;
             sendButton.disabled = true;
@@ -496,11 +719,9 @@
                     conversation = data.conversation;
                     // Show both text and audio if present
                     if (data.reply_text && data.reply_audio_b64) {
-                        addMessage(data.reply_text, 'agent');
-                        new Audio('data:audio/wav;base64,' + data.reply_audio_b64).play().catch(() => {});
+                        addMessage(data.reply_text, 'agent', {audioB64: data.reply_audio_b64});
                     } else if (data.reply_audio_b64) {
-                        addMessage('[Audio reply]', 'agent');
-                        new Audio('data:audio/wav;base64,' + data.reply_audio_b64).play().catch(() => {});
+                        addMessage('[Audio reply]', 'agent', {audioB64: data.reply_audio_b64});
                     } else if (data.reply_text) {
                         addMessage(data.reply_text, 'agent');
                     }
@@ -588,6 +809,51 @@
         window.onload = () => {
             messageInput.focus();
         };
+
+        // Prompt suggestions
+        document.querySelectorAll('.prompt-suggestion-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                messageInput.value = btn.textContent;
+                messageInput.focus();
+            });
+        });
+
+        // Export chat as Markdown/JSON
+        document.getElementById('export-md-btn').addEventListener('click', () => {
+            let md = '';
+            chatMessages.querySelectorAll('.message').forEach(div => {
+                if (div.classList.contains('user-message')) {
+                    md += `**You:** ${div.textContent.trim()}\n\n`;
+                } else {
+                    md += `**Qwen:** ${div.textContent.trim()}\n\n`;
+                }
+            });
+            const blob = new Blob([md], {type: 'text/markdown'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'qwen_chat.md';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+        });
+        document.getElementById('export-json-btn').addEventListener('click', () => {
+            let arr = [];
+            chatMessages.querySelectorAll('.message').forEach(div => {
+                arr.push({
+                    role: div.classList.contains('user-message') ? 'user' : 'assistant',
+                    text: div.textContent.trim()
+                });
+            });
+            const blob = new Blob([JSON.stringify(arr, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'qwen_chat.json';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+        });
     </script>
 </body>
 </html>
