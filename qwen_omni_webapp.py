@@ -358,8 +358,32 @@ def chat_endpoint(
 @web_app.get("/api/system-goal")
 def system_goal():
     """Return the current high-level objective of the agent (for UI banner)."""
-    goal = os.getenv("SYSTEM_GOAL", "Assist users with multimodal interactions using Qwen2.5-Omni.")
+    goal = os.getenv(
+        "SYSTEM_GOAL",
+        (
+            "Assist users with multimodal interactions using Qwen2.5-Omni. "
+            "Capabilities: text Q&A, math, image understanding, audio transcription, "
+            "speech synthesis, video analysis, file Q&A, translation, and more."
+        )
+    )
     return {"goal": goal}
+
+@web_app.get("/api/capabilities")
+def capabilities():
+    """Return a list of supported capabilities for the UI to display."""
+    return {
+        "capabilities": [
+            {"name": "Text Q&A", "description": "Answer questions and chat in natural language."},
+            {"name": "Math", "description": "Solve math problems and explain solutions."},
+            {"name": "Image Understanding", "description": "Describe, analyze, and answer questions about images."},
+            {"name": "Audio Transcription", "description": "Transcribe speech and classify sounds from audio files."},
+            {"name": "Speech Synthesis", "description": "Generate spoken answers in different voices."},
+            {"name": "Video Analysis", "description": "Extract information and answer questions about video content."},
+            {"name": "File Q&A", "description": "Answer questions about uploaded files (images, audio, video)."},
+            {"name": "Translation", "description": "Translate speech or text between languages."},
+            {"name": "Multimodal Reasoning", "description": "Combine information from text, images, audio, and video."},
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------
