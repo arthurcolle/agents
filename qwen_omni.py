@@ -246,42 +246,71 @@ def generate(
     import base64
     import numpy as np
 
-    # Convert any base64-encoded images, audio, and videos in the conversation to numpy arrays or bytes.
+    # Robustly convert any base64-encoded media (images / audio / video) to
+    # numpy arrays or raw bytes, accepting both single strings and lists.
     for msg in conversation:
         for item in msg.get("content", []):
-            if item.get("type") == "image" and isinstance(item.get("image"), str):
-                if item["image"] == "(omitted)":
+            media_type = item.get("type")
+
+            # ---------- IMAGES ----------
+            if media_type == "image":
+                data = item.get("image")
+                if data == "(omitted)":
                     item["image"] = None
                     continue
-                try:
-                    img_bytes = base64.b64decode(item["image"])
-                    from PIL import Image
-                    import io
-                    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-                    item["image"] = np.array(img)
-                except Exception as e:
-                    print(f"Failed to decode image: {e}")
-                    item["image"] = None
-            if item.get("type") == "audio" and isinstance(item.get("audio"), str):
-                if item["audio"] == "(omitted)":
+
+                def _decode_img(s: str):
+                    try:
+                        img_bytes = base64.b64decode(s)
+                        from PIL import Image
+                        import io
+                        return np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+                    except Exception as e:
+                        print(f"Failed to decode image: {e}")
+                        return None
+
+                if isinstance(data, str):
+                    item["image"] = _decode_img(data)
+                elif isinstance(data, list):
+                    item["image"] = [_decode_img(d) if isinstance(d, str) else d for d in data]
+
+            # ---------- AUDIO ----------
+            elif media_type == "audio":
+                data = item.get("audio")
+                if data == "(omitted)":
                     item["audio"] = None
                     continue
-                try:
-                    audio_bytes = base64.b64decode(item["audio"])
-                    item["audio"] = audio_bytes
-                except Exception as e:
-                    print(f"Failed to decode audio: {e}")
-                    item["audio"] = None
-            if item.get("type") == "video" and isinstance(item.get("video"), str):
-                if item["video"] == "(omitted)":
+
+                def _decode_audio(s: str):
+                    try:
+                        return base64.b64decode(s)
+                    except Exception as e:
+                        print(f"Failed to decode audio: {e}")
+                        return None
+
+                if isinstance(data, str):
+                    item["audio"] = _decode_audio(data)
+                elif isinstance(data, list):
+                    item["audio"] = [_decode_audio(d) if isinstance(d, str) else d for d in data]
+
+            # ---------- VIDEO ----------
+            elif media_type == "video":
+                data = item.get("video")
+                if data == "(omitted)":
                     item["video"] = None
                     continue
-                try:
-                    video_bytes = base64.b64decode(item["video"])
-                    item["video"] = video_bytes
-                except Exception as e:
-                    print(f"Failed to decode video: {e}")
-                    item["video"] = None
+
+                def _decode_video(s: str):
+                    try:
+                        return base64.b64decode(s)
+                    except Exception as e:
+                        print(f"Failed to decode video: {e}")
+                        return None
+
+                if isinstance(data, str):
+                    item["video"] = _decode_video(data)
+                elif isinstance(data, list):
+                    item["video"] = [_decode_video(d) if isinstance(d, str) else d for d in data]
 
     # Remove any audio/image/video fields that are None before process_mm_info
     for msg in conversation:
