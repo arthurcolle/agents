@@ -255,6 +255,10 @@ def generate(
                 if item["image"] == "(omitted)" or (
                     item["image"].startswith("/") and Path(item["image"]).exists()
                 ):
+                    # If it's a file path, check if it exists before passing to model
+                    if not Path(item["image"]).exists():
+                        print(f"Image file not found: {item['image']}")
+                        item["image"] = None
                     continue
                 try:
                     img_bytes = base64.b64decode(item["image"])
@@ -271,8 +275,13 @@ def generate(
                 if item["audio"] == "(omitted)" or (
                     item["audio"].startswith("/") and Path(item["audio"]).exists()
                 ):
-                    # If it's a stub or a file path, set to None so downstream doesn't try to load it
-                    item["audio"] = None
+                    # If it's a file path, check if it exists before passing to model
+                    if not Path(item["audio"]).exists():
+                        print(f"Audio file not found: {item['audio']}")
+                        item["audio"] = None
+                    else:
+                        # If it's a valid file path, leave as is
+                        pass
                     continue
                 # If it's a base64 string, you could decode here if needed
                 # (but the webapp should only ever send file paths now)

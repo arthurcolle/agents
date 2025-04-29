@@ -242,9 +242,14 @@ def chat_endpoint(
         import tempfile
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
             tmp_img.write(image_bytes)
+            tmp_img.flush()
             tmp_img_path = tmp_img.name
-        image_item = {"type": "image", "image": tmp_img_path}
-        content.append(image_item)
+        # Ensure the file is flushed and exists before passing to model
+        if Path(tmp_img_path).exists():
+            image_item = {"type": "image", "image": tmp_img_path}
+            content.append(image_item)
+        else:
+            logger.error("Temporary image file not found after write: %s", tmp_img_path)
     if user_text is not None:
         logger.info("User text provided: %s", user_text)
         content.append({"type": "text", "text": user_text})
