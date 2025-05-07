@@ -1,0 +1,44 @@
+content: "<holographic_prompt>\n  <level depth=\"1\">\n    Summarize the key points\
+  \ of this research paper.\n  </level>\n  <level depth=\"2\">\n    Analyze this research\
+  \ paper, extracting its methodology, findings, and limitations. Provide a structured\
+  \ summary with sections for background, methods, results, and discussion.\n  </level>\n\
+  \  <level depth=\"3\">\n    Conduct a comprehensive analysis of this research paper.\
+  \ Include:\n    \n    1. Background context and how it fits into the broader literature\n\
+  \    2. Detailed methodology assessment including statistical approaches\n    3.\
+  \ Critical evaluation of results with attention to statistical significance\n  \
+  \  4. Discussion of limitations, potential biases, and alternative interpretations\n\
+  \    5. Implications for theory and practice\n    6. Suggestions for future research\
+  \ directions\n    \n    Organize your response with clear headings and use specific\
+  \ examples from the paper to support your analysis.\n  </level>\n</holographic_prompt>\n\
+  \nFor the above task, use the following:\n\n<multi_agent_prompt>\n  <agent role=\"\
+  analyst\">\n    Examine the provided data set and identify key patterns, trends,\
+  \ and statistical insights. Focus on numerical analysis and quantitative relationships.\
+  \ Generate visualizations if appropriate.\n  </agent>\n  <agent role=\"critic\"\
+  >\n    Evaluate the methodology, identify potential biases, weaknesses, and limitations\
+  \ in the data. Consider what might be missing or misrepresented. Challenge assumptions\
+  \ and identify alternative interpretations.\n  </agent>\n  <agent role=\"creative\"\
+  >\n    Generate novel hypotheses and unexpected connections based on the data. Consider\
+  \ unusual patterns or outliers as potential innovation sources. Suggest creative\
+  \ approaches to address limitations.\n  </agent>\n  <agent role=\"implementer\"\
+  >\n    Develop a practical action plan based on the insights. Include specific,\
+  \ actionable steps, timeframes, resource requirements, and potential obstacles.\
+  \ Focus on translating insights into real-world application.\n  </agent>\n  <integration>\n\
+  \    Synthesize the perspectives from all agents to create a comprehensive, balanced\
+  \ analysis that combines analytical rigor, critical thinking, creative insights,\
+  \ and practical implementation.\n  </integration>\n</multi_agent_prompt>"
+metadata:
+  author: ''
+  created_at: '2025-04-23T20:37:44.358551'
+  dependencies:
+  - holographic_example
+  - multi_agent_example
+  description: Composition of 2 prompts using nested method
+  modified_at: '2025-04-23T20:37:50.511430'
+  performance_metrics: {}
+  prompt_type: composition-nested
+  tags: []
+  usage_count: 0
+  uuid: 4ca9c253-3059-4c82-b5a2-07c641930e19
+  version: 1
+name: Nested_holographic_example-multi_agent_example
+variables: {}

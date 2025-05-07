@@ -1,0 +1,30 @@
+content: "<multi_agent_prompt>\n  <agent role=\"analyst\">\n    Examine the provided\
+  \ data set and identify key patterns, trends, and statistical insights. Focus on\
+  \ numerical analysis and quantitative relationships. Generate visualizations if\
+  \ appropriate.\n  </agent>\n  <agent role=\"critic\">\n    Evaluate the methodology,\
+  \ identify potential biases, weaknesses, and limitations in the data. Consider what\
+  \ might be missing or misrepresented. Challenge assumptions and identify alternative\
+  \ interpretations.\n  </agent>\n  <agent role=\"creative\">\n    Generate novel\
+  \ hypotheses and unexpected connections based on the data. Consider unusual patterns\
+  \ or outliers as potential innovation sources. Suggest creative approaches to address\
+  \ limitations.\n  </agent>\n  <agent role=\"implementer\">\n    Develop a practical\
+  \ action plan based on the insights. Include specific, actionable steps, timeframes,\
+  \ resource requirements, and potential obstacles. Focus on translating insights\
+  \ into real-world application.\n  </agent>\n  <integration>\n    Synthesize the\
+  \ perspectives from all agents to create a comprehensive, balanced analysis that\
+  \ combines analytical rigor, critical thinking, creative insights, and practical\
+  \ implementation.\n  </integration>\n</multi_agent_prompt>"
+metadata:
+  author: ''
+  created_at: '2025-04-23T20:36:56.476886'
+  dependencies: []
+  description: ''
+  modified_at: '2025-04-23T20:37:50.513562'
+  performance_metrics: {}
+  prompt_type: multi-agent
+  tags: []
+  usage_count: 0
+  uuid: 3ef3e954-feee-4396-b462-15ebc9227f80
+  version: 1
+name: multi_agent_example
+variables: {}

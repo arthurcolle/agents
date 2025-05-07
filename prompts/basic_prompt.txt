@@ -1,0 +1,10 @@
+Analyze the given text and extract the main themes, key points, and underlying assumptions. Provide a comprehensive summary that captures both explicit and implicit information.
+
+Consider the following aspects:
+1. Primary arguments or claims
+2. Supporting evidence
+3. Logical structure
+4. Assumptions and biases
+5. Strengths and weaknesses
+
+Format your response with clear headings and bullet points for readability.

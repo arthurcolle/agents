@@ -1,0 +1,26 @@
+content: "<holographic_prompt>\n  <level depth=\"1\">\n    Summarize the key points\
+  \ of this research paper.\n  </level>\n  <level depth=\"2\">\n    Analyze this research\
+  \ paper, extracting its methodology, findings, and limitations. Provide a structured\
+  \ summary with sections for background, methods, results, and discussion.\n  </level>\n\
+  \  <level depth=\"3\">\n    Conduct a comprehensive analysis of this research paper.\
+  \ Include:\n    \n    1. Background context and how it fits into the broader literature\n\
+  \    2. Detailed methodology assessment including statistical approaches\n    3.\
+  \ Critical evaluation of results with attention to statistical significance\n  \
+  \  4. Discussion of limitations, potential biases, and alternative interpretations\n\
+  \    5. Implications for theory and practice\n    6. Suggestions for future research\
+  \ directions\n    \n    Organize your response with clear headings and use specific\
+  \ examples from the paper to support your analysis.\n  </level>\n</holographic_prompt>"
+metadata:
+  author: ''
+  created_at: '2025-04-23T20:36:56.477365'
+  dependencies: []
+  description: ''
+  modified_at: '2025-04-23T20:37:50.510657'
+  performance_metrics: {}
+  prompt_type: holographic
+  tags: []
+  usage_count: 0
+  uuid: 238e1bce-b91d-4b94-98f1-c9a6288627c9
+  version: 1
+name: holographic_example
+variables: {}

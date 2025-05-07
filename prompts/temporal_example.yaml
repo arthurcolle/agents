@@ -1,0 +1,29 @@
+content: "<temporal_prompt>\n  <timeframe period=\"immediate\">\n    Analyze the current\
+  \ market conditions and immediate trends for the specified industry. Focus on data\
+  \ from the last 7 days, including recent news, price movements, and social media\
+  \ sentiment.\n  </timeframe>\n  <timeframe period=\"recent\" range=\"past-30-days\"\
+  >\n    Examine the past month's developments in this industry. Identify emerging\
+  \ patterns, comparative performance metrics, and noteworthy events. Consider how\
+  \ these recent developments might influence immediate decisions.\n  </timeframe>\n\
+  \  <timeframe period=\"historical\" range=\"past-5-years\">\n    Provide historical\
+  \ context by analyzing the industry's performance over the past five years. Identify\
+  \ cyclical patterns, long-term trends, and structural changes. Compare current metrics\
+  \ against historical benchmarks.\n  </timeframe>\n  <timeframe period=\"future\"\
+  \ range=\"next-6-months\">\n    Forecast likely industry developments over the next\
+  \ six months. Consider scheduled events, announced changes, seasonal factors, and\
+  \ extrapolate from current trends. Identify potential disruptions, opportunities,\
+  \ and strategic pivots.\n  </timeframe>\n</temporal_prompt>"
+metadata:
+  author: ''
+  created_at: '2025-04-23T20:36:56.477073'
+  dependencies: []
+  description: ''
+  modified_at: '2025-04-23T20:37:50.512718'
+  performance_metrics: {}
+  prompt_type: temporal
+  tags: []
+  usage_count: 0
+  uuid: 8ef7798b-82c0-4a7a-bc81-00c82399af87
+  version: 1
+name: temporal_example
+variables: {}

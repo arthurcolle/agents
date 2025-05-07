@@ -1,0 +1,20 @@
+<holographic_prompt>
+  <level depth="1">
+    Summarize the key points of this research paper.
+  </level>
+  <level depth="2">
+    Analyze this research paper, extracting its methodology, findings, and limitations. Provide a structured summary with sections for background, methods, results, and discussion.
+  </level>
+  <level depth="3">
+    Conduct a comprehensive analysis of this research paper. Include:
+    
+    1. Background context and how it fits into the broader literature
+    2. Detailed methodology assessment including statistical approaches
+    3. Critical evaluation of results with attention to statistical significance
+    4. Discussion of limitations, potential biases, and alternative interpretations
+    5. Implications for theory and practice
+    6. Suggestions for future research directions
+    
+    Organize your response with clear headings and use specific examples from the paper to support your analysis.
+  </level>
+</holographic_prompt>

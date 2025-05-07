@@ -1,0 +1,14 @@
+<temporal_prompt>
+  <timeframe period="immediate">
+    Analyze the current market conditions and immediate trends for the specified industry. Focus on data from the last 7 days, including recent news, price movements, and social media sentiment.
+  </timeframe>
+  <timeframe period="recent" range="past-30-days">
+    Examine the past month's developments in this industry. Identify emerging patterns, comparative performance metrics, and noteworthy events. Consider how these recent developments might influence immediate decisions.
+  </timeframe>
+  <timeframe period="historical" range="past-5-years">
+    Provide historical context by analyzing the industry's performance over the past five years. Identify cyclical patterns, long-term trends, and structural changes. Compare current metrics against historical benchmarks.
+  </timeframe>
+  <timeframe period="future" range="next-6-months">
+    Forecast likely industry developments over the next six months. Consider scheduled events, announced changes, seasonal factors, and extrapolate from current trends. Identify potential disruptions, opportunities, and strategic pivots.
+  </timeframe>
+</temporal_prompt>
